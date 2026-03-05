@@ -578,7 +578,11 @@ final class AppProjectStore {
 
         This project targets iPhone-first web UX.
 
-        ## Mobile-first requirements
+        ## Core principle
+        - Treat this as an iPhone app-like experience, not a desktop web page.
+        - Prioritize native-like interaction and behavior over visual decoration.
+
+        ## Mobile-first requirements (MUST)
         - Treat iPhone portrait as the default viewport.
         - Respect Safe Area using `env(safe-area-inset-top/right/bottom/left)`.
         - Keep the primary layout single-column unless explicitly requested.
@@ -586,15 +590,49 @@ final class AppProjectStore {
         - Avoid desktop-only interaction patterns such as hover-dependent controls.
         - Avoid strong "desktop web" visual style; prefer a clean, native-like iOS feel.
 
+        ## Zoom & viewport policy (MUST)
+        - Disable zoom by default (including pinch and double-tap zoom).
+        - Ensure viewport uses:
+          `width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover`.
+        - Do not create horizontal overflow layouts.
+
+        ## Selection policy (MUST)
+        - Non-content UI text must be non-selectable:
+          nav bars, tabs, buttons, chips, badges, card titles, tool labels.
+        - Only content text and form controls (`input`, `textarea`) may allow text selection.
+        - Disable long-press callout on non-content UI (`-webkit-touch-callout: none`).
+
+        ## Scroll model (MUST)
+        - Use exactly one primary scroll container for page content.
+        - `html` and `body` must not be scrollable.
+        - If content fits within the viewport, dragging must not move/stretch the whole page.
+        - Any secondary scrollable area must scroll only inside its own bounds.
+        - Prevent scroll chaining between nested containers.
+
+        ## Layout & containment (MUST)
+        - Lock app root to the viewport height (`100dvh`) with safe-area insets.
+        - Keep top/bottom bars fixed; only content region scrolls.
+        - Prevent horizontal scrolling (`overflow-x: hidden`).
+        - Media must stay in bounds (`max-width: 100%`).
+
+        ## Forms & keyboard behavior
+        - Use at least `16px` font size for text inputs to avoid iOS auto-zoom.
+        - Keyboard appearance should not break layout hierarchy.
+        - Keep key actions and input controls easily reachable on small screens.
+
+        ## Interaction polish
+        - Use `touch-action: manipulation` on tappable controls where appropriate.
+        - Keep motion subtle and meaningful; avoid flashy web-like transitions.
+
         ## Styling guidance
         - Prioritize readability and spacing on small screens.
-        - Keep motion subtle and meaningful.
         - Prefer system-like typography and restrained visual decoration.
+        - Keep contrast and hierarchy clear without heavy borders/shadows.
 
         ## Editing guidance
         - Change the minimum necessary files for each request.
-        - Keep the app fully runnable as static html/css/js.
-        - Preserve `manifest.json` and `index.html` as the project entry structure unless requested.
+        - Keep the app fully runnable as static `html/css/js`.
+        - Preserve `manifest.json` and `index.html` as entry structure unless requested.
         """
 
         let manifestObject: [String: Any] = [
