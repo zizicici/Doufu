@@ -7,6 +7,7 @@
 
 import UIKit
 
+@MainActor
 final class CodexProjectChatViewController: UIViewController {
 
     var onProjectFilesUpdated: (() -> Void)?
@@ -20,6 +21,11 @@ final class CodexProjectChatViewController: UIViewController {
                 return "没有可用的 Provider。请先在设置中添加 API Key 或 OAuth Provider。"
             }
         }
+    }
+
+    private struct PersistedSessionMemory: Codable {
+        let memory: CodexProjectChatService.SessionMemory
+        let updatedAt: Date
     }
 
     fileprivate struct Message: Hashable {
@@ -54,6 +60,15 @@ final class CodexProjectChatViewController: UIViewController {
     private var providerCredential: CodexProjectChatService.ProviderCredential?
     private var sessionMemory: CodexProjectChatService.SessionMemory?
     private var isSending = false
+    private var sendTask: Task<Void, Never>?
+    private var activeStreamingMessageIndex: Int?
+    private var didCancelCurrentRequest = false
+    private let sessionMemoryFileName = ".doufu_chat_session.json"
+    private let persistedDecoder = JSONDecoder()
+    private let persistedEncoder = JSONEncoder()
+    private let inputMinHeight: CGFloat = 38
+    private let inputMaxHeight: CGFloat = 120
+    private var inputHeightConstraint: NSLayoutConstraint?
 
     private lazy var tableView: UITableView = {
         let tableView = UITableView(frame: .zero, style: .insetGrouped)
@@ -72,15 +87,29 @@ final class CodexProjectChatViewController: UIViewController {
         return view
     }()
 
-    private lazy var inputTextField: UITextField = {
-        let field = UITextField()
-        field.translatesAutoresizingMaskIntoConstraints = false
-        field.borderStyle = .roundedRect
-        field.placeholder = "描述你想让 Codex 修改的内容"
-        field.returnKeyType = .send
-        field.delegate = self
-        field.addTarget(self, action: #selector(textFieldDidChange), for: .editingChanged)
-        return field
+    private lazy var inputTextView: UITextView = {
+        let view = UITextView()
+        view.translatesAutoresizingMaskIntoConstraints = false
+        view.backgroundColor = .secondarySystemGroupedBackground
+        view.layer.cornerRadius = 12
+        view.layer.cornerCurve = .continuous
+        view.textContainerInset = UIEdgeInsets(top: 9, left: 8, bottom: 9, right: 8)
+        view.textContainer.lineFragmentPadding = 0
+        view.font = .systemFont(ofSize: 16)
+        view.delegate = self
+        view.isScrollEnabled = false
+        view.returnKeyType = .default
+        return view
+    }()
+
+    private lazy var inputPlaceholderLabel: UILabel = {
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.text = "描述你想让 Codex 修改的内容"
+        label.textColor = .placeholderText
+        label.font = .systemFont(ofSize: 16)
+        label.numberOfLines = 1
+        return label
     }()
 
     private lazy var sendButton: UIButton = {
@@ -95,6 +124,9 @@ final class CodexProjectChatViewController: UIViewController {
     init(projectName: String, projectURL: URL) {
         self.projectName = projectName
         self.projectURL = projectURL
+        persistedEncoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        persistedEncoder.dateEncodingStrategy = .iso8601
+        persistedDecoder.dateDecodingStrategy = .iso8601
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -109,8 +141,15 @@ final class CodexProjectChatViewController: UIViewController {
         view.backgroundColor = .systemGroupedBackground
         configureNavigation()
         configureLayout()
+        restoreSessionMemoryIfNeeded()
         configureProvider()
+        refreshInputPlaceholder()
         refreshSendButton()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        updateInputTextViewHeight()
     }
 
     private func configureNavigation() {
@@ -119,12 +158,27 @@ final class CodexProjectChatViewController: UIViewController {
             target: self,
             action: #selector(didTapClose)
         )
+        refreshNavigationItems()
+    }
+
+    private func refreshNavigationItems() {
+        if isSending {
+            navigationItem.leftBarButtonItem = UIBarButtonItem(
+                title: "取消",
+                style: .plain,
+                target: self,
+                action: #selector(didTapCancelRequest)
+            )
+        } else {
+            navigationItem.leftBarButtonItem = nil
+        }
     }
 
     private func configureLayout() {
         view.addSubview(tableView)
         view.addSubview(inputContainer)
-        inputContainer.addSubview(inputTextField)
+        inputContainer.addSubview(inputTextView)
+        inputTextView.addSubview(inputPlaceholderLabel)
         inputContainer.addSubview(sendButton)
 
         let inputBottomConstraint: NSLayoutConstraint
@@ -133,6 +187,9 @@ final class CodexProjectChatViewController: UIViewController {
         } else {
             inputBottomConstraint = inputContainer.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor)
         }
+
+        let inputHeightConstraint = inputTextView.heightAnchor.constraint(equalToConstant: inputMinHeight)
+        self.inputHeightConstraint = inputHeightConstraint
 
         NSLayoutConstraint.activate([
             tableView.topAnchor.constraint(equalTo: view.topAnchor),
@@ -144,13 +201,19 @@ final class CodexProjectChatViewController: UIViewController {
             inputContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             inputBottomConstraint,
 
-            inputTextField.topAnchor.constraint(equalTo: inputContainer.topAnchor, constant: 10),
-            inputTextField.leadingAnchor.constraint(equalTo: inputContainer.leadingAnchor, constant: 12),
-            inputTextField.bottomAnchor.constraint(equalTo: inputContainer.safeAreaLayoutGuide.bottomAnchor, constant: -10),
+            inputTextView.topAnchor.constraint(equalTo: inputContainer.topAnchor, constant: 10),
+            inputTextView.leadingAnchor.constraint(equalTo: inputContainer.leadingAnchor, constant: 12),
+            inputTextView.bottomAnchor.constraint(equalTo: inputContainer.safeAreaLayoutGuide.bottomAnchor, constant: -10),
+            inputHeightConstraint,
 
-            sendButton.leadingAnchor.constraint(equalTo: inputTextField.trailingAnchor, constant: 10),
+            inputPlaceholderLabel.topAnchor.constraint(equalTo: inputTextView.topAnchor, constant: 10),
+            inputPlaceholderLabel.leadingAnchor.constraint(equalTo: inputTextView.leadingAnchor, constant: 8),
+            inputPlaceholderLabel.trailingAnchor.constraint(lessThanOrEqualTo: inputTextView.trailingAnchor, constant: -8),
+
+            sendButton.leadingAnchor.constraint(equalTo: inputTextView.trailingAnchor, constant: 10),
             sendButton.trailingAnchor.constraint(equalTo: inputContainer.trailingAnchor, constant: -12),
-            sendButton.centerYAnchor.constraint(equalTo: inputTextField.centerYAnchor),
+            sendButton.bottomAnchor.constraint(equalTo: inputTextView.bottomAnchor),
+            sendButton.heightAnchor.constraint(equalToConstant: 38),
             sendButton.widthAnchor.constraint(equalToConstant: 68)
         ])
     }
@@ -295,20 +358,73 @@ final class CodexProjectChatViewController: UIViewController {
         }
     }
 
+    private func currentInputText() -> String {
+        inputTextView.text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func refreshInputPlaceholder() {
+        inputPlaceholderLabel.isHidden = !inputTextView.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func updateInputTextViewHeight() {
+        guard let inputHeightConstraint else {
+            return
+        }
+
+        let targetSize = CGSize(width: inputTextView.bounds.width, height: .greatestFiniteMagnitude)
+        let fittingSize = inputTextView.sizeThatFits(targetSize)
+        let clamped = min(inputMaxHeight, max(inputMinHeight, fittingSize.height))
+        inputHeightConstraint.constant = clamped
+        inputTextView.isScrollEnabled = fittingSize.height > inputMaxHeight
+    }
+
+    private func sessionMemoryFileURL() -> URL {
+        projectURL.appendingPathComponent(sessionMemoryFileName)
+    }
+
+    private func restoreSessionMemoryIfNeeded() {
+        let fileURL = sessionMemoryFileURL()
+        guard
+            let data = try? Data(contentsOf: fileURL),
+            let persisted = try? persistedDecoder.decode(PersistedSessionMemory.self, from: data)
+        else {
+            return
+        }
+
+        sessionMemory = persisted.memory
+    }
+
+    private func persistSessionMemoryIfNeeded() {
+        guard let sessionMemory else {
+            return
+        }
+        let payload = PersistedSessionMemory(memory: sessionMemory, updatedAt: Date())
+        guard let data = try? persistedEncoder.encode(payload) else {
+            return
+        }
+        try? data.write(to: sessionMemoryFileURL(), options: .atomic)
+    }
+
     private func refreshSendButton() {
-        let hasText = !(inputTextField.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+        let hasText = !currentInputText().isEmpty
         let hasProvider = providerCredential != nil
         sendButton.isEnabled = hasText && !isSending && hasProvider
+        inputTextView.isEditable = !isSending
+        inputTextView.alpha = isSending ? 0.72 : 1.0
+        refreshNavigationItems()
     }
 
     @objc
     private func didTapClose() {
+        if isSending {
+            cancelCurrentRequest(showMessage: false)
+        }
         dismiss(animated: true)
     }
 
     @objc
-    private func textFieldDidChange() {
-        refreshSendButton()
+    private func didTapCancelRequest() {
+        cancelCurrentRequest(showMessage: true)
     }
 
     @objc
@@ -317,7 +433,7 @@ final class CodexProjectChatViewController: UIViewController {
             return
         }
 
-        let userInput = inputTextField.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let userInput = currentInputText()
         guard !userInput.isEmpty else {
             return
         }
@@ -326,20 +442,27 @@ final class CodexProjectChatViewController: UIViewController {
             return
         }
 
-        inputTextField.text = nil
+        inputTextView.text = ""
+        refreshInputPlaceholder()
+        updateInputTextViewHeight()
         appendMessage(role: .user, text: userInput)
-        inputTextField.resignFirstResponder()
+        inputTextView.resignFirstResponder()
         let historyTurns = buildHistoryTurns()
         let streamingMessageIndex = appendMessage(role: .assistant, text: "Codex 正在生成...")
-        final class StreamState {
-            var hasReceivedModelText = false
-        }
-        let streamState = StreamState()
+        activeStreamingMessageIndex = streamingMessageIndex
         isSending = true
+        didCancelCurrentRequest = false
         refreshSendButton()
 
-        Task { [weak self] in
+        sendTask = Task { [weak self] in
             guard let self else { return }
+            defer {
+                sendTask = nil
+                activeStreamingMessageIndex = nil
+                didCancelCurrentRequest = false
+                isSending = false
+                refreshSendButton()
+            }
 
             do {
                 let result = try await chatService.sendAndApply(
@@ -348,18 +471,9 @@ final class CodexProjectChatViewController: UIViewController {
                     projectURL: projectURL,
                     credential: providerCredential,
                     memory: sessionMemory,
-                    onStreamedText: { [weak self] partialText in
-                        guard let self, let streamingMessageIndex else {
-                            return
-                        }
-                        streamState.hasReceivedModelText = true
-                        self.updateMessage(at: streamingMessageIndex, text: partialText)
-                    },
+                    onStreamedText: nil,
                     onProgress: { [weak self] phaseText in
                         guard let self, let streamingMessageIndex else {
-                            return
-                        }
-                        guard !streamState.hasReceivedModelText else {
                             return
                         }
                         self.updateMessage(at: streamingMessageIndex, text: phaseText)
@@ -367,6 +481,7 @@ final class CodexProjectChatViewController: UIViewController {
                 )
 
                 sessionMemory = result.updatedMemory
+                persistSessionMemoryIfNeeded()
 
                 var assistantText = result.assistantMessage
                 if !result.changedPaths.isEmpty {
@@ -382,15 +497,41 @@ final class CodexProjectChatViewController: UIViewController {
                 if !result.changedPaths.isEmpty {
                     onProjectFilesUpdated?()
                 }
+            } catch is CancellationError {
+                if let streamingMessageIndex {
+                    updateMessage(at: streamingMessageIndex, text: "已取消本次请求。")
+                } else {
+                    appendMessage(role: .system, text: "已取消本次请求。")
+                }
             } catch {
+                if didCancelCurrentRequest {
+                    if let streamingMessageIndex {
+                        updateMessage(at: streamingMessageIndex, text: "已取消本次请求。")
+                    } else {
+                        appendMessage(role: .system, text: "已取消本次请求。")
+                    }
+                    return
+                }
                 if let streamingMessageIndex {
                     removeMessage(at: streamingMessageIndex)
                 }
                 appendMessage(role: .system, text: error.localizedDescription)
             }
+        }
+    }
 
-            isSending = false
-            refreshSendButton()
+    private func cancelCurrentRequest(showMessage: Bool) {
+        guard isSending else {
+            return
+        }
+        didCancelCurrentRequest = true
+        sendTask?.cancel()
+        if showMessage {
+            if let index = activeStreamingMessageIndex {
+                updateMessage(at: index, text: "已取消本次请求。")
+            } else {
+                appendMessage(role: .system, text: "已取消本次请求。")
+            }
         }
     }
 }
@@ -416,10 +557,11 @@ extension CodexProjectChatViewController: UITableViewDataSource {
     }
 }
 
-extension CodexProjectChatViewController: UITextFieldDelegate {
-    func textFieldShouldReturn(_ textField: UITextField) -> Bool {
-        didTapSend()
-        return true
+extension CodexProjectChatViewController: UITextViewDelegate {
+    func textViewDidChange(_ textView: UITextView) {
+        refreshInputPlaceholder()
+        updateInputTextViewHeight()
+        refreshSendButton()
     }
 }
 

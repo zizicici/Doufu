@@ -15,6 +15,9 @@ final class ProjectWorkspaceViewController: UIViewController {
     private let isNewlyCreated: Bool
     private let projectStore = AppProjectStore.shared
     private var hasProjectBeenModified = false
+    private let jsErrorHandlerName = "jsError"
+    private var lastPresentedJSErrorSignature: String?
+    private lazy var jsErrorMessageProxy = WeakScriptMessageHandler(target: self)
 
     private let panelSize = CGSize(width: 168, height: 198)
     private var hasInitializedPanelPosition = false
@@ -22,6 +25,13 @@ final class ProjectWorkspaceViewController: UIViewController {
     private lazy var webView: WKWebView = {
         let configuration = WKWebViewConfiguration()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
+        let script = WKUserScript(
+            source: jsErrorBridgeScriptSource(),
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: false
+        )
+        configuration.userContentController.addUserScript(script)
+        configuration.userContentController.add(jsErrorMessageProxy, name: jsErrorHandlerName)
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.translatesAutoresizingMaskIntoConstraints = false
         view.navigationDelegate = self
@@ -109,6 +119,10 @@ final class ProjectWorkspaceViewController: UIViewController {
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    deinit {
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: jsErrorHandlerName)
     }
 
     override func viewDidLoad() {
@@ -262,6 +276,7 @@ final class ProjectWorkspaceViewController: UIViewController {
             self.projectName = updatedProjectName
             self.title = updatedProjectName
             self.hasProjectBeenModified = true
+            self.webView.reload()
         }
         let navigationController = UINavigationController(rootViewController: settingsController)
         navigationController.modalPresentationStyle = .pageSheet
@@ -340,9 +355,118 @@ final class ProjectWorkspaceViewController: UIViewController {
             present(alert, animated: true)
         }
     }
+
+    private func jsErrorBridgeScriptSource() -> String {
+        """
+        (function () {
+          function postError(payload) {
+            try {
+              window.webkit.messageHandlers.\(jsErrorHandlerName).postMessage(payload);
+            } catch (_) {}
+          }
+
+          window.addEventListener('error', function (event) {
+            postError({
+              message: String(event.message || 'Unknown JS error'),
+              source: String(event.filename || ''),
+              line: Number(event.lineno || 0),
+              column: Number(event.colno || 0)
+            });
+          });
+
+          window.addEventListener('unhandledrejection', function (event) {
+            var reason = event.reason;
+            var text = '';
+            if (typeof reason === 'string') {
+              text = reason;
+            } else if (reason && typeof reason.message === 'string') {
+              text = reason.message;
+            } else {
+              text = 'Unhandled promise rejection';
+            }
+
+            postError({
+              message: text,
+              source: 'promise',
+              line: 0,
+              column: 0
+            });
+          });
+        })();
+        """
+    }
+
+    private func handleJavaScriptErrorPayload(_ payload: [String: Any]) {
+        let message = (payload["message"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Unknown JS error"
+        let source = (payload["source"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let line = intValue(from: payload["line"]) ?? 0
+        let column = intValue(from: payload["column"]) ?? 0
+
+        let signature = "\(message)|\(source)|\(line)|\(column)"
+        guard signature != lastPresentedJSErrorSignature else {
+            return
+        }
+        lastPresentedJSErrorSignature = signature
+
+        var details = message
+        if !source.isEmpty {
+            details += "\n来源：\(source)"
+        }
+        if line > 0 || column > 0 {
+            details += "\n位置：\(line):\(column)"
+        }
+
+        guard presentedViewController == nil else {
+            return
+        }
+        let alert = UIAlertController(
+            title: "页面脚本错误",
+            message: details,
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: "知道了", style: .default))
+        present(alert, animated: true)
+    }
+
+    private func intValue(from anyValue: Any?) -> Int? {
+        if let value = anyValue as? Int {
+            return value
+        }
+        if let value = anyValue as? Double {
+            return Int(value)
+        }
+        if let value = anyValue as? NSNumber {
+            return value.intValue
+        }
+        if let value = anyValue as? String {
+            return Int(value)
+        }
+        return nil
+    }
+
+    private func captureProjectPreviewIfNeeded() {
+        let snapshotConfiguration = WKSnapshotConfiguration()
+        snapshotConfiguration.afterScreenUpdates = true
+        snapshotConfiguration.snapshotWidth = NSNumber(value: 360)
+        webView.takeSnapshot(with: snapshotConfiguration) { [weak self] image, _ in
+            guard let self, let image else {
+                return
+            }
+            guard let imageData = image.pngData() else {
+                return
+            }
+            let previewURL = self.projectURL.appendingPathComponent("preview.png")
+            try? imageData.write(to: previewURL, options: .atomic)
+        }
+    }
 }
 
 extension ProjectWorkspaceViewController: WKNavigationDelegate {
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        lastPresentedJSErrorSignature = nil
+        captureProjectPreviewIfNeeded()
+    }
+
     func webView(
         _ webView: WKWebView,
         didFail navigation: WKNavigation!,
@@ -357,5 +481,30 @@ extension ProjectWorkspaceViewController: WKNavigationDelegate {
         withError error: Error
     ) {
         showLoadError(error.localizedDescription)
+    }
+}
+
+extension ProjectWorkspaceViewController: WKScriptMessageHandler {
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard message.name == jsErrorHandlerName else {
+            return
+        }
+        guard let payload = message.body as? [String: Any] else {
+            return
+        }
+        handleJavaScriptErrorPayload(payload)
+    }
+}
+
+private final class WeakScriptMessageHandler: NSObject, WKScriptMessageHandler {
+    weak var target: WKScriptMessageHandler?
+
+    init(target: WKScriptMessageHandler) {
+        self.target = target
+        super.init()
+    }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        target?.userContentController(userContentController, didReceive: message)
     }
 }
