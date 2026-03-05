@@ -29,6 +29,8 @@ final class OpenAIOAuthProviderFormViewController: UITableViewController, SFSafa
     private var labelText = ""
     private var manualBaseURLText = ""
     private var manualBearerTokenText = ""
+    private var oauthSuggestedAutoAppendV1 = true
+    private var oauthDerivedChatGPTAccountID: String?
 
     private var canSubmitProvider: Bool {
         let trimmedLabel = labelText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -283,11 +285,13 @@ final class OpenAIOAuthProviderFormViewController: UITableViewController, SFSafa
         }
 
         do {
+            let autoAppendV1 = resolveAutoAppendV1()
             let provider = try store.addOpenAICompatibleProviderUsingOAuth(
                 label: labelText,
                 baseURLString: manualBaseURLText,
-                autoAppendV1: true,
-                bearerToken: trimmedToken
+                autoAppendV1: autoAppendV1,
+                bearerToken: trimmedToken,
+                chatGPTAccountID: oauthDerivedChatGPTAccountID
             )
             showAddedAlert(providerLabel: provider.label)
         } catch {
@@ -312,6 +316,8 @@ final class OpenAIOAuthProviderFormViewController: UITableViewController, SFSafa
                 manualBaseURLText = payload.baseURLString
             }
             manualBearerTokenText = payload.bearerToken
+            oauthSuggestedAutoAppendV1 = payload.autoAppendV1
+            oauthDerivedChatGPTAccountID = payload.chatGPTAccountID
             refreshManualInputRows()
 
         case let .failure(error):
@@ -407,6 +413,19 @@ final class OpenAIOAuthProviderFormViewController: UITableViewController, SFSafa
             (scheme == "https" || scheme == "http"),
             components.host?.isEmpty == false
         else {
+            return false
+        }
+        return true
+    }
+
+    private func resolveAutoAppendV1() -> Bool {
+        let trimmedBaseURL = manualBaseURLText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedBaseURL.isEmpty else {
+            return oauthSuggestedAutoAppendV1
+        }
+
+        let loweredBaseURL = trimmedBaseURL.lowercased()
+        if loweredBaseURL.contains("chatgpt.com/backend-api/codex") {
             return false
         }
         return true

@@ -42,6 +42,7 @@ struct LLMProviderRecord: Codable, Equatable, Hashable {
     let label: String
     let baseURLString: String
     let autoAppendV1: Bool
+    let chatGPTAccountID: String?
 
     var effectiveBaseURLString: String {
         guard autoAppendV1 else {
@@ -131,7 +132,8 @@ final class LLMProviderSettingsStore {
             updatedAt: now,
             label: normalizedLabel,
             baseURLString: normalizedBaseURL,
-            autoAppendV1: autoAppendV1
+            autoAppendV1: autoAppendV1,
+            chatGPTAccountID: nil
         )
 
         var allProviders = loadProviders()
@@ -146,7 +148,8 @@ final class LLMProviderSettingsStore {
         label: String,
         baseURLString: String?,
         autoAppendV1: Bool,
-        bearerToken: String?
+        bearerToken: String?,
+        chatGPTAccountID: String?
     ) throws -> LLMProviderRecord {
         let normalizedLabel = label.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedLabel.isEmpty else {
@@ -163,7 +166,8 @@ final class LLMProviderSettingsStore {
             updatedAt: now,
             label: normalizedLabel,
             baseURLString: normalizedBaseURL,
-            autoAppendV1: autoAppendV1
+            autoAppendV1: autoAppendV1,
+            chatGPTAccountID: chatGPTAccountID?.trimmingCharacters(in: .whitespacesAndNewlines)
         )
 
         var allProviders = loadProviders()
@@ -206,6 +210,43 @@ final class LLMProviderSettingsStore {
             return nil
         default:
             throw LLMProviderSettingsStoreError.keychainFailed(status: status)
+        }
+    }
+
+    func loadOAuthBearerToken(for providerID: String) throws -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: oauthBearerTokenAccount(providerID: providerID),
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+
+        switch status {
+        case errSecSuccess:
+            guard
+                let data = item as? Data,
+                let token = String(data: data, encoding: .utf8)
+            else {
+                return nil
+            }
+            return token
+        case errSecItemNotFound:
+            return nil
+        default:
+            throw LLMProviderSettingsStoreError.keychainFailed(status: status)
+        }
+    }
+
+    func loadBearerToken(for provider: LLMProviderRecord) throws -> String? {
+        switch provider.authMode {
+        case .apiKey:
+            return try loadAPIKey(for: provider.id)
+        case .oauth:
+            return try loadOAuthBearerToken(for: provider.id)
         }
     }
 

@@ -8,25 +8,11 @@
 import UIKit
 
 private struct HomeProjectItem: Hashable {
-    enum Source: Hashable {
-        case local
-        case imported
-
-        var badgeText: String {
-            switch self {
-            case .local:
-                return "本地"
-            case .imported:
-                return "导入"
-            }
-        }
-    }
-
     let id: String
     let name: String
     let summary: String
     let updatedAt: Date
-    let source: Source
+    let projectURL: URL
     let previewImagePath: String?
 }
 
@@ -42,6 +28,10 @@ final class HomeViewController: UIViewController {
 
     private var allProjects: [HomeProjectItem] = []
     private var filteredProjects: [HomeProjectItem] = []
+    private let projectStore = AppProjectStore.shared
+    private let defaults = UserDefaults.standard
+    private let customOrderKey = "home.project.custom_order.v1"
+    private var customProjectOrder: [String] = []
 
     private lazy var collectionView: UICollectionView = {
         let layout = UICollectionViewFlowLayout()
@@ -101,6 +91,7 @@ final class HomeViewController: UIViewController {
         super.viewDidLoad()
         configureNavigation()
         configureViewHierarchy()
+        loadCustomProjectOrder()
         reloadProjects()
     }
 
@@ -153,7 +144,13 @@ final class HomeViewController: UIViewController {
 
     @objc
     private func didTapAddButton() {
-        showPlaceholderAlert(title: "新建项目", message: "下一步将进入项目创建页面。")
+        do {
+            let project = try projectStore.createBlankProject()
+            reloadProjects()
+            openProject(name: project.name, projectURL: project.projectURL, isNewlyCreated: true)
+        } catch {
+            showPlaceholderAlert(title: "新建失败", message: error.localizedDescription)
+        }
     }
 
     @objc
@@ -164,6 +161,8 @@ final class HomeViewController: UIViewController {
 
     private func reloadProjects() {
         allProjects = loadProjectsFromDisk()
+        customProjectOrder = normalizedProjectOrder(from: customProjectOrder, projects: allProjects)
+        saveCustomProjectOrder()
         updateSearchBarVisibility()
         applyFilter(using: searchController.searchBar.text)
     }
@@ -215,7 +214,6 @@ final class HomeViewController: UIViewController {
             let projectId = (manifest["projectId"] as? String) ?? projectURL.lastPathComponent
             let name = (manifest["name"] as? String) ?? projectURL.lastPathComponent
             let summary = (manifest["prompt"] as? String) ?? (manifest["description"] as? String) ?? "暂无描述"
-            let source = parseSource(from: manifest["source"] as? String)
             let updatedAt = parseUpdatedAt(from: manifest) ?? values?.contentModificationDate ?? Date()
             let previewImagePath = findPreviewImagePath(in: projectURL)
 
@@ -225,15 +223,13 @@ final class HomeViewController: UIViewController {
                     name: name,
                     summary: summary,
                     updatedAt: updatedAt,
-                    source: source,
+                    projectURL: projectURL,
                     previewImagePath: previewImagePath
                 )
             )
         }
 
-        return projects.sorted { lhs, rhs in
-            lhs.updatedAt > rhs.updatedAt
-        }
+        return projects
     }
 
     private func loadManifest(from url: URL) -> [String: Any] {
@@ -254,13 +250,6 @@ final class HomeViewController: UIViewController {
 
         let formatter = ISO8601DateFormatter()
         return formatter.date(from: rawValue)
-    }
-
-    private func parseSource(from rawValue: String?) -> HomeProjectItem.Source {
-        guard let rawValue else {
-            return .local
-        }
-        return rawValue.lowercased() == "imported" ? .imported : .local
     }
 
     private func findPreviewImagePath(in projectURL: URL) -> String? {
@@ -289,9 +278,131 @@ final class HomeViewController: UIViewController {
                 project.name.lowercased().contains(keyword) || project.summary.lowercased().contains(keyword)
             }
         }
+        filteredProjects = applyCustomOrder(to: filteredProjects)
 
         collectionView.reloadData()
         updateEmptyState(for: keyword)
+    }
+
+    private func loadCustomProjectOrder() {
+        customProjectOrder = defaults.array(forKey: customOrderKey) as? [String] ?? []
+    }
+
+    private func saveCustomProjectOrder() {
+        defaults.set(customProjectOrder, forKey: customOrderKey)
+    }
+
+    private func normalizedProjectOrder(from persistedOrder: [String], projects: [HomeProjectItem]) -> [String] {
+        let existingIDs = Set(projects.map(\.id))
+        var normalizedOrder: [String] = []
+        var seen = Set<String>()
+
+        for id in persistedOrder where existingIDs.contains(id) && !seen.contains(id) {
+            normalizedOrder.append(id)
+            seen.insert(id)
+        }
+
+        let tailIDs = projects
+            .filter { !seen.contains($0.id) }
+            .sorted { lhs, rhs in
+                lhs.updatedAt > rhs.updatedAt
+            }
+            .map(\.id)
+
+        normalizedOrder.append(contentsOf: tailIDs)
+        return normalizedOrder
+    }
+
+    private func applyCustomOrder(to projects: [HomeProjectItem]) -> [HomeProjectItem] {
+        guard !projects.isEmpty else {
+            return []
+        }
+
+        let lookup = Dictionary(uniqueKeysWithValues: projects.map { ($0.id, $0) })
+        var ordered: [HomeProjectItem] = []
+        var seen = Set<String>()
+
+        for id in customProjectOrder {
+            guard let project = lookup[id], !seen.contains(id) else {
+                continue
+            }
+            ordered.append(project)
+            seen.insert(id)
+        }
+
+        if ordered.count < projects.count {
+            let remaining = projects
+                .filter { !seen.contains($0.id) }
+                .sorted { lhs, rhs in
+                    lhs.updatedAt > rhs.updatedAt
+                }
+            ordered.append(contentsOf: remaining)
+        }
+
+        return ordered
+    }
+
+    private func updateCustomProjectOrder(_ orderedIDs: [String]) {
+        customProjectOrder = normalizedProjectOrder(from: orderedIDs, projects: allProjects)
+        saveCustomProjectOrder()
+        applyFilter(using: searchController.searchBar.text)
+    }
+
+    private func openProjectSettings(_ project: HomeProjectItem) {
+        let controller = ProjectSettingsViewController(projectURL: project.projectURL, projectName: project.name)
+        controller.onProjectUpdated = { [weak self] _ in
+            self?.reloadProjects()
+        }
+
+        let navigationController = UINavigationController(rootViewController: controller)
+        navigationController.modalPresentationStyle = .pageSheet
+        if let sheet = navigationController.sheetPresentationController {
+            sheet.detents = [.medium(), .large()]
+            sheet.prefersGrabberVisible = true
+        }
+        present(navigationController, animated: true)
+    }
+
+    private func presentProjectSortPage() {
+        let orderedProjects = applyCustomOrder(to: allProjects)
+        let items = orderedProjects.map { project in
+            ProjectSortViewController.Item(id: project.id, name: project.name)
+        }
+
+        let controller = ProjectSortViewController(items: items)
+        controller.onDone = { [weak self] orderedIDs in
+            self?.updateCustomProjectOrder(orderedIDs)
+        }
+
+        let navigationController = UINavigationController(rootViewController: controller)
+        navigationController.modalPresentationStyle = .pageSheet
+        if let sheet = navigationController.sheetPresentationController {
+            sheet.detents = [.medium(), .large()]
+            sheet.prefersGrabberVisible = true
+        }
+        present(navigationController, animated: true)
+    }
+
+    private func presentDeleteConfirmation(for project: HomeProjectItem) {
+        let alert = UIAlertController(
+            title: "删除项目",
+            message: "确定删除「\(project.name)」吗？",
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        alert.addAction(UIAlertAction(title: "删除", style: .destructive, handler: { [weak self] _ in
+            self?.deleteProject(project)
+        }))
+        present(alert, animated: true)
+    }
+
+    private func deleteProject(_ project: HomeProjectItem) {
+        do {
+            try projectStore.deleteProject(projectURL: project.projectURL)
+            reloadProjects()
+        } catch {
+            showPlaceholderAlert(title: "删除失败", message: error.localizedDescription)
+        }
     }
 
     private func updateEmptyState(for keyword: String) {
@@ -302,7 +413,16 @@ final class HomeViewController: UIViewController {
     }
 
     private func openProject(_ project: HomeProjectItem) {
-        showPlaceholderAlert(title: project.name, message: "下一步将打开该项目的运行页面。")
+        openProject(name: project.name, projectURL: project.projectURL, isNewlyCreated: false)
+    }
+
+    private func openProject(name: String, projectURL: URL, isNewlyCreated: Bool) {
+        let controller = ProjectWorkspaceViewController(
+            projectName: name,
+            projectURL: projectURL,
+            isNewlyCreated: isNewlyCreated
+        )
+        navigationController?.pushViewController(controller, animated: true)
     }
 
     private func showPlaceholderAlert(title: String, message: String) {
@@ -345,6 +465,45 @@ extension HomeViewController: UICollectionViewDelegate {
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         let project = filteredProjects[indexPath.item]
         openProject(project)
+    }
+
+    func collectionView(
+        _ collectionView: UICollectionView,
+        contextMenuConfigurationForItemAt indexPath: IndexPath,
+        point: CGPoint
+    ) -> UIContextMenuConfiguration? {
+        let project = filteredProjects[indexPath.item]
+
+        return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
+            guard let self else {
+                return UIMenu(title: "", children: [])
+            }
+
+            let settingsAction = UIAction(title: "设置", image: UIImage(systemName: "gearshape")) { _ in
+                self.openProjectSettings(project)
+            }
+
+            let sortAction = UIAction(title: "排序", image: UIImage(systemName: "line.3.horizontal.decrease.circle")) { _ in
+                self.presentProjectSortPage()
+            }
+
+            let deleteAction = UIAction(
+                title: "删除",
+                image: UIImage(systemName: "trash"),
+                attributes: .destructive
+            ) { _ in
+                self.presentDeleteConfirmation(for: project)
+            }
+
+            return UIMenu(
+                title: "",
+                children: [
+                    settingsAction,
+                    sortAction,
+                    deleteAction
+                ]
+            )
+        }
     }
 }
 
@@ -393,18 +552,6 @@ private final class ProjectCardCell: UICollectionViewCell {
         return imageView
     }()
 
-    private let sourceBadgeLabel: UILabel = {
-        let label = UILabel()
-        label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = .systemFont(ofSize: 11, weight: .semibold)
-        label.textColor = .white
-        label.backgroundColor = UIColor.black.withAlphaComponent(0.45)
-        label.layer.cornerRadius = 6
-        label.layer.masksToBounds = true
-        label.textAlignment = .center
-        return label
-    }()
-
     private let titleLabel: UILabel = {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
@@ -443,7 +590,6 @@ private final class ProjectCardCell: UICollectionViewCell {
     func configure(project: HomeProjectItem, dateText: String) {
         titleLabel.text = project.name
         dateLabel.text = dateText
-        sourceBadgeLabel.text = "  \(project.source.badgeText)  "
 
         if let previewImagePath = project.previewImagePath, let image = UIImage(contentsOfFile: previewImagePath) {
             previewImageView.image = image
@@ -458,14 +604,12 @@ private final class ProjectCardCell: UICollectionViewCell {
         contentView.backgroundColor = .secondarySystemBackground
         contentView.layer.cornerRadius = 14
         contentView.layer.cornerCurve = .continuous
-        contentView.layer.borderWidth = 1
-        contentView.layer.borderColor = UIColor.separator.withAlphaComponent(0.22).cgColor
+        contentView.layer.borderWidth = 0
         contentView.clipsToBounds = true
 
         contentView.addSubview(previewContainer)
         previewContainer.addSubview(previewImageView)
         previewContainer.addSubview(placeholderIconView)
-        previewContainer.addSubview(sourceBadgeLabel)
         contentView.addSubview(titleLabel)
         contentView.addSubview(dateLabel)
     }
@@ -486,9 +630,6 @@ private final class ProjectCardCell: UICollectionViewCell {
             placeholderIconView.centerYAnchor.constraint(equalTo: previewContainer.centerYAnchor),
             placeholderIconView.widthAnchor.constraint(equalToConstant: 24),
             placeholderIconView.heightAnchor.constraint(equalToConstant: 24),
-
-            sourceBadgeLabel.topAnchor.constraint(equalTo: previewContainer.topAnchor, constant: 8),
-            sourceBadgeLabel.leadingAnchor.constraint(equalTo: previewContainer.leadingAnchor, constant: 8),
 
             titleLabel.topAnchor.constraint(equalTo: previewContainer.bottomAnchor, constant: 8),
             titleLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 8),

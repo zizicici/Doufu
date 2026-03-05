@@ -13,7 +13,9 @@ final class OpenAICodexOAuthService {
 
     struct SignInResult {
         let baseURLString: String
+        let autoAppendV1: Bool
         let bearerToken: String
+        let chatGPTAccountID: String?
         let idToken: String
         let accessToken: String
         let refreshToken: String
@@ -58,6 +60,13 @@ final class OpenAICodexOAuthService {
 
     private struct TokenExchangeResponse: Decodable {
         let access_token: String
+    }
+
+    private struct ResolvedBearerToken {
+        let token: String
+        let baseURLString: String
+        let autoAppendV1: Bool
+        let chatGPTAccountID: String?
     }
 
     private let issuer = URL(string: "https://auth.openai.com")!
@@ -130,7 +139,10 @@ final class OpenAICodexOAuthService {
             URLQueryItem(name: "response_type", value: "code"),
             URLQueryItem(name: "client_id", value: clientID),
             URLQueryItem(name: "redirect_uri", value: redirectURIString(callbackPort: callbackPort)),
-            URLQueryItem(name: "scope", value: "openid profile email offline_access"),
+            URLQueryItem(
+                name: "scope",
+                value: "openid profile email offline_access api.connectors.read api.connectors.invoke"
+            ),
             URLQueryItem(name: "code_challenge", value: pkceChallenge),
             URLQueryItem(name: "code_challenge_method", value: "S256"),
             URLQueryItem(name: "id_token_add_organizations", value: "true"),
@@ -177,14 +189,16 @@ final class OpenAICodexOAuthService {
                     redirectURI: redirectURI,
                     codeVerifier: pkce.verifier
                 )
-                let bearerToken = try await self.resolvePreferredBearerToken(
+                let resolvedBearerToken = try await self.resolvePreferredBearerToken(
                     idToken: tokens.id_token,
                     accessToken: tokens.access_token
                 )
 
                 let result = SignInResult(
-                    baseURLString: "https://api.openai.com",
-                    bearerToken: bearerToken,
+                    baseURLString: resolvedBearerToken.baseURLString,
+                    autoAppendV1: resolvedBearerToken.autoAppendV1,
+                    bearerToken: resolvedBearerToken.token,
+                    chatGPTAccountID: resolvedBearerToken.chatGPTAccountID,
                     idToken: tokens.id_token,
                     accessToken: tokens.access_token,
                     refreshToken: tokens.refresh_token
@@ -250,11 +264,16 @@ final class OpenAICodexOAuthService {
         }
     }
 
-    private func resolvePreferredBearerToken(idToken: String, accessToken: String) async throws -> String {
+    private func resolvePreferredBearerToken(idToken: String, accessToken: String) async throws -> ResolvedBearerToken {
         if let apiKeyLikeToken = try? await exchangeForAPIKey(idToken: idToken, accessToken: accessToken) {
             let normalizedAPIKeyLikeToken = apiKeyLikeToken.trimmingCharacters(in: .whitespacesAndNewlines)
             if !normalizedAPIKeyLikeToken.isEmpty {
-                return normalizedAPIKeyLikeToken
+                return ResolvedBearerToken(
+                    token: normalizedAPIKeyLikeToken,
+                    baseURLString: "https://api.openai.com",
+                    autoAppendV1: true,
+                    chatGPTAccountID: nil
+                )
             }
         }
 
@@ -262,7 +281,38 @@ final class OpenAICodexOAuthService {
         guard !normalizedAccessToken.isEmpty else {
             throw ServiceError.exchangeFailed("登录成功，但未获取到可用的 Bearer Token。")
         }
-        return normalizedAccessToken
+
+        return ResolvedBearerToken(
+            token: normalizedAccessToken,
+            baseURLString: "https://chatgpt.com/backend-api/codex",
+            autoAppendV1: false,
+            chatGPTAccountID: firstNonEmptyChatGPTAccountID(idToken: idToken, accessToken: accessToken)
+        )
+    }
+
+    private func firstNonEmptyChatGPTAccountID(idToken: String, accessToken: String) -> String? {
+        let claimsList = [
+            parseOpenAIAuthClaims(fromJWT: accessToken),
+            parseOpenAIAuthClaims(fromJWT: idToken)
+        ]
+
+        for claims in claimsList {
+            if let chatGPTAccountID = normalizedString(from: claims["chatgpt_account_id"]) {
+                return chatGPTAccountID
+            }
+            if let accountID = normalizedString(from: claims["account_id"]) {
+                return accountID
+            }
+        }
+        return nil
+    }
+
+    private func normalizedString(from value: Any?) -> String? {
+        guard let rawValue = value as? String else {
+            return nil
+        }
+        let normalized = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalized.isEmpty ? nil : normalized
     }
 
     private func requestAPIKeyToken(idToken: String, organizationID: String?) async throws -> String {
