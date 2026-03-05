@@ -52,6 +52,7 @@ final class CodexProjectChatViewController: UIViewController {
 
     private var messages: [Message] = []
     private var providerCredential: CodexProjectChatService.ProviderCredential?
+    private var sessionMemory: CodexProjectChatService.SessionMemory?
     private var isSending = false
 
     private lazy var tableView: UITableView = {
@@ -330,6 +331,10 @@ final class CodexProjectChatViewController: UIViewController {
         inputTextField.resignFirstResponder()
         let historyTurns = buildHistoryTurns()
         let streamingMessageIndex = appendMessage(role: .assistant, text: "Codex 正在生成...")
+        final class StreamState {
+            var hasReceivedModelText = false
+        }
+        let streamState = StreamState()
         isSending = true
         refreshSendButton()
 
@@ -342,13 +347,26 @@ final class CodexProjectChatViewController: UIViewController {
                     history: historyTurns,
                     projectURL: projectURL,
                     credential: providerCredential,
+                    memory: sessionMemory,
                     onStreamedText: { [weak self] partialText in
                         guard let self, let streamingMessageIndex else {
                             return
                         }
+                        streamState.hasReceivedModelText = true
                         self.updateMessage(at: streamingMessageIndex, text: partialText)
+                    },
+                    onProgress: { [weak self] phaseText in
+                        guard let self, let streamingMessageIndex else {
+                            return
+                        }
+                        guard !streamState.hasReceivedModelText else {
+                            return
+                        }
+                        self.updateMessage(at: streamingMessageIndex, text: phaseText)
                     }
                 )
+
+                sessionMemory = result.updatedMemory
 
                 var assistantText = result.assistantMessage
                 if !result.changedPaths.isEmpty {

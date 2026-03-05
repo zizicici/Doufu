@@ -66,18 +66,29 @@
 
 ## Codex 请求链路（当前实现）
 
-1. 收集项目上下文
-   - 读取项目内文本文件（最多 40 个、单文件最多 120KB）。
-2. 构造请求
-   - 使用 `responses` 接口流式请求；
+1. 阶段 0：任务规划
+   - 先请求 `plan_tasks`，把复杂请求拆成 1-5 个可顺序执行的子任务。
+   - 每个子任务独立执行，任一步失败即停止后续任务。
+2. 阶段 1：文件索引与检索
+   - 扫描项目文本文件生成轻量目录（`path/byteCount/lineCount/preview`）。
+   - 先请求模型仅返回 `selected_paths`，选择真正相关文件。
+3. 阶段 2：补丁生成
+   - 仅携带选中文件内容进入主生成请求，避免整包文件上传。
    - 角色映射：`user -> input_text`，`assistant -> output_text`（兼容后端校验）。
-3. 模型输出要求
+   - 轻量模式下每个子任务最多带 3 个文件，降低单次风险。
+4. 上下文压缩
+   - 历史消息有上限，较早轮次自动摘要压缩再注入上下文。
+   - 文件上下文执行单文件和总量预算裁剪，控制 token 膨胀。
+5. 会话结构化记忆
+   - 内部维护并滚动更新 memory block：`objective / constraints / changed_files / todo_items`。
+   - 每轮请求注入 memory block，模型可返回 `memory_update` 增量更新。
+6. 模型输出要求
    - 强制返回 JSON：`assistant_message + changes[]`。
-4. 响应解析
+7. 响应解析
    - 处理标准 SSE 事件，也兼容部分后端的“逐行 JSON”变体。
-5. 安全落盘
+8. 安全落盘
    - 仅允许相对路径，禁止绝对路径和 `..`。
-6. 超时与推理
+9. 超时与推理
    - `reasoning=high` 默认超时 400s；
    - `reasoning=xhigh` 超时 600s，若后端拒绝则自动降级回 `high`。
 

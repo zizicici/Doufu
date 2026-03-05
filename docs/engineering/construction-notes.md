@@ -34,14 +34,21 @@
 1. 调用 `responses` 接口时，历史消息 content type 必须和角色匹配：
    - `user -> input_text`
    - `assistant -> output_text`
-2. 请求体必须包含 `instructions`（当前实现依赖该字段约束 JSON 输出结构）。
-3. 返回流需要兼容多种事件形态：
+2. 聊天链路采用“两阶段请求”：
+   - 阶段 A：文件检索（仅返回 `selected_paths`）
+   - 阶段 B：补丁生成（返回 `assistant_message + changes`）
+   - 在复杂需求下会先执行 `plan_tasks`，再逐任务走 A/B 阶段。
+3. 请求体必须包含 `instructions`（当前实现依赖该字段约束 JSON 输出结构）。
+4. 返回流需要兼容多种事件形态：
    - 标准 SSE 事件
    - newline-delimited JSON（无空行分隔）
-4. JSON 补丁落盘前必须做路径安全检查：
+5. JSON 补丁落盘前必须做路径安全检查：
    - 仅允许相对路径
    - 禁止 `..` 与绝对路径
-5. 对 `xhigh` 不支持的后端要自动降级为 `high` 重试。
+6. 对 `xhigh` 不支持的后端要自动降级为 `high` 重试。
+7. 历史对话和文件内容都要做预算裁剪，避免上下文无限增长。
+8. 维护结构化会话记忆块（`objective/constraints/changed_files/todo_items`），并在每轮自动滚动更新。
+9. 轻量子任务执行约束：每个子任务默认最多携带 3 个文件；任一步失败即停止后续任务并提示重试。
 
 ## 调试与排障
 
@@ -50,6 +57,7 @@
    - `invalidResponse`
    - SSE 原始事件列表
 2. 建议保留请求体和响应头输出，便于定位后端字段兼容问题。
+3. 请求日志中需要区分阶段标签（如 `select_context_files`、`generate_patch`）。
 
 ## 测试建议
 
