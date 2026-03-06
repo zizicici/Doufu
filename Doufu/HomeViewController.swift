@@ -57,7 +57,7 @@ final class HomeViewController: UIViewController {
     private lazy var searchController: UISearchController = {
         let controller = UISearchController(searchResultsController: nil)
         controller.obscuresBackgroundDuringPresentation = false
-        controller.searchBar.placeholder = "搜索项目"
+        controller.searchBar.placeholder = String(localized: "home.search.placeholder")
         controller.searchResultsUpdater = self
         return controller
     }()
@@ -76,7 +76,7 @@ final class HomeViewController: UIViewController {
         label.textAlignment = .center
         label.textColor = .secondaryLabel
         label.font = .systemFont(ofSize: 15, weight: .regular)
-        label.text = "还没有网页项目，点击右上角 + 创建第一个吧。"
+        label.text = String(localized: "home.empty.default")
         return label
     }()
 
@@ -101,7 +101,7 @@ final class HomeViewController: UIViewController {
     }
 
     private func configureNavigation() {
-        title = "豆腐"
+        title = String(localized: "home.title")
         navigationController?.navigationBar.prefersLargeTitles = false
 
         navigationItem.leftBarButtonItem = UIBarButtonItem(
@@ -149,7 +149,7 @@ final class HomeViewController: UIViewController {
             reloadProjects()
             openProject(name: project.name, projectURL: project.projectURL, isNewlyCreated: true)
         } catch {
-            showPlaceholderAlert(title: "新建失败", message: error.localizedDescription)
+            showPlaceholderAlert(title: String(localized: "home.alert.create_failed.title"), message: error.localizedDescription)
         }
     }
 
@@ -213,7 +213,9 @@ final class HomeViewController: UIViewController {
             let manifest = loadManifest(from: manifestURL)
             let projectId = (manifest["projectId"] as? String) ?? projectURL.lastPathComponent
             let name = (manifest["name"] as? String) ?? projectURL.lastPathComponent
-            let summary = (manifest["prompt"] as? String) ?? (manifest["description"] as? String) ?? "暂无描述"
+            let summary = (manifest["prompt"] as? String)
+                ?? (manifest["description"] as? String)
+                ?? String(localized: "home.project.no_description")
             let updatedAt = parseUpdatedAt(from: manifest) ?? values?.contentModificationDate ?? Date()
             let previewImagePath = findPreviewImagePath(in: projectURL)
 
@@ -385,12 +387,12 @@ final class HomeViewController: UIViewController {
 
     private func presentDeleteConfirmation(for project: HomeProjectItem) {
         let alert = UIAlertController(
-            title: "删除项目",
-            message: "确定删除「\(project.name)」吗？",
+            title: String(localized: "home.alert.delete.title"),
+            message: String(format: String(localized: "home.alert.delete.message_format"), project.name),
             preferredStyle: .alert
         )
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
-        alert.addAction(UIAlertAction(title: "删除", style: .destructive, handler: { [weak self] _ in
+        alert.addAction(UIAlertAction(title: String(localized: "common.action.cancel"), style: .cancel))
+        alert.addAction(UIAlertAction(title: String(localized: "common.action.delete"), style: .destructive, handler: { [weak self] _ in
             self?.deleteProject(project)
         }))
         present(alert, animated: true)
@@ -401,14 +403,14 @@ final class HomeViewController: UIViewController {
             try projectStore.deleteProject(projectURL: project.projectURL)
             reloadProjects()
         } catch {
-            showPlaceholderAlert(title: "删除失败", message: error.localizedDescription)
+            showPlaceholderAlert(title: String(localized: "home.alert.delete_failed.title"), message: error.localizedDescription)
         }
     }
 
     private func updateEmptyState(for keyword: String) {
         emptyStateLabel.text = keyword.isEmpty
-            ? "还没有网页项目，点击右上角 + 创建第一个吧。"
-            : "没有匹配的项目，换个关键词试试。"
+            ? String(localized: "home.empty.default")
+            : String(localized: "home.empty.no_match")
         emptyStateContainer.isHidden = !filteredProjects.isEmpty
     }
 
@@ -427,7 +429,7 @@ final class HomeViewController: UIViewController {
 
     private func showPlaceholderAlert(title: String, message: String) {
         let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "知道了", style: .default))
+        alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
         present(alert, animated: true)
     }
 
@@ -479,16 +481,16 @@ extension HomeViewController: UICollectionViewDelegate {
                 return UIMenu(title: "", children: [])
             }
 
-            let settingsAction = UIAction(title: "设置", image: UIImage(systemName: "gearshape")) { _ in
+            let settingsAction = UIAction(title: String(localized: "home.menu.settings"), image: UIImage(systemName: "gearshape")) { _ in
                 self.openProjectSettings(project)
             }
 
-            let sortAction = UIAction(title: "排序", image: UIImage(systemName: "line.3.horizontal.decrease.circle")) { _ in
+            let sortAction = UIAction(title: String(localized: "home.menu.sort"), image: UIImage(systemName: "line.3.horizontal.decrease.circle")) { _ in
                 self.presentProjectSortPage()
             }
 
             let deleteAction = UIAction(
-                title: "删除",
+                title: String(localized: "common.action.delete"),
                 image: UIImage(systemName: "trash"),
                 attributes: .destructive
             ) { _ in

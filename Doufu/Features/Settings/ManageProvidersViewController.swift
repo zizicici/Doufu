@@ -23,7 +23,7 @@ final class ManageProvidersViewController: UITableViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        title = "Providers"
+        title = String(localized: "providers.manage.title")
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "ProviderCell")
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "PlaceholderCell")
         navigationItem.rightBarButtonItem = UIBarButtonItem(
@@ -51,14 +51,16 @@ final class ManageProvidersViewController: UITableViewController {
         _ tableView: UITableView,
         titleForHeaderInSection section: Int
     ) -> String? {
-        "Configured Providers"
+        String(localized: "providers.manage.section.configured")
     }
 
     override func tableView(
         _ tableView: UITableView,
         titleForFooterInSection section: Int
     ) -> String? {
-        providers.isEmpty ? "点击右上角 + 添加第一个 Provider。" : "左滑可删除 Provider。"
+        providers.isEmpty
+            ? String(localized: "providers.manage.footer.empty_hint")
+            : String(localized: "providers.manage.footer.delete_hint")
     }
 
     override func tableView(
@@ -69,7 +71,7 @@ final class ManageProvidersViewController: UITableViewController {
             let cell = tableView.dequeueReusableCell(withIdentifier: "PlaceholderCell", for: indexPath)
             cell.selectionStyle = .none
             var configuration = UIListContentConfiguration.cell()
-            configuration.text = "还没有 Provider"
+            configuration.text = String(localized: "providers.manage.empty")
             configuration.textProperties.alignment = .center
             configuration.textProperties.color = .secondaryLabel
             cell.contentConfiguration = configuration
@@ -85,7 +87,11 @@ final class ManageProvidersViewController: UITableViewController {
             ? UIImage(systemName: "key.fill")
             : UIImage(systemName: "person.crop.circle.badge.checkmark")
         configuration.text = provider.label
-        configuration.secondaryText = "\(provider.kind.displayName) · \(provider.authMode.displayName)"
+        configuration.secondaryText = String(
+            format: String(localized: "providers.manage.item.subtitle_format"),
+            provider.kind.displayName,
+            provider.authMode.displayName
+        )
         configuration.secondaryTextProperties.color = .secondaryLabel
         cell.contentConfiguration = configuration
         return cell
@@ -100,7 +106,7 @@ final class ManageProvidersViewController: UITableViewController {
         }
 
         let provider = providers[indexPath.row]
-        let deleteAction = UIContextualAction(style: .destructive, title: "删除") { [weak self] _, _, completion in
+        let deleteAction = UIContextualAction(style: .destructive, title: String(localized: "common.action.delete")) { [weak self] _, _, completion in
             self?.deleteProvider(provider, completion: completion)
         }
         deleteAction.backgroundColor = .systemRed
@@ -125,11 +131,11 @@ final class ManageProvidersViewController: UITableViewController {
 
     private func showError(message: String) {
         let alert = UIAlertController(
-            title: "删除失败",
+            title: String(localized: "providers.manage.alert.delete_failed.title"),
             message: message,
             preferredStyle: .alert
         )
-        alert.addAction(UIAlertAction(title: "知道了", style: .default))
+        alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
         present(alert, animated: true)
     }
 

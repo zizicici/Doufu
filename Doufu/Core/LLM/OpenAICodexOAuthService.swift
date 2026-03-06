@@ -32,17 +32,17 @@ final class OpenAICodexOAuthService {
         var errorDescription: String? {
             switch self {
             case .alreadyRunning:
-                return "登录流程已在进行中。"
+                return String(localized: "oauth.error.already_running")
             case .callbackServerStartFailed:
-                return "无法启动本地回调服务，请稍后重试。"
+                return String(localized: "oauth.error.callback_server_start_failed")
             case .callbackStateMismatch:
-                return "登录校验失败（state mismatch）。"
+                return String(localized: "oauth.error.callback_state_mismatch")
             case .callbackMissingCode:
-                return "登录回调缺少授权码。"
+                return String(localized: "oauth.error.callback_missing_code")
             case let .exchangeFailed(message):
                 return message
             case .cancelled:
-                return "登录已取消。"
+                return String(localized: "oauth.error.cancelled")
             }
         }
     }
@@ -173,7 +173,7 @@ final class OpenAICodexOAuthService {
         }
 
         guard let pkce else {
-            complete(.failure(ServiceError.exchangeFailed("登录状态无效，请重试。")))
+            complete(.failure(ServiceError.exchangeFailed(String(localized: "oauth.error.invalid_state"))))
             return
         }
 
@@ -228,7 +228,7 @@ final class OpenAICodexOAuthService {
             path: "/oauth/token",
             bodyItems: bodyItems,
             responseType: AuthorizationTokens.self,
-            defaultErrorPrefix: "授权码换取 token 失败"
+            defaultErrorPrefix: String(localized: "oauth.error.token_exchange_prefix")
         )
     }
 
@@ -256,7 +256,7 @@ final class OpenAICodexOAuthService {
 
             if organizationIDs.isEmpty {
                 throw ServiceError.exchangeFailed(
-                    "Bearer Token 获取失败：登录信息缺少 organization_id。请确认账号已开通 OpenAI Platform 并重试。"
+                    String(localized: "oauth.error.bearer_missing_org")
                 )
             }
 
@@ -279,7 +279,7 @@ final class OpenAICodexOAuthService {
 
         let normalizedAccessToken = accessToken.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedAccessToken.isEmpty else {
-            throw ServiceError.exchangeFailed("登录成功，但未获取到可用的 Bearer Token。")
+            throw ServiceError.exchangeFailed(String(localized: "oauth.error.no_bearer_after_login"))
         }
 
         return ResolvedBearerToken(
@@ -338,7 +338,7 @@ final class OpenAICodexOAuthService {
             path: "/oauth/token",
             bodyItems: bodyItems,
             responseType: TokenExchangeResponse.self,
-            defaultErrorPrefix: "Bearer Token 获取失败"
+            defaultErrorPrefix: String(localized: "oauth.error.bearer_fetch_prefix")
         )
         return exchangeResponse.access_token
     }
@@ -456,18 +456,24 @@ final class OpenAICodexOAuthService {
 
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {
-            throw ServiceError.exchangeFailed("\(defaultErrorPrefix)：服务响应无效。")
+            throw ServiceError.exchangeFailed(
+                String(format: String(localized: "oauth.error.prefixed_invalid_response_format"), defaultErrorPrefix)
+            )
         }
 
         guard (200 ... 299).contains(httpResponse.statusCode) else {
             let message = parseEndpointErrorMessage(data: data) ?? HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
-            throw ServiceError.exchangeFailed("\(defaultErrorPrefix)：\(message)")
+            throw ServiceError.exchangeFailed(
+                String(format: String(localized: "oauth.error.prefixed_message_format"), defaultErrorPrefix, message)
+            )
         }
 
         do {
             return try JSONDecoder().decode(responseType, from: data)
         } catch {
-            throw ServiceError.exchangeFailed("\(defaultErrorPrefix)：响应解析失败。")
+            throw ServiceError.exchangeFailed(
+                String(format: String(localized: "oauth.error.prefixed_parse_failed_format"), defaultErrorPrefix)
+            )
         }
     }
 
@@ -677,13 +683,21 @@ private final class LocalhostOAuthCallbackServer {
         let requestLine = requestText.components(separatedBy: "\r\n").first ?? ""
         let parts = requestLine.split(separator: " ")
         guard parts.count >= 2 else {
-            sendHTMLResponse(connection: connection, statusCode: 400, html: "<html><body>Bad Request</body></html>")
+            sendHTMLResponse(
+                connection: connection,
+                statusCode: 400,
+                html: "<html><body>\(String(localized: "oauth.callback.bad_request"))</body></html>"
+            )
             return
         }
 
         let target = String(parts[1])
         guard target.hasPrefix(callbackPath) else {
-            sendHTMLResponse(connection: connection, statusCode: 404, html: "<html><body>Not Found</body></html>")
+            sendHTMLResponse(
+                connection: connection,
+                statusCode: 404,
+                html: "<html><body>\(String(localized: "oauth.callback.not_found"))</body></html>"
+            )
             return
         }
 
@@ -691,7 +705,9 @@ private final class LocalhostOAuthCallbackServer {
         sendHTMLResponse(
             connection: connection,
             statusCode: 200,
-            html: "<html><body><h3>Login complete.</h3><p>You can return to Doufu now.</p></body></html>"
+            html: """
+            <html><body><h3>\(String(localized: "oauth.callback.login_complete.title"))</h3><p>\(String(localized: "oauth.callback.login_complete.body"))</p></body></html>
+            """
         )
 
         guard let callbackURL else {

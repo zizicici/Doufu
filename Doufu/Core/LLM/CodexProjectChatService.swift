@@ -50,13 +50,13 @@ final class CodexProjectChatService {
         var displayName: String {
             switch self {
             case .low:
-                return "Low"
+                return String(localized: "chat.reasoning.low")
             case .medium:
-                return "Medium"
+                return String(localized: "chat.reasoning.medium")
             case .high:
-                return "High"
+                return String(localized: "chat.reasoning.high")
             case .xhigh:
-                return "XHigh"
+                return String(localized: "chat.reasoning.xhigh")
             }
         }
     }
@@ -92,13 +92,13 @@ final class CodexProjectChatService {
         var errorDescription: String? {
             switch self {
             case .noProjectFiles:
-                return "项目目录为空，无法生成上下文。"
+                return String(localized: "chat_service.error.no_project_files")
             case .invalidResponse:
-                return "模型响应格式无效，请重试。"
+                return String(localized: "chat_service.error.invalid_response")
             case .invalidPatchJSON:
-                return "模型未返回可解析的 JSON 变更。"
+                return String(localized: "chat_service.error.invalid_patch_json")
             case let .invalidPath(path):
-                return "模型返回了不安全的文件路径：\(path)"
+                return String(format: String(localized: "chat_service.error.invalid_path_format"), path)
             case let .networkFailed(message):
                 return message
             }

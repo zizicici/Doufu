@@ -16,18 +16,18 @@ final class OpenAIProviderAuthMethodViewController: UITableViewController {
         var title: String {
             switch self {
             case .apiKey:
-                return "API Key"
+                return String(localized: "providers.auth_method.api_key.title")
             case .oauth:
-                return "OAuth"
+                return String(localized: "providers.auth_method.oauth.title")
             }
         }
 
         var subtitle: String {
             switch self {
             case .apiKey:
-                return "通过 API Key 添加 Provider"
+                return String(localized: "providers.auth_method.api_key.subtitle")
             case .oauth:
-                return "登录成功后自动填入网址与 Bearer Token"
+                return String(localized: "providers.auth_method.oauth.subtitle")
             }
         }
 
@@ -52,7 +52,7 @@ final class OpenAIProviderAuthMethodViewController: UITableViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        title = "OpenAI / Compatible API"
+        title = String(localized: "providers.kind.openai_compatible.title")
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "MethodCell")
     }
 
@@ -68,7 +68,7 @@ final class OpenAIProviderAuthMethodViewController: UITableViewController {
         _ tableView: UITableView,
         titleForHeaderInSection section: Int
     ) -> String? {
-        "Method"
+        String(localized: "providers.auth_method.section.title")
     }
 
     override func tableView(

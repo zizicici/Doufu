@@ -57,7 +57,7 @@ final class OpenAIOAuthProviderFormViewController: UITableViewController, SFSafa
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        title = "OAuth"
+        title = String(localized: "providers.oauth_form.title")
         tableView.keyboardDismissMode = .onDrag
         tableView.register(SettingsTextInputCell.self, forCellReuseIdentifier: SettingsTextInputCell.reuseIdentifier)
         tableView.register(SettingsSecureInputCell.self, forCellReuseIdentifier: SettingsSecureInputCell.reuseIdentifier)
@@ -88,11 +88,11 @@ final class OpenAIOAuthProviderFormViewController: UITableViewController, SFSafa
 
         switch section {
         case .label:
-            return "Label"
+            return String(localized: "providers.form.section.label")
         case .oauth:
-            return "OAuth"
+            return String(localized: "providers.form.section.oauth")
         case .manual:
-            return "Or Configure Manually"
+            return String(localized: "providers.oauth_form.section.manual")
         }
     }
 
@@ -103,9 +103,9 @@ final class OpenAIOAuthProviderFormViewController: UITableViewController, SFSafa
 
         switch section {
         case .oauth:
-            return "点击后将跳转 OpenAI 登录，成功后将自动填入网址和 Bearer Token。"
+            return String(localized: "providers.oauth_form.footer.oauth")
         case .manual:
-            return "留空网址时默认使用 https://api.openai.com"
+            return String(localized: "providers.form.footer.base_url_default")
         default:
             return nil
         }
@@ -132,7 +132,7 @@ final class OpenAIOAuthProviderFormViewController: UITableViewController, SFSafa
             cell.configure(
                 title: nil,
                 text: labelText,
-                placeholder: "Provider Name",
+                placeholder: String(localized: "providers.form.placeholder.provider_name"),
                 autocapitalizationType: .words
             ) { [weak self] text in
                 self?.labelText = text
@@ -150,7 +150,7 @@ final class OpenAIOAuthProviderFormViewController: UITableViewController, SFSafa
                 return UITableViewCell()
             }
             cell.configure(
-                title: "Sign in with OpenAI",
+                title: String(localized: "providers.oauth_form.button.sign_in"),
                 isEnabled: oauthService == nil
             )
             return cell
@@ -173,7 +173,7 @@ final class OpenAIOAuthProviderFormViewController: UITableViewController, SFSafa
                 cell.configure(
                     title: nil,
                     text: manualBaseURLText,
-                    placeholder: "https://api.openai.com",
+                    placeholder: String(localized: "providers.form.placeholder.base_url"),
                     keyboardType: .URL,
                     autocapitalizationType: .none
                 ) { [weak self] text in
@@ -193,7 +193,7 @@ final class OpenAIOAuthProviderFormViewController: UITableViewController, SFSafa
                 }
                 cell.configure(
                     text: manualBearerTokenText,
-                    placeholder: "Bearer Token"
+                    placeholder: String(localized: "providers.form.placeholder.bearer_token")
                 ) { [weak self] text in
                     self?.manualBearerTokenText = text
                     self?.refreshAddProviderCell()
@@ -209,7 +209,7 @@ final class OpenAIOAuthProviderFormViewController: UITableViewController, SFSafa
                 else {
                     return UITableViewCell()
                 }
-                cell.configure(title: "Add Provider", isEnabled: canSubmitProvider)
+                cell.configure(title: String(localized: "providers.form.button.add_provider"), isEnabled: canSubmitProvider)
                 return cell
             }
         }
@@ -280,7 +280,7 @@ final class OpenAIOAuthProviderFormViewController: UITableViewController, SFSafa
 
         let trimmedToken = manualBearerTokenText.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmedToken.isEmpty {
-            showError(message: "请先登录成功，或直接填写 Bearer Token。")
+            showError(message: String(localized: "providers.oauth_form.error.empty_token"))
             return
         }
 
@@ -300,8 +300,12 @@ final class OpenAIOAuthProviderFormViewController: UITableViewController, SFSafa
     }
 
     private func showError(message: String) {
-        let alert = UIAlertController(title: "添加失败", message: message, preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "知道了", style: .default))
+        let alert = UIAlertController(
+            title: String(localized: "providers.form.alert.add_failed.title"),
+            message: message,
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
         present(alert, animated: true)
     }
 
@@ -350,11 +354,14 @@ final class OpenAIOAuthProviderFormViewController: UITableViewController, SFSafa
 
     private func showAddedAlert(providerLabel: String) {
         let alert = UIAlertController(
-            title: "添加成功",
-            message: "Provider「\(providerLabel)」已添加。",
+            title: String(localized: "providers.form.alert.add_success.title"),
+            message: String(
+                format: String(localized: "providers.form.alert.add_success.message_format"),
+                providerLabel
+            ),
             preferredStyle: .alert
         )
-        alert.addAction(UIAlertAction(title: "完成", style: .default, handler: { [weak self] _ in
+        alert.addAction(UIAlertAction(title: String(localized: "common.action.done"), style: .default, handler: { [weak self] _ in
             self?.popToManageProviders()
         }))
         present(alert, animated: true)

@@ -19,9 +19,9 @@ final class CodexProjectChatViewController: UIViewController {
         var errorDescription: String? {
             switch self {
             case .noAvailableProvider:
-                return "没有可用的 Provider。请先在设置中添加 API Key 或 OAuth Provider。"
+                return String(localized: "chat.error.no_provider")
             case .noThreadAvailable:
-                return "没有可用线程，请先创建线程。"
+                return String(localized: "chat.error.no_thread")
             }
         }
     }
@@ -35,11 +35,11 @@ final class CodexProjectChatViewController: UIViewController {
             var prefix: String {
                 switch self {
                 case .user:
-                    return "你"
+                    return String(localized: "chat.role.user_prefix")
                 case .assistant:
-                    return "Codex"
+                    return String(localized: "chat.role.assistant_prefix")
                 case .system:
-                    return "系统"
+                    return String(localized: "chat.role.system_prefix")
                 }
             }
         }
@@ -92,7 +92,7 @@ final class CodexProjectChatViewController: UIViewController {
     )
 
     private lazy var threadBarButtonItem = UIBarButtonItem(
-        title: "Threads",
+        title: String(localized: "chat.thread.button_title"),
         style: .plain,
         target: nil,
         action: nil
@@ -133,7 +133,7 @@ final class CodexProjectChatViewController: UIViewController {
     private lazy var inputPlaceholderLabel: UILabel = {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.text = "描述你想让 Codex 修改的内容"
+        label.text = String(localized: "chat.input.placeholder")
         label.textColor = .placeholderText
         label.font = .systemFont(ofSize: 16)
         label.numberOfLines = 1
@@ -147,7 +147,7 @@ final class CodexProjectChatViewController: UIViewController {
         let button = UIButton(configuration: configuration)
         button.translatesAutoresizingMaskIntoConstraints = false
         button.addTarget(self, action: #selector(didTapSend), for: .touchUpInside)
-        button.accessibilityLabel = "发送"
+        button.accessibilityLabel = String(localized: "chat.action.send")
         return button
     }()
 
@@ -164,7 +164,7 @@ final class CodexProjectChatViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        title = "Codex 聊天"
+        title = String(localized: "chat.title")
         view.backgroundColor = .systemGroupedBackground
         configureNavigation()
         configureLayout()
@@ -202,7 +202,7 @@ final class CodexProjectChatViewController: UIViewController {
     }
 
     private func refreshNavigationItems() {
-        threadBarButtonItem.title = currentThread?.title ?? "Threads"
+        threadBarButtonItem.title = currentThread?.title ?? String(localized: "chat.thread.button_title")
         threadBarButtonItem.menu = isSending ? nil : buildThreadMenu()
         threadBarButtonItem.isEnabled = !isSending
         navigationItem.leftBarButtonItem = threadBarButtonItem
@@ -303,7 +303,13 @@ final class CodexProjectChatViewController: UIViewController {
         guard messages.isEmpty else {
             return
         }
-        _ = appendMessage(role: .system, text: "已连接 Provider「\(credential.providerLabel)」。你现在可以描述要改的网页需求。")
+        _ = appendMessage(
+            role: .system,
+            text: String(
+                format: String(localized: "chat.system.provider_connected.message_format"),
+                credential.providerLabel
+            )
+        )
         persistCurrentThreadMessages()
     }
 
@@ -353,14 +359,17 @@ final class CodexProjectChatViewController: UIViewController {
                 }
         } else {
             threadActions = [
-                UIAction(title: "暂无线程", attributes: .disabled) { _ in }
+                UIAction(title: String(localized: "chat.menu.no_thread"), attributes: .disabled) { _ in }
             ]
         }
 
-        let createAction = UIAction(title: "新建线程", image: UIImage(systemName: "plus")) { [weak self] _ in
+        let createAction = UIAction(
+            title: String(localized: "chat.menu.new_thread"),
+            image: UIImage(systemName: "plus")
+        ) { [weak self] _ in
             self?.createAndSwitchThread()
         }
-        return UIMenu(title: "Threads", children: threadActions + [createAction])
+        return UIMenu(title: String(localized: "chat.thread.button_title"), children: threadActions + [createAction])
     }
 
     private func buildReasoningMenu() -> UIMenu {
@@ -373,7 +382,7 @@ final class CodexProjectChatViewController: UIViewController {
                 self?.refreshNavigationItems()
             }
         }
-        return UIMenu(title: "Reasoning", children: actions)
+        return UIMenu(title: String(localized: "chat.menu.reasoning"), children: actions)
     }
 
     private func handleSwitchThread(threadID: String) {
@@ -399,7 +408,7 @@ final class CodexProjectChatViewController: UIViewController {
                 throw LocalError.noThreadAvailable
             }
             try switchToThread(threadID: currentThreadID, appendStatusMessage: false)
-            _ = appendMessage(role: .system, text: "已创建并切换到新线程。")
+            _ = appendMessage(role: .system, text: String(localized: "chat.system.thread_created"))
             persistCurrentThreadMessages()
             refreshNavigationItems()
         } catch {
@@ -449,7 +458,10 @@ final class CodexProjectChatViewController: UIViewController {
         }
 
         if appendStatusMessage {
-            _ = appendMessage(role: .system, text: "已切换到线程「\(switched.title)」。")
+            _ = appendMessage(
+                role: .system,
+                text: String(format: String(localized: "chat.system.thread_switched.message_format"), switched.title)
+            )
         }
         appendProviderStatusIfNeeded()
 
@@ -697,7 +709,7 @@ final class CodexProjectChatViewController: UIViewController {
             configuration.baseForegroundColor = .white
             configuration.cornerStyle = .capsule
             sendButton.configuration = configuration
-            sendButton.accessibilityLabel = "取消"
+            sendButton.accessibilityLabel = String(localized: "chat.action.cancel")
         } else {
             sendButton.isEnabled = hasText && hasProvider && hasThread
             var configuration = sendButton.configuration ?? UIButton.Configuration.filled()
@@ -706,7 +718,7 @@ final class CodexProjectChatViewController: UIViewController {
             configuration.baseForegroundColor = .white
             configuration.cornerStyle = .capsule
             sendButton.configuration = configuration
-            sendButton.accessibilityLabel = "发送"
+            sendButton.accessibilityLabel = String(localized: "chat.action.send")
         }
         inputTextView.isEditable = !isSending
         inputTextView.alpha = isSending ? 0.72 : 1.0
@@ -797,7 +809,10 @@ final class CodexProjectChatViewController: UIViewController {
                 var assistantText = result.assistantMessage
                 if !result.changedPaths.isEmpty {
                     let changesSummary = result.changedPaths.joined(separator: ", ")
-                    assistantText += "\n\n已更新文件：\(changesSummary)"
+                    assistantText += String(
+                        format: String(localized: "chat.system.files_updated.append_format"),
+                        changesSummary
+                    )
                 }
                 _ = appendMessage(
                     role: .assistant,
@@ -822,7 +837,13 @@ final class CodexProjectChatViewController: UIViewController {
                         }
                     }
                 } catch {
-                    _ = appendMessage(role: .system, text: "线程记忆更新失败：\(error.localizedDescription)")
+                    _ = appendMessage(
+                        role: .system,
+                        text: String(
+                            format: String(localized: "chat.system.memory_update_failed.message_format"),
+                            error.localizedDescription
+                        )
+                    )
                 }
 
                 if !result.changedPaths.isEmpty {
@@ -833,7 +854,7 @@ final class CodexProjectChatViewController: UIViewController {
                 if !didAppendCancelMessage {
                     _ = appendMessage(
                         role: .system,
-                        text: "已取消本次请求。",
+                        text: String(localized: "chat.system.request_cancelled"),
                         startedAt: currentRequestStartedAt
                     )
                     didAppendCancelMessage = true
@@ -844,7 +865,7 @@ final class CodexProjectChatViewController: UIViewController {
                     if !didAppendCancelMessage {
                         _ = appendMessage(
                             role: .system,
-                            text: "已取消本次请求。",
+                            text: String(localized: "chat.system.request_cancelled"),
                             startedAt: currentRequestStartedAt
                         )
                         didAppendCancelMessage = true
@@ -870,7 +891,7 @@ final class CodexProjectChatViewController: UIViewController {
         if showMessage, !didAppendCancelMessage {
             _ = appendMessage(
                 role: .system,
-                text: "已取消本次请求。",
+                text: String(localized: "chat.system.request_cancelled"),
                 startedAt: currentRequestStartedAt
             )
             didAppendCancelMessage = true
@@ -1039,13 +1060,13 @@ private final class ChatMessageCell: UITableViewCell {
     private func formatDuration(_ duration: TimeInterval) -> String {
         if duration < 1 {
             let milliseconds = Int((duration * 1000).rounded())
-            return "耗时 \(milliseconds)ms"
+            return String(format: String(localized: "chat.duration.ms_format"), milliseconds)
         }
         if duration < 60 {
-            return String(format: "耗时 %.1fs", duration)
+            return String(format: String(localized: "chat.duration.seconds_format"), duration)
         }
         let minutes = Int(duration) / 60
         let seconds = duration - Double(minutes * 60)
-        return String(format: "耗时 %dm %.1fs", minutes, seconds)
+        return String(format: String(localized: "chat.duration.minutes_seconds_format"), minutes, seconds)
     }
 }

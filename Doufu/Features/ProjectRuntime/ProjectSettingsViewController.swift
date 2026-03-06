@@ -57,7 +57,7 @@ final class ProjectSettingsViewController: UITableViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        title = "项目设置"
+        title = String(localized: "project_settings.title")
         tableView.keyboardDismissMode = .onDrag
         tableView.register(SettingsTextInputCell.self, forCellReuseIdentifier: SettingsTextInputCell.reuseIdentifier)
         tableView.register(SettingsCenteredButtonCell.self, forCellReuseIdentifier: SettingsCenteredButtonCell.reuseIdentifier)
@@ -96,11 +96,11 @@ final class ProjectSettingsViewController: UITableViewController {
         }
         switch section {
         case .project:
-            return "Project"
+            return String(localized: "project_settings.section.project")
         case .snapshots:
-            return "Snapshots"
+            return String(localized: "project_settings.section.snapshots")
         case .future:
-            return "Coming Soon"
+            return String(localized: "project_settings.section.coming_soon")
         case .action:
             return nil
         }
@@ -113,11 +113,11 @@ final class ProjectSettingsViewController: UITableViewController {
 
         switch section {
         case .project:
-            return "项目名称会用于首页和项目信息展示。"
+            return String(localized: "project_settings.footer.project_name_usage")
         case .snapshots:
-            return "手动快照与聊天自动快照分别最多保留 10 条。"
+            return String(localized: "project_settings.footer.snapshot_limit")
         case .future:
-            return "这里会逐步增加运行配置、构建选项和更多项目能力。"
+            return String(localized: "project_settings.footer.future_features")
         case .action:
             return nil
         }
@@ -140,9 +140,9 @@ final class ProjectSettingsViewController: UITableViewController {
             }
 
             cell.configure(
-                title: "Name",
+                title: String(localized: "project_settings.field.name_title"),
                 text: projectNameText,
-                placeholder: "项目名称",
+                placeholder: String(localized: "project_settings.field.name_placeholder"),
                 autocapitalizationType: .words
             ) { [weak self] text in
                 self?.projectNameText = text
@@ -165,14 +165,14 @@ final class ProjectSettingsViewController: UITableViewController {
                 else {
                     return UITableViewCell()
                 }
-                cell.configure(title: "保存快照")
+                cell.configure(title: String(localized: "project_settings.snapshot.save_button"))
                 return cell
 
             case .load:
                 let cell = tableView.dequeueReusableCell(withIdentifier: "SnapshotCell", for: indexPath)
                 var configuration = cell.defaultContentConfiguration()
-                configuration.text = "载入快照"
-                configuration.secondaryText = "选择一个快照恢复到项目"
+                configuration.text = String(localized: "project_settings.snapshot.load_title")
+                configuration.secondaryText = String(localized: "project_settings.snapshot.load_subtitle")
                 configuration.secondaryTextProperties.color = .secondaryLabel
                 cell.contentConfiguration = configuration
                 cell.accessoryType = .disclosureIndicator
@@ -187,11 +187,11 @@ final class ProjectSettingsViewController: UITableViewController {
             var configuration = cell.defaultContentConfiguration()
             switch row {
             case .runMode:
-                configuration.text = "Run Mode"
-                configuration.secondaryText = "默认沙盒运行（即将支持切换）"
+                configuration.text = String(localized: "project_settings.future.run_mode.title")
+                configuration.secondaryText = String(localized: "project_settings.future.run_mode.subtitle")
             case .buildPipeline:
-                configuration.text = "Build Pipeline"
-                configuration.secondaryText = "代码检查与预构建流程（规划中）"
+                configuration.text = String(localized: "project_settings.future.build_pipeline.title")
+                configuration.secondaryText = String(localized: "project_settings.future.build_pipeline.subtitle")
             }
             configuration.secondaryTextProperties.color = .secondaryLabel
             cell.contentConfiguration = configuration
@@ -207,7 +207,7 @@ final class ProjectSettingsViewController: UITableViewController {
             else {
                 return UITableViewCell()
             }
-            cell.configure(title: "Save", isEnabled: canSave)
+            cell.configure(title: String(localized: "project_settings.action.save"), isEnabled: canSave)
             return cell
         }
     }
@@ -279,8 +279,12 @@ final class ProjectSettingsViewController: UITableViewController {
             onProjectUpdated?(normalizedName)
             dismiss(animated: true)
         } catch {
-            let alert = UIAlertController(title: "保存失败", message: error.localizedDescription, preferredStyle: .alert)
-            alert.addAction(UIAlertAction(title: "知道了", style: .default))
+            let alert = UIAlertController(
+                title: String(localized: "project_settings.alert.save_failed.title"),
+                message: error.localizedDescription,
+                preferredStyle: .alert
+            )
+            alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
             present(alert, animated: true)
         }
     }
@@ -289,15 +293,19 @@ final class ProjectSettingsViewController: UITableViewController {
         do {
             _ = try store.createSnapshot(projectURL: projectURL, kind: .manual)
             let alert = UIAlertController(
-                title: "已保存快照",
-                message: "你可以在“载入快照”中恢复到这个版本。",
+                title: String(localized: "snapshot.alert.saved.title"),
+                message: String(localized: "snapshot.alert.saved.message"),
                 preferredStyle: .alert
             )
-            alert.addAction(UIAlertAction(title: "知道了", style: .default))
+            alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
             present(alert, animated: true)
         } catch {
-            let alert = UIAlertController(title: "保存失败", message: error.localizedDescription, preferredStyle: .alert)
-            alert.addAction(UIAlertAction(title: "知道了", style: .default))
+            let alert = UIAlertController(
+                title: String(localized: "project_settings.alert.save_failed.title"),
+                message: error.localizedDescription,
+                preferredStyle: .alert
+            )
+            alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
             present(alert, animated: true)
         }
     }
@@ -358,7 +366,7 @@ private final class ProjectSnapshotsViewController: UITableViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        title = "载入快照"
+        title = String(localized: "snapshot_list.title")
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "ProjectSnapshotRow")
         reloadSnapshots(showError: true)
     }
@@ -393,9 +401,9 @@ private final class ProjectSnapshotsViewController: UITableViewController {
         }
         switch section {
         case .manual:
-            return "手动快照最多保留 10 条。"
+            return String(localized: "snapshot_list.footer.manual_limit")
         case .auto:
-            return "自动快照在聊天成功修改项目后生成，最多保留 10 条。"
+            return String(localized: "snapshot_list.footer.auto_limit")
         }
     }
 
@@ -409,7 +417,7 @@ private final class ProjectSnapshotsViewController: UITableViewController {
             let snapshot = snapshot(at: indexPath, section: section)
         else {
             var configuration = cell.defaultContentConfiguration()
-            configuration.text = "暂无快照"
+            configuration.text = String(localized: "snapshot_list.empty")
             configuration.textProperties.color = .secondaryLabel
             cell.contentConfiguration = configuration
             return cell
@@ -435,12 +443,15 @@ private final class ProjectSnapshotsViewController: UITableViewController {
         }
 
         let alert = UIAlertController(
-            title: "载入快照",
-            message: "确认恢复到 \(dateFormatter.string(from: snapshot.createdAt)) 吗？当前项目文件会被覆盖。",
+            title: String(localized: "snapshot_list.alert.load.title"),
+            message: String(
+                format: String(localized: "snapshot_list.alert.load.message_format"),
+                dateFormatter.string(from: snapshot.createdAt)
+            ),
             preferredStyle: .alert
         )
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
-        alert.addAction(UIAlertAction(title: "载入", style: .destructive, handler: { [weak self] _ in
+        alert.addAction(UIAlertAction(title: String(localized: "common.action.cancel"), style: .cancel))
+        alert.addAction(UIAlertAction(title: String(localized: "snapshot_list.action.load"), style: .destructive, handler: { [weak self] _ in
             self?.restoreSnapshot(snapshot)
         }))
         present(alert, animated: true)
@@ -471,8 +482,12 @@ private final class ProjectSnapshotsViewController: UITableViewController {
             tableView.reloadData()
         } catch {
             if showError {
-                let alert = UIAlertController(title: "读取失败", message: error.localizedDescription, preferredStyle: .alert)
-                alert.addAction(UIAlertAction(title: "知道了", style: .default))
+                let alert = UIAlertController(
+                    title: String(localized: "snapshot_list.alert.read_failed.title"),
+                    message: error.localizedDescription,
+                    preferredStyle: .alert
+                )
+                alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
                 present(alert, animated: true)
             }
         }
@@ -485,17 +500,21 @@ private final class ProjectSnapshotsViewController: UITableViewController {
             reloadSnapshots(showError: false)
 
             let alert = UIAlertController(
-                title: "已载入快照",
-                message: "项目已恢复到所选快照。",
+                title: String(localized: "snapshot_list.alert.loaded.title"),
+                message: String(localized: "snapshot_list.alert.loaded.message"),
                 preferredStyle: .alert
             )
-            alert.addAction(UIAlertAction(title: "知道了", style: .default, handler: { [weak self] _ in
+            alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default, handler: { [weak self] _ in
                 self?.navigationController?.popViewController(animated: true)
             }))
             present(alert, animated: true)
         } catch {
-            let alert = UIAlertController(title: "载入失败", message: error.localizedDescription, preferredStyle: .alert)
-            alert.addAction(UIAlertAction(title: "知道了", style: .default))
+            let alert = UIAlertController(
+                title: String(localized: "snapshot_list.alert.restore_failed.title"),
+                message: error.localizedDescription,
+                preferredStyle: .alert
+            )
+            alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
             present(alert, animated: true)
         }
     }

@@ -30,7 +30,7 @@ final class ProjectSortViewController: UITableViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        title = "排序项目"
+        title = String(localized: "project_sort.title")
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "SortItemCell")
         tableView.allowsSelection = false
         tableView.isEditing = true
@@ -41,7 +41,7 @@ final class ProjectSortViewController: UITableViewController {
             action: #selector(didTapClose)
         )
         navigationItem.rightBarButtonItem = UIBarButtonItem(
-            title: "完成",
+            title: String(localized: "common.action.done"),
             style: .done,
             target: self,
             action: #selector(didTapDone)
@@ -57,7 +57,7 @@ final class ProjectSortViewController: UITableViewController {
     }
 
     override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
-        "长按右侧拖拽手柄可调整首页项目顺序。"
+        String(localized: "project_sort.footer.hint")
     }
 
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {

@@ -77,7 +77,7 @@ final class ProjectFileBrowserViewController: UITableViewController {
 
     private func titleForCurrentDirectory() -> String {
         if directoryURL.standardizedFileURL == rootURL.standardizedFileURL {
-            return "\(projectName) 文件"
+            return String(format: String(localized: "file_browser.title.root_format"), projectName)
         }
         let relative = relativePath(for: directoryURL)
         return relative.isEmpty ? directoryURL.lastPathComponent : relative
@@ -148,8 +148,12 @@ final class ProjectFileBrowserViewController: UITableViewController {
     }
 
     private func showLoadError(_ message: String) {
-        let alert = UIAlertController(title: "读取失败", message: message, preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "知道了", style: .default))
+        let alert = UIAlertController(
+            title: String(localized: "file_browser.alert.load_failed.title"),
+            message: message,
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
         present(alert, animated: true)
     }
 
@@ -161,7 +165,7 @@ final class ProjectFileBrowserViewController: UITableViewController {
         let cell = tableView.dequeueReusableCell(withIdentifier: "ProjectFileRow", for: indexPath)
         var configuration = UIListContentConfiguration.valueCell()
         if items.isEmpty {
-            configuration.text = "当前目录为空"
+            configuration.text = String(localized: "file_browser.empty_directory")
             configuration.secondaryText = nil
             configuration.image = UIImage(systemName: "tray")
             cell.accessoryType = .none
@@ -169,11 +173,12 @@ final class ProjectFileBrowserViewController: UITableViewController {
             let item = items[indexPath.row]
             configuration.text = item.name
             if item.isDirectory {
-                configuration.secondaryText = "文件夹"
+                configuration.secondaryText = String(localized: "file_browser.item.folder")
                 configuration.image = UIImage(systemName: "folder")
                 cell.accessoryType = .disclosureIndicator
             } else {
-                configuration.secondaryText = item.fileSize.map(Self.formatBytes(_:)) ?? "文件"
+                configuration.secondaryText = item.fileSize.map(Self.formatBytes(_:))
+                    ?? String(localized: "file_browser.item.file")
                 configuration.image = UIImage(systemName: "doc.text")
                 cell.accessoryType = .disclosureIndicator
             }
@@ -228,7 +233,7 @@ private final class ProjectFileContentViewController: UIViewController {
 
     private lazy var saveBarButtonItem: UIBarButtonItem = {
         UIBarButtonItem(
-            title: "保存",
+            title: String(localized: "common.action.save"),
             style: .done,
             target: self,
             action: #selector(didTapSave)
@@ -304,7 +309,7 @@ private final class ProjectFileContentViewController: UIViewController {
 
     private func loadContent() {
         guard isSafeFileURL(fileURL) else {
-            setEditorText("不安全的文件路径，无法读取。")
+            setEditorText(String(localized: "file_viewer.error.unsafe_path"))
             canEditFile = false
             setEditorEditable(false)
             isDirty = false
@@ -314,7 +319,7 @@ private final class ProjectFileContentViewController: UIViewController {
         do {
             let data = try Data(contentsOf: fileURL)
             guard let text = String(data: data, encoding: .utf8) else {
-                setEditorText("该文件不是 UTF-8 文本，暂不支持编辑。")
+                setEditorText(String(localized: "file_viewer.error.non_utf8"))
                 canEditFile = false
                 setEditorEditable(false)
                 isDirty = false
@@ -326,7 +331,12 @@ private final class ProjectFileContentViewController: UIViewController {
             setEditorEditable(true)
             isDirty = false
         } catch {
-            setEditorText("读取失败：\(error.localizedDescription)")
+            setEditorText(
+                String(
+                    format: String(localized: "file_viewer.error.read_failed.message_format"),
+                    error.localizedDescription
+                )
+            )
             canEditFile = false
             setEditorEditable(false)
             isDirty = false
@@ -391,8 +401,12 @@ private final class ProjectFileContentViewController: UIViewController {
             isDirty = false
             projectStore.touchProjectUpdatedAt(projectURL: rootURL)
         } catch {
-            let alert = UIAlertController(title: "保存失败", message: error.localizedDescription, preferredStyle: .alert)
-            alert.addAction(UIAlertAction(title: "知道了", style: .default))
+            let alert = UIAlertController(
+                title: String(localized: "file_viewer.alert.save_failed.title"),
+                message: error.localizedDescription,
+                preferredStyle: .alert
+            )
+            alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
             present(alert, animated: true)
         }
     }

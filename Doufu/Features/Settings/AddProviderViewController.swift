@@ -20,7 +20,7 @@ final class AddProviderViewController: UITableViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        title = "Add Provider"
+        title = String(localized: "providers.add.title")
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "ProviderOptionCell")
     }
 
@@ -36,7 +36,7 @@ final class AddProviderViewController: UITableViewController {
         _ tableView: UITableView,
         titleForHeaderInSection section: Int
     ) -> String? {
-        "Provider Type"
+        String(localized: "providers.add.section.provider_type")
     }
 
     override func tableView(
@@ -48,8 +48,8 @@ final class AddProviderViewController: UITableViewController {
 
         var configuration = cell.defaultContentConfiguration()
         configuration.image = UIImage(systemName: "sparkles.rectangle.stack")
-        configuration.text = "OpenAI / Compatible API"
-        configuration.secondaryText = "OpenAI 官方或兼容 OpenAI API 的服务"
+        configuration.text = String(localized: "providers.kind.openai_compatible.title")
+        configuration.secondaryText = String(localized: "providers.kind.openai_compatible.subtitle")
         configuration.secondaryTextProperties.color = .secondaryLabel
         cell.contentConfiguration = configuration
         return cell

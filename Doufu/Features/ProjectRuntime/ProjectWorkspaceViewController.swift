@@ -133,35 +133,35 @@ final class ProjectWorkspaceViewController: UIViewController {
 
     private lazy var refreshButton: UIButton = {
         let button = makePanelIconButton(systemName: "arrow.clockwise", tintColor: nil)
-        button.accessibilityLabel = "刷新"
+        button.accessibilityLabel = String(localized: "workspace.panel.refresh")
         button.addTarget(self, action: #selector(didTapRefresh), for: .touchUpInside)
         return button
     }()
 
     private lazy var chatButton: UIButton = {
         let button = makePanelIconButton(systemName: "bubble.left.and.bubble.right", tintColor: nil)
-        button.accessibilityLabel = "聊天"
+        button.accessibilityLabel = String(localized: "workspace.panel.chat")
         button.addTarget(self, action: #selector(didTapChat), for: .touchUpInside)
         return button
     }()
 
     private lazy var settingsButton: UIButton = {
         let button = makePanelIconButton(systemName: "gearshape", tintColor: nil)
-        button.accessibilityLabel = "设置"
+        button.accessibilityLabel = String(localized: "workspace.panel.settings")
         button.addTarget(self, action: #selector(didTapSettings), for: .touchUpInside)
         return button
     }()
 
     private lazy var filesButton: UIButton = {
         let button = makePanelIconButton(systemName: "folder", tintColor: nil)
-        button.accessibilityLabel = "文件"
+        button.accessibilityLabel = String(localized: "workspace.panel.files")
         button.addTarget(self, action: #selector(didTapFiles), for: .touchUpInside)
         return button
     }()
 
     private lazy var exitButton: UIButton = {
         let button = makePanelIconButton(systemName: "xmark.circle", tintColor: .systemRed)
-        button.accessibilityLabel = "退出"
+        button.accessibilityLabel = String(localized: "workspace.panel.exit")
         button.addTarget(self, action: #selector(didTapExit), for: .touchUpInside)
         return button
     }()
@@ -312,7 +312,7 @@ final class ProjectWorkspaceViewController: UIViewController {
     private func loadProjectPage() {
         let entryURL = projectURL.appendingPathComponent("index.html")
         guard FileManager.default.fileExists(atPath: entryURL.path) else {
-            showLoadError("项目入口文件 index.html 不存在。")
+            showLoadError(String(localized: "workspace.load_error.entry_missing"))
             return
         }
 
@@ -668,19 +668,23 @@ final class ProjectWorkspaceViewController: UIViewController {
     }
 
     private func showLoadError(_ message: String) {
-        let alert = UIAlertController(title: "加载失败", message: message, preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "知道了", style: .default))
+        let alert = UIAlertController(
+            title: String(localized: "workspace.alert.load_failed.title"),
+            message: message,
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
         present(alert, animated: true)
     }
 
     private func presentNormalExitAlert() {
         let alert = UIAlertController(
-            title: "退出项目",
-            message: "确认退出当前项目并返回首页吗？",
+            title: String(localized: "workspace.alert.exit_project.title"),
+            message: String(localized: "workspace.alert.exit_project.message"),
             preferredStyle: .alert
         )
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
-        alert.addAction(UIAlertAction(title: "退出", style: .destructive, handler: { [weak self] _ in
+        alert.addAction(UIAlertAction(title: String(localized: "common.action.cancel"), style: .cancel))
+        alert.addAction(UIAlertAction(title: String(localized: "common.action.exit"), style: .destructive, handler: { [weak self] _ in
             self?.navigationController?.popViewController(animated: true)
         }))
         present(alert, animated: true)
@@ -688,15 +692,15 @@ final class ProjectWorkspaceViewController: UIViewController {
 
     private func presentUnsavedNewProjectAlert() {
         let alert = UIAlertController(
-            title: "保存新项目？",
-            message: "这个新项目还没有任何修改。你可以选择保存，或不保存直接退出。",
+            title: String(localized: "workspace.alert.save_new_project.title"),
+            message: String(localized: "workspace.alert.save_new_project.message"),
             preferredStyle: .alert
         )
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
-        alert.addAction(UIAlertAction(title: "保存并退出", style: .default, handler: { [weak self] _ in
+        alert.addAction(UIAlertAction(title: String(localized: "common.action.cancel"), style: .cancel))
+        alert.addAction(UIAlertAction(title: String(localized: "workspace.action.save_and_exit"), style: .default, handler: { [weak self] _ in
             self?.navigationController?.popViewController(animated: true)
         }))
-        alert.addAction(UIAlertAction(title: "不保存", style: .destructive, handler: { [weak self] _ in
+        alert.addAction(UIAlertAction(title: String(localized: "workspace.action.discard"), style: .destructive, handler: { [weak self] _ in
             self?.discardProjectAndExit()
         }))
         present(alert, animated: true)
@@ -708,11 +712,11 @@ final class ProjectWorkspaceViewController: UIViewController {
             navigationController?.popViewController(animated: true)
         } catch {
             let alert = UIAlertController(
-                title: "删除失败",
+                title: String(localized: "workspace.alert.delete_failed.title"),
                 message: error.localizedDescription,
                 preferredStyle: .alert
             )
-            alert.addAction(UIAlertAction(title: "知道了", style: .default))
+            alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
             present(alert, animated: true)
         }
     }
@@ -758,7 +762,8 @@ final class ProjectWorkspaceViewController: UIViewController {
     }
 
     private func handleJavaScriptErrorPayload(_ payload: [String: Any]) {
-        let message = (payload["message"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Unknown JS error"
+        let message = (payload["message"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            ?? String(localized: "workspace.js_error.unknown")
         let source = (payload["source"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let line = intValue(from: payload["line"]) ?? 0
         let column = intValue(from: payload["column"]) ?? 0
@@ -771,21 +776,21 @@ final class ProjectWorkspaceViewController: UIViewController {
 
         var details = message
         if !source.isEmpty {
-            details += "\n来源：\(source)"
+            details += String(format: String(localized: "workspace.js_error.source_format"), source)
         }
         if line > 0 || column > 0 {
-            details += "\n位置：\(line):\(column)"
+            details += String(format: String(localized: "workspace.js_error.location_format"), line, column)
         }
 
         guard presentedViewController == nil else {
             return
         }
         let alert = UIAlertController(
-            title: "页面脚本错误",
+            title: String(localized: "workspace.alert.js_error.title"),
             message: details,
             preferredStyle: .alert
         )
-        alert.addAction(UIAlertAction(title: "知道了", style: .default))
+        alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
         present(alert, animated: true)
     }
 

@@ -26,7 +26,7 @@ final class SettingsViewController: UITableViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        title = "设置"
+        title = String(localized: "settings.title")
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "SettingsCell")
     }
 
@@ -50,14 +50,14 @@ final class SettingsViewController: UITableViewController {
         guard Section(rawValue: section) == .llmProviders else {
             return nil
         }
-        return "LLM Providers"
+        return String(localized: "settings.section.llm_providers")
     }
 
     override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
         guard Section(rawValue: section) == .llmProviders else {
             return nil
         }
-        return "Provider 配置仅保存在本地设备。"
+        return String(localized: "settings.section.llm_providers.footer")
     }
 
     override func tableView(
@@ -70,8 +70,11 @@ final class SettingsViewController: UITableViewController {
         let providersCount = store.loadProviders().count
         var configuration = cell.defaultContentConfiguration()
         configuration.image = UIImage(systemName: "server.rack")
-        configuration.text = "Manage Providers"
-        configuration.secondaryText = "\(providersCount) configured"
+        configuration.text = String(localized: "settings.manage_providers.title")
+        configuration.secondaryText = String(
+            format: String(localized: "settings.manage_providers.configured_count_format"),
+            providersCount
+        )
         configuration.secondaryTextProperties.color = .secondaryLabel
         cell.contentConfiguration = configuration
         return cell

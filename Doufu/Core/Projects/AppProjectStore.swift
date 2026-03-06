@@ -23,9 +23,9 @@ enum AppProjectSnapshotKind: String, Codable, CaseIterable {
     var displayName: String {
         switch self {
         case .manual:
-            return "手动快照"
+            return String(localized: "project_snapshot.kind.manual")
         case .auto:
-            return "自动快照"
+            return String(localized: "project_snapshot.kind.auto")
         }
     }
 }
@@ -59,25 +59,25 @@ enum AppProjectStoreError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .unavailableDocumentsDirectory:
-            return "无法访问本地文档目录。"
+            return String(localized: "project_store.error.unavailable_documents_directory")
         case .projectCreationFailed:
-            return "创建项目失败，请稍后重试。"
+            return String(localized: "project_store.error.project_creation_failed")
         case .invalidProjectLocation:
-            return "项目路径无效，无法删除。"
+            return String(localized: "project_store.error.invalid_project_location")
         case .projectDeletionFailed:
-            return "删除项目失败，请稍后重试。"
+            return String(localized: "project_store.error.project_deletion_failed")
         case .invalidProjectName:
-            return "项目名称不能为空。"
+            return String(localized: "project_store.error.invalid_project_name")
         case .manifestUpdateFailed:
-            return "更新项目设置失败，请稍后重试。"
+            return String(localized: "project_store.error.manifest_update_failed")
         case .snapshotCreateFailed:
-            return "创建快照失败，请稍后重试。"
+            return String(localized: "project_store.error.snapshot_create_failed")
         case .snapshotReadFailed:
-            return "读取快照失败，请稍后重试。"
+            return String(localized: "project_store.error.snapshot_read_failed")
         case .snapshotRestoreFailed:
-            return "载入快照失败，请稍后重试。"
+            return String(localized: "project_store.error.snapshot_restore_failed")
         case .snapshotNotFound:
-            return "快照不存在或已被清理。"
+            return String(localized: "project_store.error.snapshot_not_found")
         }
     }
 }
@@ -479,7 +479,7 @@ final class AppProjectStore {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_CN")
         formatter.dateFormat = "MMdd-HHmm"
-        return "新项目 \(formatter.string(from: createdAt))"
+        return String(format: String(localized: "project_store.default_project_name_format"), formatter.string(from: createdAt))
     }
 
     private func writeBlankWebsiteFiles(
@@ -670,8 +670,8 @@ final class AppProjectStore {
             "projectId": projectID,
             "name": name,
             "source": "local",
-            "prompt": "空白网页项目",
-            "description": "通过聊天持续更新代码。",
+            "prompt": String(localized: "project_template.prompt.blank_web_project"),
+            "description": String(localized: "project_template.description.iterate_by_chat"),
             "createdAt": isoFormatter.string(from: now),
             "updatedAt": isoFormatter.string(from: now),
             "entryFilePath": "index.html"

@@ -77,9 +77,9 @@ enum ProjectChatThreadStoreError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .threadNotFound:
-            return "线程不存在。"
+            return String(localized: "thread_store.error.thread_not_found")
         case .invalidThreadData:
-            return "线程数据损坏，无法读取。"
+            return String(localized: "thread_store.error.invalid_thread_data")
         }
     }
 }
@@ -108,7 +108,7 @@ final class ProjectChatThreadStore {
         let now = Date()
         let thread = ProjectChatThreadRecord(
             id: makeThreadID(),
-            title: "Thread 1",
+            title: String(localized: "thread.default_title"),
             createdAt: now,
             updatedAt: now,
             currentVersion: 0
@@ -149,7 +149,10 @@ final class ProjectChatThreadStore {
         let nextCount = index.threads.count + 1
         let thread = ProjectChatThreadRecord(
             id: makeThreadID(),
-            title: normalizedThreadTitle(title, fallback: "Thread \(nextCount)"),
+            title: normalizedThreadTitle(
+                title,
+                fallback: String(format: String(localized: "thread.default_title_format"), nextCount)
+            ),
             createdAt: now,
             updatedAt: now,
             currentVersion: 0

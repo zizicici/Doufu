@@ -15,7 +15,7 @@ struct LLMProviderRecord: Codable, Equatable, Hashable {
         var displayName: String {
             switch self {
             case .openAICompatible:
-                return "OpenAI / Compatible API"
+                return String(localized: "providers.kind.openai_compatible.title")
             }
         }
     }
@@ -27,9 +27,9 @@ struct LLMProviderRecord: Codable, Equatable, Hashable {
         var displayName: String {
             switch self {
             case .apiKey:
-                return "API Key"
+                return String(localized: "providers.auth_mode.api_key")
             case .oauth:
-                return "OAuth"
+                return String(localized: "providers.auth_mode.oauth")
             }
         }
     }
@@ -67,15 +67,15 @@ enum LLMProviderSettingsStoreError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .emptyLabel:
-            return "请输入 Provider 名称。"
+            return String(localized: "provider_store.error.empty_label")
         case .emptyAPIKey:
-            return "请输入 API Key。"
+            return String(localized: "provider_store.error.empty_api_key")
         case .invalidBaseURL:
-            return "自定义地址格式无效，请输入 http(s) 地址。"
+            return String(localized: "provider_store.error.invalid_base_url")
         case .encodeFailed:
-            return "Provider 保存失败，请稍后重试。"
+            return String(localized: "provider_store.error.encode_failed")
         case .keychainFailed:
-            return "密钥保存失败，请稍后重试。"
+            return String(localized: "provider_store.error.keychain_failed")
         }
     }
 }
