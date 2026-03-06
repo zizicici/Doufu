@@ -11,11 +11,85 @@ import Security
 struct LLMProviderRecord: Codable, Equatable, Hashable {
     enum Kind: String, Codable {
         case openAICompatible = "openai_compatible"
+        case anthropic
+        case googleGemini = "google_gemini"
 
         var displayName: String {
             switch self {
             case .openAICompatible:
                 return String(localized: "providers.kind.openai_compatible.title")
+            case .anthropic:
+                return "Anthropic"
+            case .googleGemini:
+                return "Google Gemini"
+            }
+        }
+
+        var subtitle: String {
+            switch self {
+            case .openAICompatible:
+                return String(localized: "providers.kind.openai_compatible.subtitle")
+            case .anthropic:
+                return "Claude API / Claude OAuth token"
+            case .googleGemini:
+                return "Gemini API / Google Cloud Code Assist OAuth"
+            }
+        }
+
+        var iconSystemName: String {
+            switch self {
+            case .openAICompatible:
+                return "sparkles.rectangle.stack"
+            case .anthropic:
+                return "text.quote"
+            case .googleGemini:
+                return "diamond"
+            }
+        }
+
+        var defaultBaseURLString: String {
+            switch self {
+            case .openAICompatible:
+                return "https://api.openai.com"
+            case .anthropic:
+                return "https://api.anthropic.com/v1"
+            case .googleGemini:
+                return "https://generativelanguage.googleapis.com/v1beta"
+            }
+        }
+
+        var defaultAutoAppendV1: Bool {
+            switch self {
+            case .openAICompatible:
+                return true
+            case .anthropic, .googleGemini:
+                return false
+            }
+        }
+
+        var builtInModels: [String] {
+            switch self {
+            case .openAICompatible:
+                return ["gpt-5.3-codex", "gpt-5.4", "gpt-5.4-pro", "gpt-5-mini"]
+            case .anthropic:
+                return ["claude-opus-4-6", "claude-sonnet-4-5", "claude-haiku-4-5"]
+            case .googleGemini:
+                return ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"]
+            }
+        }
+
+        var defaultModelID: String {
+            let firstBuiltIn = builtInModels.first?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !firstBuiltIn.isEmpty {
+                return firstBuiltIn
+            }
+            switch self {
+            case .openAICompatible:
+                return "gpt-5.3-codex"
+            case .anthropic:
+                return "claude-sonnet-4-5"
+            case .googleGemini:
+                return "gemini-2.5-pro"
             }
         }
     }
@@ -43,6 +117,7 @@ struct LLMProviderRecord: Codable, Equatable, Hashable {
     let baseURLString: String
     let autoAppendV1: Bool
     let chatGPTAccountID: String?
+    let modelID: String?
 
     var effectiveBaseURLString: String {
         guard autoAppendV1 else {
@@ -54,6 +129,11 @@ struct LLMProviderRecord: Codable, Equatable, Hashable {
             return trimmed
         }
         return trimmed + "/v1"
+    }
+
+    var effectiveModelID: String {
+        let normalized = modelID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return normalized.isEmpty ? kind.defaultModelID : normalized
     }
 }
 
@@ -105,12 +185,36 @@ final class LLMProviderSettingsStore {
         return records.sorted { $0.updatedAt > $1.updatedAt }
     }
 
+    func loadProvider(id: String) -> LLMProviderRecord? {
+        loadProviders().first { $0.id == id }
+    }
+
     @discardableResult
     func addOpenAICompatibleProviderUsingAPIKey(
         label: String,
         apiKey: String,
         baseURLString: String?,
-        autoAppendV1: Bool
+        autoAppendV1: Bool,
+        modelID: String?
+    ) throws -> LLMProviderRecord {
+        try addProviderUsingAPIKey(
+            kind: .openAICompatible,
+            label: label,
+            apiKey: apiKey,
+            baseURLString: baseURLString,
+            autoAppendV1: autoAppendV1,
+            modelID: modelID
+        )
+    }
+
+    @discardableResult
+    func addProviderUsingAPIKey(
+        kind: LLMProviderRecord.Kind,
+        label: String,
+        apiKey: String,
+        baseURLString: String?,
+        autoAppendV1: Bool,
+        modelID: String?
     ) throws -> LLMProviderRecord {
         let normalizedLabel = label.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedLabel.isEmpty else {
@@ -122,18 +226,20 @@ final class LLMProviderSettingsStore {
             throw LLMProviderSettingsStoreError.emptyAPIKey
         }
 
-        let normalizedBaseURL = try normalizeBaseURL(baseURLString)
+        let normalizedBaseURL = try normalizeBaseURL(baseURLString, kind: kind)
+        let normalizedModelID = normalizeModelID(modelID, kind: kind)
         let now = Date()
         let provider = LLMProviderRecord(
             id: UUID().uuidString,
-            kind: .openAICompatible,
+            kind: kind,
             authMode: .apiKey,
             createdAt: now,
             updatedAt: now,
             label: normalizedLabel,
             baseURLString: normalizedBaseURL,
             autoAppendV1: autoAppendV1,
-            chatGPTAccountID: nil
+            chatGPTAccountID: nil,
+            modelID: normalizedModelID
         )
 
         var allProviders = loadProviders()
@@ -149,25 +255,49 @@ final class LLMProviderSettingsStore {
         baseURLString: String?,
         autoAppendV1: Bool,
         bearerToken: String?,
-        chatGPTAccountID: String?
+        chatGPTAccountID: String?,
+        modelID: String?
+    ) throws -> LLMProviderRecord {
+        try addProviderUsingOAuth(
+            kind: .openAICompatible,
+            label: label,
+            baseURLString: baseURLString,
+            autoAppendV1: autoAppendV1,
+            bearerToken: bearerToken,
+            chatGPTAccountID: chatGPTAccountID,
+            modelID: modelID
+        )
+    }
+
+    @discardableResult
+    func addProviderUsingOAuth(
+        kind: LLMProviderRecord.Kind,
+        label: String,
+        baseURLString: String?,
+        autoAppendV1: Bool,
+        bearerToken: String?,
+        chatGPTAccountID: String?,
+        modelID: String?
     ) throws -> LLMProviderRecord {
         let normalizedLabel = label.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedLabel.isEmpty else {
             throw LLMProviderSettingsStoreError.emptyLabel
         }
 
-        let normalizedBaseURL = try normalizeBaseURL(baseURLString)
+        let normalizedBaseURL = try normalizeBaseURL(baseURLString, kind: kind)
+        let normalizedModelID = normalizeModelID(modelID, kind: kind)
         let now = Date()
         let provider = LLMProviderRecord(
             id: UUID().uuidString,
-            kind: .openAICompatible,
+            kind: kind,
             authMode: .oauth,
             createdAt: now,
             updatedAt: now,
             label: normalizedLabel,
             baseURLString: normalizedBaseURL,
             autoAppendV1: autoAppendV1,
-            chatGPTAccountID: chatGPTAccountID?.trimmingCharacters(in: .whitespacesAndNewlines)
+            chatGPTAccountID: chatGPTAccountID?.trimmingCharacters(in: .whitespacesAndNewlines),
+            modelID: normalizedModelID
         )
 
         var allProviders = loadProviders()
@@ -179,6 +309,135 @@ final class LLMProviderSettingsStore {
             try saveOAuthBearerToken(normalizedToken, providerID: provider.id)
         }
         return provider
+    }
+
+    @discardableResult
+    func updateOpenAICompatibleProviderUsingAPIKey(
+        providerID: String,
+        label: String,
+        apiKey: String,
+        baseURLString: String?,
+        autoAppendV1: Bool,
+        modelID: String?
+    ) throws -> LLMProviderRecord {
+        try updateProviderUsingAPIKey(
+            providerID: providerID,
+            label: label,
+            apiKey: apiKey,
+            baseURLString: baseURLString,
+            autoAppendV1: autoAppendV1,
+            modelID: modelID
+        )
+    }
+
+    @discardableResult
+    func updateProviderUsingAPIKey(
+        providerID: String,
+        label: String,
+        apiKey: String,
+        baseURLString: String?,
+        autoAppendV1: Bool,
+        modelID: String?
+    ) throws -> LLMProviderRecord {
+        let normalizedLabel = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedLabel.isEmpty else {
+            throw LLMProviderSettingsStoreError.emptyLabel
+        }
+
+        let normalizedAPIKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedAPIKey.isEmpty else {
+            throw LLMProviderSettingsStoreError.emptyAPIKey
+        }
+
+        var providers = loadProviders()
+        guard let index = providers.firstIndex(where: { $0.id == providerID }) else {
+            throw LLMProviderSettingsStoreError.encodeFailed
+        }
+        let existingProvider = providers[index]
+        let normalizedBaseURL = try normalizeBaseURL(baseURLString, kind: existingProvider.kind)
+        let normalizedModelID = normalizeModelID(modelID, kind: existingProvider.kind)
+        let updatedProvider = LLMProviderRecord(
+            id: existingProvider.id,
+            kind: existingProvider.kind,
+            authMode: existingProvider.authMode,
+            createdAt: existingProvider.createdAt,
+            updatedAt: Date(),
+            label: normalizedLabel,
+            baseURLString: normalizedBaseURL,
+            autoAppendV1: autoAppendV1,
+            chatGPTAccountID: nil,
+            modelID: normalizedModelID
+        )
+        providers[index] = updatedProvider
+        try saveProviders(providers)
+        try saveAPIKey(normalizedAPIKey, providerID: providerID)
+        return updatedProvider
+    }
+
+    @discardableResult
+    func updateOpenAICompatibleProviderUsingOAuth(
+        providerID: String,
+        label: String,
+        baseURLString: String?,
+        autoAppendV1: Bool,
+        bearerToken: String,
+        chatGPTAccountID: String?,
+        modelID: String?
+    ) throws -> LLMProviderRecord {
+        try updateProviderUsingOAuth(
+            providerID: providerID,
+            label: label,
+            baseURLString: baseURLString,
+            autoAppendV1: autoAppendV1,
+            bearerToken: bearerToken,
+            chatGPTAccountID: chatGPTAccountID,
+            modelID: modelID
+        )
+    }
+
+    @discardableResult
+    func updateProviderUsingOAuth(
+        providerID: String,
+        label: String,
+        baseURLString: String?,
+        autoAppendV1: Bool,
+        bearerToken: String,
+        chatGPTAccountID: String?,
+        modelID: String?
+    ) throws -> LLMProviderRecord {
+        let normalizedLabel = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedLabel.isEmpty else {
+            throw LLMProviderSettingsStoreError.emptyLabel
+        }
+
+        let normalizedToken = bearerToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedToken.isEmpty else {
+            throw LLMProviderSettingsStoreError.emptyAPIKey
+        }
+
+        var providers = loadProviders()
+        guard let index = providers.firstIndex(where: { $0.id == providerID }) else {
+            throw LLMProviderSettingsStoreError.encodeFailed
+        }
+        let existingProvider = providers[index]
+        let normalizedBaseURL = try normalizeBaseURL(baseURLString, kind: existingProvider.kind)
+        let normalizedModelID = normalizeModelID(modelID, kind: existingProvider.kind)
+        let updatedProvider = LLMProviderRecord(
+            id: existingProvider.id,
+            kind: existingProvider.kind,
+            authMode: existingProvider.authMode,
+            createdAt: existingProvider.createdAt,
+            updatedAt: Date(),
+            label: normalizedLabel,
+            baseURLString: normalizedBaseURL,
+            autoAppendV1: autoAppendV1,
+            chatGPTAccountID: chatGPTAccountID?.trimmingCharacters(in: .whitespacesAndNewlines),
+            modelID: normalizedModelID
+        )
+        providers[index] = updatedProvider
+        try saveProviders(providers)
+        try saveOAuthBearerToken(normalizedToken, providerID: providerID)
+        return updatedProvider
     }
 
     func hasAPIKey(for providerID: String) -> Bool {
@@ -258,8 +517,8 @@ final class LLMProviderSettingsStore {
         try deleteOAuthBearerToken(providerID: id)
     }
 
-    private func normalizeBaseURL(_ rawValue: String?) throws -> String {
-        let fallback = "https://api.openai.com"
+    private func normalizeBaseURL(_ rawValue: String?, kind: LLMProviderRecord.Kind) throws -> String {
+        let fallback = kind.defaultBaseURLString
         let candidate = (rawValue ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let normalized = candidate.isEmpty ? fallback : candidate
 
@@ -273,6 +532,11 @@ final class LLMProviderSettingsStore {
         }
 
         return normalized
+    }
+
+    private func normalizeModelID(_ rawValue: String?, kind: LLMProviderRecord.Kind) -> String {
+        let candidate = (rawValue ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return candidate.isEmpty ? kind.defaultModelID : candidate
     }
 
     private func saveProviders(_ providers: [LLMProviderRecord]) throws {

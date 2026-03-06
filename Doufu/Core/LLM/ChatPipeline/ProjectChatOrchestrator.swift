@@ -1,5 +1,5 @@
 //
-//  CodexChatOrchestrator.swift
+//  ProjectChatOrchestrator.swift
 //  Doufu
 //
 //  Created by Codex on 2026/03/05.
@@ -7,8 +7,8 @@
 
 import Foundation
 
-final class CodexChatOrchestrator {
-    private let configuration: CodexChatConfiguration
+final class ProjectChatOrchestrator {
+    private let configuration: ProjectChatConfiguration
     private let scanner: ProjectFileScanner
     private let memoryManager: SessionMemoryManager
     private let promptBuilder: PromptBuilder
@@ -17,7 +17,7 @@ final class CodexChatOrchestrator {
     private let jsonDecoder = JSONDecoder()
 
     init(
-        configuration: CodexChatConfiguration,
+        configuration: ProjectChatConfiguration,
         scanner: ProjectFileScanner? = nil,
         memoryManager: SessionMemoryManager? = nil,
         promptBuilder: PromptBuilder? = nil,
@@ -34,28 +34,20 @@ final class CodexChatOrchestrator {
 
     func sendAndApply(
         userMessage: String,
-        history: [CodexProjectChatService.ChatTurn],
+        history: [ProjectChatService.ChatTurn],
         projectURL: URL,
-        credential: CodexProjectChatService.ProviderCredential,
-        memory: CodexProjectChatService.SessionMemory? = nil,
-        threadContext: CodexProjectChatService.ThreadContext?,
-        reasoningEffort: CodexProjectChatService.ReasoningEffort,
+        credential: ProjectChatService.ProviderCredential,
+        memory: ProjectChatService.SessionMemory? = nil,
+        threadContext: ProjectChatService.ThreadContext?,
+        reasoningEffort: ProjectChatService.ReasoningEffort,
         onStreamedText: (@MainActor (String) -> Void)? = nil,
         onProgress: (@MainActor (String) -> Void)? = nil
-    ) async throws -> CodexProjectChatService.ResultPayload {
+    ) async throws -> ProjectChatService.ResultPayload {
         let trimmedMessage = userMessage.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedMessage.isEmpty else {
-            throw CodexProjectChatService.ServiceError.invalidResponse
+            throw ProjectChatService.ServiceError.invalidResponse
         }
-
-        if let onProgress {
-            await onProgress("正在扫描项目文件...")
-        }
-
-        var fileCandidates = try scanner.collectProjectFileCandidates(
-            from: projectURL,
-            activeThreadMemoryPath: threadContext?.memoryFilePath
-        )
+        let modelID = resolvedModelID(from: credential)
         let normalizedHistory = memoryManager.normalizedHistoryTurns(history, excludingLatestUserMessage: trimmedMessage)
         let requestMemory = memoryManager.buildRequestMemory(base: memory, latestUserMessage: trimmedMessage)
         let historyItems = memoryManager.buildHistoryInputMessages(from: normalizedHistory)
@@ -68,15 +60,45 @@ final class CodexChatOrchestrator {
             userMessage: trimmedMessage,
             historyItems: historyItems,
             memory: requestMemory,
-            fileCandidates: fileCandidates,
             threadContext: threadContext,
             credential: credential,
+            modelID: modelID,
             reasoningEffort: requestReasoningEffort
         )
         if let onProgress {
-            let routeText = executionRoute == .singlePass ? "单次快速路径" : "多任务路径"
+            let routeText: String
+            switch executionRoute {
+            case .directAnswer:
+                routeText = "直接回答路径"
+            case .singlePass:
+                routeText = "单次快速路径"
+            case .multiTask:
+                routeText = "多任务路径"
+            }
             await onProgress("执行策略：\(routeText)")
         }
+
+        if executionRoute == .directAnswer {
+            return try await sendDirectAnswer(
+                userMessage: trimmedMessage,
+                historyItems: historyItems,
+                requestMemory: requestMemory,
+                threadContext: threadContext,
+                credential: credential,
+                modelID: modelID,
+                reasoningEffort: requestReasoningEffort,
+                onStreamedText: onStreamedText,
+                onProgress: onProgress
+            )
+        }
+
+        if let onProgress {
+            await onProgress("正在扫描项目文件...")
+        }
+        var fileCandidates = try scanner.collectProjectFileCandidates(
+            from: projectURL,
+            activeThreadMemoryPath: threadContext?.memoryFilePath
+        )
 
         if executionRoute == .singlePass {
             return try await sendAndApplySinglePass(
@@ -85,6 +107,7 @@ final class CodexChatOrchestrator {
                 fileCandidates: fileCandidates,
                 projectURL: projectURL,
                 credential: credential,
+                modelID: modelID,
                 requestMemory: requestMemory,
                 threadContext: threadContext,
                 reasoningEffort: requestReasoningEffort,
@@ -104,6 +127,7 @@ final class CodexChatOrchestrator {
             fileCandidates: fileCandidates,
             threadContext: threadContext,
             credential: credential,
+            modelID: modelID,
             reasoningEffort: requestReasoningEffort
         )
         if let onProgress {
@@ -117,7 +141,7 @@ final class CodexChatOrchestrator {
         var allChangedPaths: [String] = []
         var currentMemory = requestMemory
         var taskMessages: [String] = []
-        var latestThreadMemoryUpdate: CodexProjectChatService.ThreadMemoryUpdate?
+        var latestThreadMemoryUpdate: ProjectChatService.ThreadMemoryUpdate?
 
         for (index, task) in taskPlan.tasks.enumerated() {
             let stepNumber = index + 1
@@ -141,6 +165,7 @@ final class CodexChatOrchestrator {
                     fileCandidates: fileCandidates,
                     threadContext: threadContext,
                     credential: credential,
+                    modelID: modelID,
                     reasoningEffort: requestReasoningEffort
                 )
 
@@ -162,6 +187,7 @@ final class CodexChatOrchestrator {
                     filesJSON: filesJSON,
                     threadContext: threadContext,
                     credential: credential,
+                    modelID: modelID,
                     reasoningEffort: requestReasoningEffort,
                     onStreamedText: onStreamedText
                 )
@@ -224,7 +250,7 @@ final class CodexChatOrchestrator {
                         memory: currentMemory,
                         remainingTasks: Array(taskPlan.tasks.suffix(taskPlan.tasks.count - (stepNumber - 1)))
                     )
-                    return CodexProjectChatService.ResultPayload(
+                    return ProjectChatService.ResultPayload(
                         assistantMessage: partialSummary,
                         changedPaths: allChangedPaths,
                         updatedMemory: currentMemory,
@@ -240,7 +266,7 @@ final class CodexChatOrchestrator {
             taskMessages: taskMessages
         )
         createAutoSnapshotIfNeeded(projectURL: projectURL, changedPaths: allChangedPaths)
-        return CodexProjectChatService.ResultPayload(
+        return ProjectChatService.ResultPayload(
             assistantMessage: finalMessage,
             changedPaths: allChangedPaths,
             updatedMemory: currentMemory,
@@ -253,13 +279,14 @@ final class CodexChatOrchestrator {
         historyItems: [ResponseInputMessage],
         fileCandidates: [ProjectFileCandidate],
         projectURL: URL,
-        credential: CodexProjectChatService.ProviderCredential,
-        requestMemory: CodexProjectChatService.SessionMemory,
-        threadContext: CodexProjectChatService.ThreadContext?,
+        credential: ProjectChatService.ProviderCredential,
+        modelID: String,
+        requestMemory: ProjectChatService.SessionMemory,
+        threadContext: ProjectChatService.ThreadContext?,
         reasoningEffort: ResponsesReasoning.Effort,
         onStreamedText: (@MainActor (String) -> Void)?,
         onProgress: (@MainActor (String) -> Void)?
-    ) async throws -> CodexProjectChatService.ResultPayload {
+    ) async throws -> ProjectChatService.ResultPayload {
         if let onProgress {
             await onProgress("单次快速路径：正在生成改动...")
         }
@@ -279,6 +306,7 @@ final class CodexChatOrchestrator {
             filesJSON: filesJSON,
             threadContext: threadContext,
             credential: credential,
+            modelID: modelID,
             reasoningEffort: reasoningEffort,
             onStreamedText: onStreamedText
         )
@@ -309,7 +337,7 @@ final class CodexChatOrchestrator {
             modelMemoryUpdate: patch.memoryUpdate
         )
 
-        return CodexProjectChatService.ResultPayload(
+        return ProjectChatService.ResultPayload(
             assistantMessage: normalizedMessage,
             changedPaths: changedPaths,
             updatedMemory: updatedMemory,
@@ -317,22 +345,69 @@ final class CodexChatOrchestrator {
         )
     }
 
+    private func sendDirectAnswer(
+        userMessage: String,
+        historyItems: [ResponseInputMessage],
+        requestMemory: ProjectChatService.SessionMemory,
+        threadContext: ProjectChatService.ThreadContext?,
+        credential: ProjectChatService.ProviderCredential,
+        modelID: String,
+        reasoningEffort: ResponsesReasoning.Effort,
+        onStreamedText: (@MainActor (String) -> Void)?,
+        onProgress: (@MainActor (String) -> Void)?
+    ) async throws -> ProjectChatService.ResultPayload {
+        if let onProgress {
+            await onProgress("直接回答路径：正在生成回复...")
+        }
+
+        let responseText = try await requestDirectAnswerResponse(
+            userMessage: userMessage,
+            historyItems: historyItems,
+            memory: requestMemory,
+            threadContext: threadContext,
+            credential: credential,
+            modelID: modelID,
+            reasoningEffort: reasoningEffort,
+            onStreamedText: onStreamedText
+        )
+        let answerPayload = try parseDirectAnswerPayload(from: responseText)
+        let normalizedMessage = normalizedTaskItem(answerPayload.assistantMessage, maxCharacters: configuration.maxTaskGoalCharacters * 3)
+            ?? "我已理解。请继续告诉我你的目标。"
+
+        let updatedMemory = memoryManager.buildRolledMemory(
+            current: requestMemory,
+            userMessage: userMessage,
+            assistantMessage: normalizedMessage,
+            changedPaths: [],
+            modelMemoryUpdate: answerPayload.memoryUpdate
+        )
+
+        if let onProgress {
+            await onProgress("直接回答路径已完成：未修改项目文件。")
+        }
+
+        return ProjectChatService.ResultPayload(
+            assistantMessage: normalizedMessage,
+            changedPaths: [],
+            updatedMemory: updatedMemory,
+            threadMemoryUpdate: normalizedThreadMemoryUpdate(memoryUpdate: answerPayload.memoryUpdate)
+        )
+    }
+
     private func requestExecutionRoute(
         userMessage: String,
         historyItems: [ResponseInputMessage],
-        memory: CodexProjectChatService.SessionMemory,
-        fileCandidates: [ProjectFileCandidate],
-        threadContext: CodexProjectChatService.ThreadContext?,
-        credential: CodexProjectChatService.ProviderCredential,
+        memory: ProjectChatService.SessionMemory,
+        threadContext: ProjectChatService.ThreadContext?,
+        credential: ProjectChatService.ProviderCredential,
+        modelID: String,
         reasoningEffort: ResponsesReasoning.Effort
     ) async throws -> ExecutionRouteMode {
-        let fileCatalogJSON = try scanner.encodeFileCatalogToJSONString(fileCandidates)
         let developerInstruction = promptBuilder.executionRouteDeveloperInstruction()
         let memoryJSON = memoryManager.encodeMemoryToJSONString(memory)
         let userPrompt = promptBuilder.executionRouteUserPrompt(
             userMessage: userMessage,
             memoryJSON: memoryJSON,
-            fileCatalogJSON: fileCatalogJSON,
             threadContext: threadContext
         )
 
@@ -340,7 +415,7 @@ final class CodexChatOrchestrator {
         inputItems.append(ResponseInputMessage(role: "user", text: userPrompt))
         let responseText = try await streamingClient.requestModelResponseStreaming(
             requestLabel: "route_execution_mode",
-            model: configuration.model,
+            model: modelID,
             developerInstruction: developerInstruction,
             inputItems: inputItems,
             credential: credential,
@@ -352,13 +427,47 @@ final class CodexChatOrchestrator {
         return payload.mode
     }
 
+    private func requestDirectAnswerResponse(
+        userMessage: String,
+        historyItems: [ResponseInputMessage],
+        memory: ProjectChatService.SessionMemory,
+        threadContext: ProjectChatService.ThreadContext?,
+        credential: ProjectChatService.ProviderCredential,
+        modelID: String,
+        reasoningEffort: ResponsesReasoning.Effort,
+        onStreamedText: (@MainActor (String) -> Void)?
+    ) async throws -> String {
+        let developerInstruction = promptBuilder.directAnswerDeveloperInstruction()
+        let memoryJSON = memoryManager.encodeMemoryToJSONString(memory)
+        let userPrompt = promptBuilder.directAnswerUserPrompt(
+            userMessage: userMessage,
+            memoryJSON: memoryJSON,
+            threadContext: threadContext
+        )
+
+        var inputItems = historyItems
+        inputItems.append(ResponseInputMessage(role: "user", text: userPrompt))
+
+        return try await streamingClient.requestModelResponseStreaming(
+            requestLabel: "direct_answer",
+            model: modelID,
+            developerInstruction: developerInstruction,
+            inputItems: inputItems,
+            credential: credential,
+            initialReasoningEffort: reasoningEffort,
+            responseFormat: promptBuilder.directAnswerResponseTextFormat(),
+            onStreamedText: onStreamedText
+        )
+    }
+
     private func requestPatchResponseStreaming(
         userMessage: String,
         historyItems: [ResponseInputMessage],
-        memory: CodexProjectChatService.SessionMemory,
+        memory: ProjectChatService.SessionMemory,
         filesJSON: String,
-        threadContext: CodexProjectChatService.ThreadContext?,
-        credential: CodexProjectChatService.ProviderCredential,
+        threadContext: ProjectChatService.ThreadContext?,
+        credential: ProjectChatService.ProviderCredential,
+        modelID: String,
         reasoningEffort: ResponsesReasoning.Effort,
         onStreamedText: (@MainActor (String) -> Void)?
     ) async throws -> String {
@@ -376,7 +485,7 @@ final class CodexChatOrchestrator {
 
         return try await streamingClient.requestModelResponseStreaming(
             requestLabel: "generate_patch",
-            model: configuration.model,
+            model: modelID,
             developerInstruction: developerInstruction,
             inputItems: inputItems,
             credential: credential,
@@ -389,10 +498,11 @@ final class CodexChatOrchestrator {
     private func requestSelectedPaths(
         userMessage: String,
         historyItems: [ResponseInputMessage],
-        memory: CodexProjectChatService.SessionMemory,
+        memory: ProjectChatService.SessionMemory,
         fileCandidates: [ProjectFileCandidate],
-        threadContext: CodexProjectChatService.ThreadContext?,
-        credential: CodexProjectChatService.ProviderCredential,
+        threadContext: ProjectChatService.ThreadContext?,
+        credential: ProjectChatService.ProviderCredential,
+        modelID: String,
         reasoningEffort: ResponsesReasoning.Effort
     ) async throws -> [String] {
         let fileCatalogJSON = try scanner.encodeFileCatalogToJSONString(fileCandidates)
@@ -410,7 +520,7 @@ final class CodexChatOrchestrator {
 
         let responseText = try await streamingClient.requestModelResponseStreaming(
             requestLabel: "select_context_files",
-            model: configuration.model,
+            model: modelID,
             developerInstruction: developerInstruction,
             inputItems: inputItems,
             credential: credential,
@@ -425,10 +535,11 @@ final class CodexChatOrchestrator {
     private func requestTaskPlan(
         userMessage: String,
         historyItems: [ResponseInputMessage],
-        memory: CodexProjectChatService.SessionMemory,
+        memory: ProjectChatService.SessionMemory,
         fileCandidates: [ProjectFileCandidate],
-        threadContext: CodexProjectChatService.ThreadContext?,
-        credential: CodexProjectChatService.ProviderCredential,
+        threadContext: ProjectChatService.ThreadContext?,
+        credential: ProjectChatService.ProviderCredential,
+        modelID: String,
         reasoningEffort: ResponsesReasoning.Effort
     ) async throws -> TaskPlan {
         let filePathListJSON = try scanner.encodeFilePathListToJSONString(fileCandidates)
@@ -446,7 +557,7 @@ final class CodexChatOrchestrator {
 
         let responseText = try await streamingClient.requestModelResponseStreaming(
             requestLabel: "plan_tasks",
-            model: configuration.model,
+            model: modelID,
             developerInstruction: developerInstruction,
             inputItems: inputItems,
             credential: credential,
@@ -458,7 +569,7 @@ final class CodexChatOrchestrator {
         let payload = try parseTaskPlanPayload(from: responseText)
         let sanitizedTasks = sanitizeTaskPlanItems(payload.tasks)
         guard !sanitizedTasks.isEmpty else {
-            throw CodexProjectChatService.ServiceError.invalidResponse
+            throw ProjectChatService.ServiceError.invalidResponse
         }
         let summary = normalizedTaskItem(payload.summary, maxCharacters: configuration.maxTaskGoalCharacters) ?? "按步骤执行用户请求。"
         return TaskPlan(summary: summary, tasks: sanitizedTasks)
@@ -467,10 +578,10 @@ final class CodexChatOrchestrator {
     private func resolveExecutionRouteOrFallback(
         userMessage: String,
         historyItems: [ResponseInputMessage],
-        memory: CodexProjectChatService.SessionMemory,
-        fileCandidates: [ProjectFileCandidate],
-        threadContext: CodexProjectChatService.ThreadContext?,
-        credential: CodexProjectChatService.ProviderCredential,
+        memory: ProjectChatService.SessionMemory,
+        threadContext: ProjectChatService.ThreadContext?,
+        credential: ProjectChatService.ProviderCredential,
+        modelID: String,
         reasoningEffort: ResponsesReasoning.Effort
     ) async throws -> ExecutionRouteMode {
         do {
@@ -478,9 +589,9 @@ final class CodexChatOrchestrator {
                 userMessage: userMessage,
                 historyItems: historyItems,
                 memory: memory,
-                fileCandidates: fileCandidates,
                 threadContext: threadContext,
                 credential: credential,
+                modelID: modelID,
                 reasoningEffort: reasoningEffort
             )
         } catch is CancellationError {
@@ -494,10 +605,11 @@ final class CodexChatOrchestrator {
     private func resolveTaskPlanOrFallback(
         userMessage: String,
         historyItems: [ResponseInputMessage],
-        memory: CodexProjectChatService.SessionMemory,
+        memory: ProjectChatService.SessionMemory,
         fileCandidates: [ProjectFileCandidate],
-        threadContext: CodexProjectChatService.ThreadContext?,
-        credential: CodexProjectChatService.ProviderCredential,
+        threadContext: ProjectChatService.ThreadContext?,
+        credential: ProjectChatService.ProviderCredential,
+        modelID: String,
         reasoningEffort: ResponsesReasoning.Effort
     ) async throws -> TaskPlan {
         do {
@@ -508,6 +620,7 @@ final class CodexChatOrchestrator {
                 fileCandidates: fileCandidates,
                 threadContext: threadContext,
                 credential: credential,
+                modelID: modelID,
                 reasoningEffort: reasoningEffort
             )
         } catch is CancellationError {
@@ -551,10 +664,11 @@ final class CodexChatOrchestrator {
     private func resolveSelectedPathsOrFallback(
         userMessage: String,
         historyItems: [ResponseInputMessage],
-        memory: CodexProjectChatService.SessionMemory,
+        memory: ProjectChatService.SessionMemory,
         fileCandidates: [ProjectFileCandidate],
-        threadContext: CodexProjectChatService.ThreadContext?,
-        credential: CodexProjectChatService.ProviderCredential,
+        threadContext: ProjectChatService.ThreadContext?,
+        credential: ProjectChatService.ProviderCredential,
+        modelID: String,
         reasoningEffort: ResponsesReasoning.Effort
     ) async throws -> [String] {
         do {
@@ -565,6 +679,7 @@ final class CodexChatOrchestrator {
                 fileCandidates: fileCandidates,
                 threadContext: threadContext,
                 credential: credential,
+                modelID: modelID,
                 reasoningEffort: reasoningEffort
             )
             if !selected.isEmpty {
@@ -582,96 +697,140 @@ final class CodexChatOrchestrator {
     private func parsePatchPayload(from responseText: String) throws -> PatchPayload {
         let trimmed = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
-            throw CodexProjectChatService.ServiceError.invalidPatchJSON
+            throw ProjectChatService.ServiceError.invalidPatchJSON
         }
 
         let jsonString = extractJSONObject(from: trimmed) ?? trimmed
         guard let data = jsonString.data(using: .utf8) else {
-            throw CodexProjectChatService.ServiceError.invalidPatchJSON
+            throw ProjectChatService.ServiceError.invalidPatchJSON
         }
 
         do {
             return try jsonDecoder.decode(PatchPayload.self, from: data)
         } catch {
-            throw CodexProjectChatService.ServiceError.invalidPatchJSON
+            throw ProjectChatService.ServiceError.invalidPatchJSON
+        }
+    }
+
+    private func parseDirectAnswerPayload(from responseText: String) throws -> DirectAnswerPayload {
+        let trimmed = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw ProjectChatService.ServiceError.invalidResponse
+        }
+
+        let jsonString = extractJSONObject(from: trimmed) ?? trimmed
+        guard let data = jsonString.data(using: .utf8) else {
+            throw ProjectChatService.ServiceError.invalidResponse
+        }
+
+        do {
+            return try jsonDecoder.decode(DirectAnswerPayload.self, from: data)
+        } catch {
+            throw ProjectChatService.ServiceError.invalidResponse
         }
     }
 
     private func parseExecutionRoutePayload(from responseText: String) throws -> ExecutionRoutePayload {
         let trimmed = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
-            throw CodexProjectChatService.ServiceError.invalidResponse
+            throw ProjectChatService.ServiceError.invalidResponse
         }
 
         let jsonString = extractJSONObject(from: trimmed) ?? trimmed
         guard let data = jsonString.data(using: .utf8) else {
-            throw CodexProjectChatService.ServiceError.invalidResponse
+            throw ProjectChatService.ServiceError.invalidResponse
         }
 
         do {
             return try jsonDecoder.decode(ExecutionRoutePayload.self, from: data)
         } catch {
-            throw CodexProjectChatService.ServiceError.invalidResponse
+            throw ProjectChatService.ServiceError.invalidResponse
         }
     }
 
     private func parseFileSelectionPayload(from responseText: String) throws -> FileSelectionPayload {
         let trimmed = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
-            throw CodexProjectChatService.ServiceError.invalidResponse
+            throw ProjectChatService.ServiceError.invalidResponse
         }
 
         let jsonString = extractJSONObject(from: trimmed) ?? trimmed
         guard let data = jsonString.data(using: .utf8) else {
-            throw CodexProjectChatService.ServiceError.invalidResponse
+            throw ProjectChatService.ServiceError.invalidResponse
         }
 
         do {
             return try jsonDecoder.decode(FileSelectionPayload.self, from: data)
         } catch {
-            throw CodexProjectChatService.ServiceError.invalidResponse
+            throw ProjectChatService.ServiceError.invalidResponse
         }
     }
 
     private func parseTaskPlanPayload(from responseText: String) throws -> TaskPlanPayload {
         let trimmed = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
-            throw CodexProjectChatService.ServiceError.invalidResponse
+            throw ProjectChatService.ServiceError.invalidResponse
         }
 
         let jsonString = extractJSONObject(from: trimmed) ?? trimmed
         guard let data = jsonString.data(using: .utf8) else {
-            throw CodexProjectChatService.ServiceError.invalidResponse
+            throw ProjectChatService.ServiceError.invalidResponse
         }
 
         do {
             return try jsonDecoder.decode(TaskPlanPayload.self, from: data)
         } catch {
-            throw CodexProjectChatService.ServiceError.invalidResponse
+            throw ProjectChatService.ServiceError.invalidResponse
         }
     }
 
-    private func normalizedThreadMemoryUpdate(from patch: PatchPayload) -> CodexProjectChatService.ThreadMemoryUpdate? {
-        guard let patchUpdate = patch.threadMemoryUpdate else {
-            return nil
+    private func normalizedThreadMemoryUpdate(from patch: PatchPayload) -> ProjectChatService.ThreadMemoryUpdate? {
+        normalizedThreadMemoryUpdate(
+            memoryUpdate: patch.memoryUpdate,
+            legacyThreadMemoryUpdate: patch.threadMemoryUpdate
+        )
+    }
+
+    private func normalizedThreadMemoryUpdate(
+        memoryUpdate: PatchMemoryUpdate?,
+        legacyThreadMemoryUpdate: PatchThreadMemoryUpdate? = nil
+    ) -> ProjectChatService.ThreadMemoryUpdate? {
+        let modernContent = memoryUpdate?.threadContentMarkdown?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !modernContent.isEmpty {
+            let nextVersionSummary = normalizedTaskItem(
+                memoryUpdate?.threadNextVersionSummary,
+                maxCharacters: configuration.maxHistorySummaryCharacters
+            )
+            let nextVersionContentMarkdown = memoryUpdate?.threadNextVersionContentMarkdown?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return ProjectChatService.ThreadMemoryUpdate(
+                contentMarkdown: modernContent,
+                shouldRollOver: memoryUpdate?.threadShouldRollOver ?? false,
+                nextVersionSummary: nextVersionSummary,
+                nextVersionContentMarkdown: nextVersionContentMarkdown
+            )
         }
 
-        let contentMarkdown = patchUpdate.contentMarkdown?
+        guard let legacyThreadMemoryUpdate else {
+            return nil
+        }
+        let legacyContent = legacyThreadMemoryUpdate.contentMarkdown?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard !contentMarkdown.isEmpty else {
+        guard !legacyContent.isEmpty else {
             return nil
         }
 
         let nextVersionSummary = normalizedTaskItem(
-            patchUpdate.nextVersionSummary,
+            legacyThreadMemoryUpdate.nextVersionSummary,
             maxCharacters: configuration.maxHistorySummaryCharacters
         )
-        let nextVersionContentMarkdown = patchUpdate.nextVersionContentMarkdown?
+        let nextVersionContentMarkdown = legacyThreadMemoryUpdate.nextVersionContentMarkdown?
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
-        return CodexProjectChatService.ThreadMemoryUpdate(
-            contentMarkdown: contentMarkdown,
-            shouldRollOver: patchUpdate.shouldRollOver,
+        return ProjectChatService.ThreadMemoryUpdate(
+            contentMarkdown: legacyContent,
+            shouldRollOver: legacyThreadMemoryUpdate.shouldRollOver,
             nextVersionSummary: nextVersionSummary,
             nextVersionContentMarkdown: nextVersionContentMarkdown
         )
@@ -687,7 +846,7 @@ final class CodexChatOrchestrator {
         return String(rawText[firstBrace ... lastBrace])
     }
 
-    private func mapReasoningEffort(_ effort: CodexProjectChatService.ReasoningEffort) -> ResponsesReasoning.Effort {
+    private func mapReasoningEffort(_ effort: ProjectChatService.ReasoningEffort) -> ResponsesReasoning.Effort {
         switch effort {
         case .low:
             return .low
@@ -698,6 +857,11 @@ final class CodexChatOrchestrator {
         case .xhigh:
             return .xhigh
         }
+    }
+
+    private func resolvedModelID(from credential: ProjectChatService.ProviderCredential) -> String {
+        let normalized = credential.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalized.isEmpty ? configuration.defaultModel : normalized
     }
 
     private func createAutoSnapshotIfNeeded(projectURL: URL, changedPaths: [String]) {

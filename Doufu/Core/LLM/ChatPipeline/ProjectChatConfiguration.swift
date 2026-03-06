@@ -1,5 +1,5 @@
 //
-//  CodexChatConfiguration.swift
+//  ProjectChatConfiguration.swift
 //  Doufu
 //
 //  Created by Codex on 2026/03/05.
@@ -7,8 +7,8 @@
 
 import Foundation
 
-struct CodexChatConfiguration {
-    let model = "gpt-5.3-codex"
+struct ProjectChatConfiguration {
+    let defaultModel = LLMProviderRecord.Kind.openAICompatible.defaultModelID
 
     let maxFilesForCatalog = 300
     let maxBytesPerCatalogFile = 120_000
@@ -47,5 +47,5 @@ struct CodexChatConfiguration {
     let maxThreadMemoryCharactersInPrompt = 16_000
     let maxDebugTextCharacters = 1_600
 
-    static let `default` = CodexChatConfiguration()
+    static let `default` = ProjectChatConfiguration()
 }

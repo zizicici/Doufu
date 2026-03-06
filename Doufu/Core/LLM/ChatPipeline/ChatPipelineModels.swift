@@ -1,5 +1,5 @@
 //
-//  CodexChatPipelineModels.swift
+//  ChatPipelineModels.swift
 //  Doufu
 //
 //  Created by Codex on 2026/03/05.
@@ -221,6 +221,7 @@ struct TaskPlanPayload: Decodable {
 }
 
 enum ExecutionRouteMode: String {
+    case directAnswer = "direct_answer"
     case singlePass = "single_pass"
     case multiTask = "multi_task"
 }
@@ -262,11 +263,70 @@ struct PatchMemoryUpdate: Decodable {
     let objective: String?
     let constraints: [String]?
     let todoItems: [String]?
+    let threadContentMarkdown: String?
+    let threadShouldRollOver: Bool
+    let threadNextVersionSummary: String?
+    let threadNextVersionContentMarkdown: String?
 
     private enum CodingKeys: String, CodingKey {
         case objective
         case constraints
         case todoItems = "todo_items"
+        case threadContentMarkdown = "thread_content_markdown"
+        case threadShouldRollOver = "thread_should_rollover"
+        case threadNextVersionSummary = "thread_next_version_summary"
+        case threadNextVersionContentMarkdown = "thread_next_version_content_markdown"
+        case threadMemory = "thread_memory"
+    }
+
+    private enum ThreadMemoryCodingKeys: String, CodingKey {
+        case contentMarkdown = "content_markdown"
+        case shouldRollOver = "should_rollover"
+        case nextVersionSummary = "next_version_summary"
+        case nextVersionContentMarkdown = "next_version_content_markdown"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        objective = try container.decodeIfPresent(String.self, forKey: .objective)
+        constraints = try container.decodeIfPresent([String].self, forKey: .constraints)
+        todoItems = try container.decodeIfPresent([String].self, forKey: .todoItems)
+
+        if let flattened = try container.decodeIfPresent(String.self, forKey: .threadContentMarkdown) {
+            threadContentMarkdown = flattened
+        } else if container.contains(.threadMemory) {
+            let threadContainer = try container.nestedContainer(keyedBy: ThreadMemoryCodingKeys.self, forKey: .threadMemory)
+            threadContentMarkdown = try threadContainer.decodeIfPresent(String.self, forKey: .contentMarkdown)
+        } else {
+            threadContentMarkdown = nil
+        }
+
+        if let flattenedShouldRollOver = try container.decodeIfPresent(Bool.self, forKey: .threadShouldRollOver) {
+            threadShouldRollOver = flattenedShouldRollOver
+        } else if container.contains(.threadMemory) {
+            let threadContainer = try container.nestedContainer(keyedBy: ThreadMemoryCodingKeys.self, forKey: .threadMemory)
+            threadShouldRollOver = try threadContainer.decodeIfPresent(Bool.self, forKey: .shouldRollOver) ?? false
+        } else {
+            threadShouldRollOver = false
+        }
+
+        if let flattenedSummary = try container.decodeIfPresent(String.self, forKey: .threadNextVersionSummary) {
+            threadNextVersionSummary = flattenedSummary
+        } else if container.contains(.threadMemory) {
+            let threadContainer = try container.nestedContainer(keyedBy: ThreadMemoryCodingKeys.self, forKey: .threadMemory)
+            threadNextVersionSummary = try threadContainer.decodeIfPresent(String.self, forKey: .nextVersionSummary)
+        } else {
+            threadNextVersionSummary = nil
+        }
+
+        if let flattenedContent = try container.decodeIfPresent(String.self, forKey: .threadNextVersionContentMarkdown) {
+            threadNextVersionContentMarkdown = flattenedContent
+        } else if container.contains(.threadMemory) {
+            let threadContainer = try container.nestedContainer(keyedBy: ThreadMemoryCodingKeys.self, forKey: .threadMemory)
+            threadNextVersionContentMarkdown = try threadContainer.decodeIfPresent(String.self, forKey: .nextVersionContentMarkdown)
+        } else {
+            threadNextVersionContentMarkdown = nil
+        }
     }
 }
 
@@ -314,6 +374,22 @@ struct PatchPayload: Decodable {
         searchReplaceChanges = try container.decodeIfPresent([SearchReplaceFileChange].self, forKey: .searchReplaceChanges) ?? []
         memoryUpdate = try container.decodeIfPresent(PatchMemoryUpdate.self, forKey: .memoryUpdate)
         threadMemoryUpdate = try container.decodeIfPresent(PatchThreadMemoryUpdate.self, forKey: .threadMemoryUpdate)
+    }
+}
+
+struct DirectAnswerPayload: Decodable {
+    let assistantMessage: String
+    let memoryUpdate: PatchMemoryUpdate?
+
+    private enum CodingKeys: String, CodingKey {
+        case assistantMessage = "assistant_message"
+        case memoryUpdate = "memory_update"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        assistantMessage = try container.decodeIfPresent(String.self, forKey: .assistantMessage) ?? ""
+        memoryUpdate = try container.decodeIfPresent(PatchMemoryUpdate.self, forKey: .memoryUpdate)
     }
 }
 

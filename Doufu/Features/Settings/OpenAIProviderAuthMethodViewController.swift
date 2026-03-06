@@ -8,6 +8,7 @@
 import UIKit
 
 final class OpenAIProviderAuthMethodViewController: UITableViewController {
+    private let providerKind: LLMProviderRecord.Kind
 
     private enum Method: Int, CaseIterable {
         case apiKey
@@ -41,7 +42,8 @@ final class OpenAIProviderAuthMethodViewController: UITableViewController {
         }
     }
 
-    init() {
+    init(providerKind: LLMProviderRecord.Kind) {
+        self.providerKind = providerKind
         super.init(style: .insetGrouped)
     }
 
@@ -52,7 +54,7 @@ final class OpenAIProviderAuthMethodViewController: UITableViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        title = String(localized: "providers.kind.openai_compatible.title")
+        title = providerKind.displayName
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "MethodCell")
     }
 
@@ -99,10 +101,10 @@ final class OpenAIProviderAuthMethodViewController: UITableViewController {
 
         switch method {
         case .apiKey:
-            let controller = OpenAIAPIKeyProviderFormViewController()
+            let controller = OpenAIAPIKeyProviderFormViewController(providerKind: providerKind)
             navigationController?.pushViewController(controller, animated: true)
         case .oauth:
-            let controller = OpenAIOAuthProviderFormViewController()
+            let controller = OpenAIOAuthProviderFormViewController(providerKind: providerKind)
             navigationController?.pushViewController(controller, animated: true)
         }
     }

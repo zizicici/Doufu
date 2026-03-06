@@ -220,7 +220,7 @@ final class ProjectChatThreadStore {
     func applyThreadMemoryUpdate(
         projectURL: URL,
         threadID: String,
-        update: CodexProjectChatService.ThreadMemoryUpdate?,
+        update: ProjectChatService.ThreadMemoryUpdate?,
         fallbackUserMessage: String,
         fallbackAssistantMessage: String
     ) throws -> AppliedThreadMemoryResult {

@@ -13,12 +13,118 @@ final class LLMStreamingClient {
         let usage: ResponsesUsage?
     }
 
-    private let configuration: CodexChatConfiguration
+    private struct AnthropicMessageRequest: Encodable {
+        struct Message: Encodable {
+            struct Content: Encodable {
+                let type: String
+                let text: String
+            }
+
+            let role: String
+            let content: [Content]
+        }
+
+        let model: String
+        let system: String?
+        let messages: [Message]
+        let maxTokens: Int
+
+        private enum CodingKeys: String, CodingKey {
+            case model
+            case system
+            case messages
+            case maxTokens = "max_tokens"
+        }
+    }
+
+    private struct AnthropicMessageResponse: Decodable {
+        struct Content: Decodable {
+            let type: String?
+            let text: String?
+        }
+
+        struct Usage: Decodable {
+            let inputTokens: Int?
+            let outputTokens: Int?
+
+            private enum CodingKeys: String, CodingKey {
+                case inputTokens = "input_tokens"
+                case outputTokens = "output_tokens"
+            }
+        }
+
+        let content: [Content]?
+        let usage: Usage?
+    }
+
+    private struct GeminiGenerateContentRequest: Encodable {
+        struct Content: Encodable {
+            struct Part: Encodable {
+                let text: String
+            }
+
+            let role: String
+            let parts: [Part]
+        }
+
+        struct SystemInstruction: Encodable {
+            let parts: [Content.Part]
+        }
+
+        struct GenerationConfig: Encodable {
+            let responseMimeType: String?
+
+            private enum CodingKeys: String, CodingKey {
+                case responseMimeType = "response_mime_type"
+            }
+        }
+
+        let systemInstruction: SystemInstruction?
+        let contents: [Content]
+        let generationConfig: GenerationConfig?
+
+        private enum CodingKeys: String, CodingKey {
+            case systemInstruction = "system_instruction"
+            case contents
+            case generationConfig = "generation_config"
+        }
+    }
+
+    private struct GeminiGenerateContentResponse: Decodable {
+        struct Candidate: Decodable {
+            struct Content: Decodable {
+                struct Part: Decodable {
+                    let text: String?
+                }
+
+                let parts: [Part]?
+            }
+
+            let content: Content?
+        }
+
+        struct UsageMetadata: Decodable {
+            let promptTokenCount: Int?
+            let candidatesTokenCount: Int?
+            let totalTokenCount: Int?
+
+            private enum CodingKeys: String, CodingKey {
+                case promptTokenCount
+                case candidatesTokenCount
+                case totalTokenCount
+            }
+        }
+
+        let candidates: [Candidate]?
+        let usageMetadata: UsageMetadata?
+    }
+
+    private let configuration: ProjectChatConfiguration
     private let jsonDecoder = JSONDecoder()
     private let jsonEncoder = JSONEncoder()
     private let tokenUsageStore = LLMTokenUsageStore.shared
 
-    init(configuration: CodexChatConfiguration) {
+    init(configuration: ProjectChatConfiguration) {
         self.configuration = configuration
         jsonEncoder.outputFormatting = [.prettyPrinted, .sortedKeys]
     }
@@ -28,11 +134,37 @@ final class LLMStreamingClient {
         model: String,
         developerInstruction: String,
         inputItems: [ResponseInputMessage],
-        credential: CodexProjectChatService.ProviderCredential,
+        credential: ProjectChatService.ProviderCredential,
         initialReasoningEffort: ResponsesReasoning.Effort,
         responseFormat: ResponsesTextFormat?,
         onStreamedText: (@MainActor (String) -> Void)?
     ) async throws -> String {
+        switch credential.providerKind {
+        case .openAICompatible:
+            break
+        case .anthropic:
+            return try await requestAnthropicModelResponse(
+                requestLabel: requestLabel,
+                model: model,
+                developerInstruction: developerInstruction,
+                inputItems: inputItems,
+                credential: credential,
+                initialReasoningEffort: initialReasoningEffort,
+                onStreamedText: onStreamedText
+            )
+        case .googleGemini:
+            return try await requestGeminiModelResponse(
+                requestLabel: requestLabel,
+                model: model,
+                developerInstruction: developerInstruction,
+                inputItems: inputItems,
+                credential: credential,
+                initialReasoningEffort: initialReasoningEffort,
+                responseFormat: responseFormat,
+                onStreamedText: onStreamedText
+            )
+        }
+
         var activeRequestBody = ResponsesRequest(
             model: model,
             instructions: developerInstruction,
@@ -72,7 +204,7 @@ final class LLMStreamingClient {
 
             let (bytes, response) = try await URLSession.shared.bytes(for: request)
             guard let httpResponse = response as? HTTPURLResponse else {
-                throw CodexProjectChatService.ServiceError.networkFailed("请求失败：无效响应。")
+                throw ProjectChatService.ServiceError.networkFailed("请求失败：无效响应。")
             }
 
             guard (200 ... 299).contains(httpResponse.statusCode) else {
@@ -107,7 +239,7 @@ final class LLMStreamingClient {
                     requestLabel: requestLabel
                 )
                 let message = parseErrorMessage(from: data) ?? HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
-                throw CodexProjectChatService.ServiceError.networkFailed("请求失败：\(message)")
+                throw ProjectChatService.ServiceError.networkFailed("请求失败：\(message)")
             }
 
             do {
@@ -127,7 +259,7 @@ final class LLMStreamingClient {
                     outputTokens: responseResult.usage?.outputTokens
                 )
                 return responseResult.text
-            } catch let serviceError as CodexProjectChatService.ServiceError {
+            } catch let serviceError as ProjectChatService.ServiceError {
                 guard case let .networkFailed(errorMessage) = serviceError else {
                     throw serviceError
                 }
@@ -157,6 +289,317 @@ final class LLMStreamingClient {
                 throw serviceError
             }
         }
+    }
+
+    private func requestAnthropicModelResponse(
+        requestLabel: String,
+        model: String,
+        developerInstruction: String,
+        inputItems: [ResponseInputMessage],
+        credential: ProjectChatService.ProviderCredential,
+        initialReasoningEffort: ResponsesReasoning.Effort,
+        onStreamedText: (@MainActor (String) -> Void)?
+    ) async throws -> String {
+        let timeoutSeconds = timeoutSeconds(for: initialReasoningEffort)
+        let url = credential.baseURL.appendingPathComponent("messages")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = timeoutSeconds
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        applyProviderAuthorizationHeaders(to: &request, credential: credential)
+
+        let messages = normalizedConversationMessages(
+            from: inputItems,
+            assistantRole: "assistant",
+            userRole: "user"
+        ).map { item in
+            AnthropicMessageRequest.Message(
+                role: item.role,
+                content: [.init(type: "text", text: item.text)]
+            )
+        }
+        let normalizedInstruction = developerInstruction.trimmingCharacters(in: .whitespacesAndNewlines)
+        let requestBody = AnthropicMessageRequest(
+            model: model,
+            system: normalizedInstruction.isEmpty ? nil : normalizedInstruction,
+            messages: messages,
+            maxTokens: 8192
+        )
+        request.httpBody = try jsonEncoder.encode(requestBody)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw ProjectChatService.ServiceError.networkFailed("请求失败：无效响应。")
+        }
+        guard (200 ... 299).contains(httpResponse.statusCode) else {
+            logFailedResponseDebug(
+                request: request,
+                httpResponse: httpResponse,
+                responseBodyData: data,
+                requestLabel: requestLabel
+            )
+            let message = parseErrorMessage(from: data) ?? HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
+            throw ProjectChatService.ServiceError.networkFailed("请求失败：\(message)")
+        }
+
+        guard let decoded = try? jsonDecoder.decode(AnthropicMessageResponse.self, from: data) else {
+            logFailedResponseDebug(
+                request: request,
+                httpResponse: httpResponse,
+                responseBodyData: data,
+                requestLabel: "\(requestLabel)_anthropic_decode_failed"
+            )
+            throw ProjectChatService.ServiceError.invalidResponse
+        }
+        let finalResponseText = extractAnthropicText(from: decoded)
+        guard !finalResponseText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            logFailedResponseDebug(
+                request: request,
+                httpResponse: httpResponse,
+                responseBodyData: data,
+                requestLabel: "\(requestLabel)_anthropic_empty_text"
+            )
+            throw ProjectChatService.ServiceError.invalidResponse
+        }
+
+        if let onStreamedText {
+            await onStreamedText(finalResponseText)
+        }
+
+        tokenUsageStore.recordUsage(
+            providerID: credential.providerID,
+            providerLabel: credential.providerLabel,
+            model: model,
+            inputTokens: decoded.usage?.inputTokens,
+            outputTokens: decoded.usage?.outputTokens
+        )
+        logSuccessfulResponseDebug(
+            request: request,
+            httpResponse: httpResponse,
+            finalResponseText: finalResponseText,
+            usage: nil,
+            rawSSEEventPayloads: [],
+            requestLabel: requestLabel
+        )
+        return finalResponseText
+    }
+
+    private func requestGeminiModelResponse(
+        requestLabel: String,
+        model: String,
+        developerInstruction: String,
+        inputItems: [ResponseInputMessage],
+        credential: ProjectChatService.ProviderCredential,
+        initialReasoningEffort: ResponsesReasoning.Effort,
+        responseFormat: ResponsesTextFormat?,
+        onStreamedText: (@MainActor (String) -> Void)?
+    ) async throws -> String {
+        let timeoutSeconds = timeoutSeconds(for: initialReasoningEffort)
+        let apiKey: String? = credential.authMode == .apiKey ? credential.bearerToken : nil
+        guard let url = buildGeminiGenerateContentURL(baseURL: credential.baseURL, model: model, apiKey: apiKey) else {
+            throw ProjectChatService.ServiceError.networkFailed("请求失败：Gemini URL 无效。")
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = timeoutSeconds
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        if credential.authMode == .oauth {
+            request.setValue("Bearer \(credential.bearerToken)", forHTTPHeaderField: "Authorization")
+        }
+
+        let messages = normalizedConversationMessages(
+            from: inputItems,
+            assistantRole: "model",
+            userRole: "user"
+        ).map { item in
+            GeminiGenerateContentRequest.Content(
+                role: item.role,
+                parts: [.init(text: item.text)]
+            )
+        }
+        let normalizedInstruction = developerInstruction.trimmingCharacters(in: .whitespacesAndNewlines)
+        let requestBody = GeminiGenerateContentRequest(
+            systemInstruction: normalizedInstruction.isEmpty
+                ? nil
+                : .init(parts: [.init(text: normalizedInstruction)]),
+            contents: messages,
+            generationConfig: .init(responseMimeType: responseFormat == nil ? nil : "application/json")
+        )
+        request.httpBody = try jsonEncoder.encode(requestBody)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw ProjectChatService.ServiceError.networkFailed("请求失败：无效响应。")
+        }
+        guard (200 ... 299).contains(httpResponse.statusCode) else {
+            logFailedResponseDebug(
+                request: request,
+                httpResponse: httpResponse,
+                responseBodyData: data,
+                requestLabel: requestLabel
+            )
+            let message = parseErrorMessage(from: data) ?? HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
+            throw ProjectChatService.ServiceError.networkFailed("请求失败：\(message)")
+        }
+
+        guard let decoded = try? jsonDecoder.decode(GeminiGenerateContentResponse.self, from: data) else {
+            logFailedResponseDebug(
+                request: request,
+                httpResponse: httpResponse,
+                responseBodyData: data,
+                requestLabel: "\(requestLabel)_gemini_decode_failed"
+            )
+            throw ProjectChatService.ServiceError.invalidResponse
+        }
+        let finalResponseText = extractGeminiText(from: decoded)
+        guard !finalResponseText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            logFailedResponseDebug(
+                request: request,
+                httpResponse: httpResponse,
+                responseBodyData: data,
+                requestLabel: "\(requestLabel)_gemini_empty_text"
+            )
+            throw ProjectChatService.ServiceError.invalidResponse
+        }
+
+        if let onStreamedText {
+            await onStreamedText(finalResponseText)
+        }
+
+        tokenUsageStore.recordUsage(
+            providerID: credential.providerID,
+            providerLabel: credential.providerLabel,
+            model: model,
+            inputTokens: decoded.usageMetadata?.promptTokenCount,
+            outputTokens: decoded.usageMetadata?.candidatesTokenCount
+        )
+        logSuccessfulResponseDebug(
+            request: request,
+            httpResponse: httpResponse,
+            finalResponseText: finalResponseText,
+            usage: nil,
+            rawSSEEventPayloads: [],
+            requestLabel: requestLabel
+        )
+        return finalResponseText
+    }
+
+    private func applyProviderAuthorizationHeaders(
+        to request: inout URLRequest,
+        credential: ProjectChatService.ProviderCredential
+    ) {
+        switch credential.authMode {
+        case .apiKey:
+            request.setValue(credential.bearerToken, forHTTPHeaderField: "x-api-key")
+        case .oauth:
+            request.setValue("Bearer \(credential.bearerToken)", forHTTPHeaderField: "Authorization")
+        }
+    }
+
+    private func timeoutSeconds(for effort: ResponsesReasoning.Effort) -> TimeInterval {
+        switch effort {
+        case .low:
+            return configuration.lowReasoningTimeoutSeconds
+        case .medium:
+            return configuration.mediumReasoningTimeoutSeconds
+        case .high:
+            return configuration.highReasoningTimeoutSeconds
+        case .xhigh:
+            return configuration.xhighReasoningTimeoutSeconds
+        }
+    }
+
+    private func normalizedConversationMessages(
+        from inputItems: [ResponseInputMessage],
+        assistantRole: String,
+        userRole: String
+    ) -> [(role: String, text: String)] {
+        inputItems.compactMap { input in
+            let normalizedRole = input.role.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let role: String
+            switch normalizedRole {
+            case "assistant":
+                role = assistantRole
+            case "user":
+                role = userRole
+            default:
+                return nil
+            }
+
+            let text = input.content
+                .map(\.text)
+                .joined(separator: "\n")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else {
+                return nil
+            }
+            return (role: role, text: text)
+        }
+    }
+
+    private func extractAnthropicText(from response: AnthropicMessageResponse) -> String {
+        (response.content ?? [])
+            .compactMap { content -> String? in
+                guard (content.type?.lowercased() ?? "text") == "text" else {
+                    return nil
+                }
+                let text = content.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                guard !text.isEmpty else {
+                    return nil
+                }
+                return text
+            }
+            .joined(separator: "\n")
+    }
+
+    private func extractGeminiText(from response: GeminiGenerateContentResponse) -> String {
+        (response.candidates ?? [])
+            .compactMap { candidate -> String? in
+                let text = (candidate.content?.parts ?? [])
+                    .compactMap { part -> String? in
+                        let value = part.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                        guard !value.isEmpty else {
+                            return nil
+                        }
+                        return value
+                    }
+                    .joined(separator: "\n")
+                return text.isEmpty ? nil : text
+            }
+            .joined(separator: "\n")
+    }
+
+    private func buildGeminiGenerateContentURL(
+        baseURL: URL,
+        model: String,
+        apiKey: String?
+    ) -> URL? {
+        guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+
+        let normalizedBasePath = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let modelPath = "models/\(model):generateContent"
+        if normalizedBasePath.isEmpty {
+            components.path = "/" + modelPath
+        } else {
+            components.path = "/" + normalizedBasePath + "/" + modelPath
+        }
+
+        if let apiKey {
+            let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmedKey.isEmpty {
+                var queryItems = components.queryItems ?? []
+                queryItems.removeAll { $0.name == "key" }
+                queryItems.append(URLQueryItem(name: "key", value: trimmedKey))
+                components.queryItems = queryItems
+            }
+        }
+        return components.url
     }
 
     private func consumeStreamingResponse(
@@ -242,7 +685,7 @@ final class LLMStreamingClient {
                 rawSSEEventPayloads: rawSSEEventPayloads,
                 requestLabel: requestLabel
             )
-            throw CodexProjectChatService.ServiceError.invalidResponse
+            throw ProjectChatService.ServiceError.invalidResponse
         }
     }
 
@@ -310,12 +753,12 @@ final class LLMStreamingClient {
             group.addTask {
                 let nanoseconds = UInt64(max(1, seconds) * 1_000_000_000)
                 try await Task.sleep(nanoseconds: nanoseconds)
-                throw CodexProjectChatService.ServiceError.networkFailed("请求超时，请重试。")
+                throw ProjectChatService.ServiceError.networkFailed("请求超时，请重试。")
             }
 
             guard let first = try await group.next() else {
                 group.cancelAll()
-                throw CodexProjectChatService.ServiceError.networkFailed("请求失败，请重试。")
+                throw ProjectChatService.ServiceError.networkFailed("请求失败，请重试。")
             }
             group.cancelAll()
             return first
@@ -415,15 +858,15 @@ final class LLMStreamingClient {
 
         case "error":
             let message = parseStreamingErrorMessage(from: eventObject) ?? "流式响应失败。"
-            throw CodexProjectChatService.ServiceError.networkFailed("请求失败：\(message)")
+            throw ProjectChatService.ServiceError.networkFailed("请求失败：\(message)")
 
         case "response.failed":
             let message = parseNestedErrorMessage(from: eventObject["response"]) ?? "响应失败。"
-            throw CodexProjectChatService.ServiceError.networkFailed("请求失败：\(message)")
+            throw ProjectChatService.ServiceError.networkFailed("请求失败：\(message)")
 
         case "response.incomplete":
             let message = parseIncompleteReason(from: eventObject["response"]) ?? "响应不完整。"
-            throw CodexProjectChatService.ServiceError.networkFailed("请求失败：\(message)")
+            throw ProjectChatService.ServiceError.networkFailed("请求失败：\(message)")
 
         default:
             return
@@ -697,10 +1140,11 @@ final class LLMStreamingClient {
     }
 
     private func truncatedDebugText(_ value: String) -> String {
-        guard value.count > configuration.maxDebugTextCharacters else {
-            return value
-        }
-        return String(value.prefix(configuration.maxDebugTextCharacters)) + "...(truncated)"
+        return value
+//        guard value.count > configuration.maxDebugTextCharacters else {
+//            return value
+//        }
+//        return String(value.prefix(configuration.maxDebugTextCharacters)) + "...(truncated)"
     }
 
     private func logSuccessfulResponseDebug(

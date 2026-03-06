@@ -1,5 +1,5 @@
 //
-//  CodexProjectChatViewController.swift
+//  ProjectChatViewController.swift
 //  Doufu
 //
 //  Created by Codex on 2026/03/05.
@@ -8,7 +8,7 @@
 import UIKit
 
 @MainActor
-final class CodexProjectChatViewController: UIViewController {
+final class ProjectChatViewController: UIViewController {
 
     var onProjectFilesUpdated: (() -> Void)?
 
@@ -31,17 +31,6 @@ final class CodexProjectChatViewController: UIViewController {
             case user
             case assistant
             case system
-
-            var prefix: String {
-                switch self {
-                case .user:
-                    return String(localized: "chat.role.user_prefix")
-                case .assistant:
-                    return String(localized: "chat.role.assistant_prefix")
-                case .system:
-                    return String(localized: "chat.role.system_prefix")
-                }
-            }
         }
 
         let id = UUID()
@@ -55,14 +44,14 @@ final class CodexProjectChatViewController: UIViewController {
 
     private let projectName: String
     private let projectURL: URL
-    private let chatService = CodexProjectChatService()
+    private let chatService = ProjectChatService()
     private let providerStore = LLMProviderSettingsStore.shared
     private let threadStore = ProjectChatThreadStore.shared
 
     private var messages: [Message] = []
-    private var providerCredential: CodexProjectChatService.ProviderCredential?
-    private var sessionMemory: CodexProjectChatService.SessionMemory?
-    private var threadSessionMemories: [String: CodexProjectChatService.SessionMemory] = [:]
+    private var providerCredential: ProjectChatService.ProviderCredential?
+    private var sessionMemory: ProjectChatService.SessionMemory?
+    private var threadSessionMemories: [String: ProjectChatService.SessionMemory] = [:]
     private var isSending = false
     private var sendTask: Task<Void, Never>?
     private var didCancelCurrentRequest = false
@@ -73,7 +62,8 @@ final class CodexProjectChatViewController: UIViewController {
     private var progressUIUpdateTimer: Timer?
     private var threadIndex: ProjectChatThreadIndex?
     private var currentThread: ProjectChatThreadRecord?
-    private var selectedReasoningEffort: CodexProjectChatService.ReasoningEffort = .high
+    private var selectedModelID: String?
+    private var selectedReasoningEffortsByModelID: [String: ProjectChatService.ReasoningEffort] = [:]
     private let inputMinHeight: CGFloat = 38
     private let inputMaxHeight: CGFloat = 120
     private var inputHeightConstraint: NSLayoutConstraint?
@@ -84,8 +74,8 @@ final class CodexProjectChatViewController: UIViewController {
         action: #selector(didTapClose)
     )
 
-    private lazy var reasoningBarButtonItem = UIBarButtonItem(
-        title: selectedReasoningEffort.displayName,
+    private lazy var modelBarButtonItem = UIBarButtonItem(
+        title: "Model",
         style: .plain,
         target: nil,
         action: nil
@@ -164,7 +154,7 @@ final class CodexProjectChatViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        title = String(localized: "chat.title")
+        title = nil
         view.backgroundColor = .systemGroupedBackground
         configureNavigation()
         configureLayout()
@@ -197,7 +187,7 @@ final class CodexProjectChatViewController: UIViewController {
     }
 
     private func configureNavigation() {
-        navigationItem.rightBarButtonItems = [closeBarButtonItem, reasoningBarButtonItem]
+        navigationItem.rightBarButtonItems = [closeBarButtonItem, modelBarButtonItem]
         refreshNavigationItems()
     }
 
@@ -206,9 +196,9 @@ final class CodexProjectChatViewController: UIViewController {
         threadBarButtonItem.menu = isSending ? nil : buildThreadMenu()
         threadBarButtonItem.isEnabled = !isSending
         navigationItem.leftBarButtonItem = threadBarButtonItem
-        reasoningBarButtonItem.title = selectedReasoningEffort.displayName
-        reasoningBarButtonItem.menu = buildReasoningMenu()
-        reasoningBarButtonItem.isEnabled = !isSending
+        modelBarButtonItem.title = currentModelMenuButtonTitle()
+        modelBarButtonItem.menu = isSending ? nil : buildModelMenu()
+        modelBarButtonItem.isEnabled = !isSending && providerCredential != nil
     }
 
     private func configureLayout() {
@@ -289,10 +279,16 @@ final class CodexProjectChatViewController: UIViewController {
         do {
             let credential = try resolveProviderCredential()
             providerCredential = credential
+            let normalizedSelectedModel = selectedModelID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if normalizedSelectedModel.isEmpty {
+                selectedModelID = credential.modelID
+            }
             appendProviderStatusIfNeeded()
+            refreshNavigationItems()
         } catch {
             providerCredential = nil
             appendMessage(role: .system, text: error.localizedDescription)
+            refreshNavigationItems()
         }
     }
 
@@ -313,7 +309,7 @@ final class CodexProjectChatViewController: UIViewController {
         persistCurrentThreadMessages()
     }
 
-    private func resolveProviderCredential() throws -> CodexProjectChatService.ProviderCredential {
+    private func resolveProviderCredential() throws -> ProjectChatService.ProviderCredential {
         let providers = providerStore.loadProviders()
         for provider in providers {
             guard let baseURL = URL(string: provider.effectiveBaseURLString) else {
@@ -327,9 +323,12 @@ final class CodexProjectChatViewController: UIViewController {
 
             let chatGPTAccountID = provider.chatGPTAccountID ?? extractChatGPTAccountID(fromJWT: token)
 
-            return CodexProjectChatService.ProviderCredential(
+            return ProjectChatService.ProviderCredential(
                 providerID: provider.id,
                 providerLabel: provider.label,
+                providerKind: provider.kind,
+                authMode: provider.authMode,
+                modelID: provider.effectiveModelID,
                 baseURL: baseURL,
                 bearerToken: token,
                 chatGPTAccountID: chatGPTAccountID
@@ -372,17 +371,144 @@ final class CodexProjectChatViewController: UIViewController {
         return UIMenu(title: String(localized: "chat.thread.button_title"), children: threadActions + [createAction])
     }
 
-    private func buildReasoningMenu() -> UIMenu {
-        let actions = CodexProjectChatService.ReasoningEffort.allCases.map { effort in
+    private func currentModelMenuTitle() -> String {
+        let selected = selectedModelID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !selected.isEmpty {
+            return selected
+        }
+        let fallback = providerCredential?.modelID.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return fallback.isEmpty ? String(localized: "chat.menu.model") : fallback
+    }
+
+    private func currentModelMenuButtonTitle() -> String {
+        let modelTitle = currentModelMenuTitle()
+        guard let providerKind = currentProviderKind() else {
+            return modelTitle
+        }
+        let effort = resolvedReasoningEffort(forModelID: modelTitle, providerKind: providerKind)
+        return modelTitle + " · " + effort.displayName
+    }
+
+    private func currentProviderKind() -> LLMProviderRecord.Kind? {
+        guard let credential = providerCredential else {
+            return nil
+        }
+        return providerStore.loadProvider(id: credential.providerID)?.kind ?? credential.providerKind
+    }
+
+    private func normalizedModelID(_ modelID: String) -> String {
+        modelID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private func reasoningProfile(
+        forModelID modelID: String,
+        providerKind: LLMProviderRecord.Kind
+    ) -> (supported: [ProjectChatService.ReasoningEffort], defaultEffort: ProjectChatService.ReasoningEffort) {
+        let normalizedModel = normalizedModelID(modelID)
+        switch providerKind {
+        case .openAICompatible:
+            if normalizedModel.contains("mini") {
+                return ([.low, .medium, .high], .medium)
+            }
+            if normalizedModel.contains("pro") || normalizedModel.contains("codex") {
+                return ([.medium, .high, .xhigh], .high)
+            }
+            return ([.low, .medium, .high, .xhigh], .high)
+        case .anthropic:
+            if normalizedModel.contains("haiku") {
+                return ([.low, .medium], .medium)
+            }
+            if normalizedModel.contains("opus") {
+                return ([.medium, .high], .high)
+            }
+            return ([.medium, .high], .high)
+        case .googleGemini:
+            if normalizedModel.contains("flash") {
+                return ([.low, .medium], .medium)
+            }
+            return ([.medium, .high], .high)
+        }
+    }
+
+    private func resolvedReasoningEffort(
+        forModelID modelID: String,
+        providerKind: LLMProviderRecord.Kind
+    ) -> ProjectChatService.ReasoningEffort {
+        let profile = reasoningProfile(forModelID: modelID, providerKind: providerKind)
+        let key = normalizedModelID(modelID)
+        if let selected = selectedReasoningEffortsByModelID[key], profile.supported.contains(selected) {
+            return selected
+        }
+        selectedReasoningEffortsByModelID[key] = profile.defaultEffort
+        return profile.defaultEffort
+    }
+
+    private func buildModelMenu() -> UIMenu {
+        guard let credential = providerCredential else {
+            let unavailable = UIAction(title: String(localized: "chat.error.no_provider"), attributes: .disabled) { _ in }
+            return UIMenu(title: String(localized: "chat.menu.model"), children: [unavailable])
+        }
+
+        let providerKind = providerStore.loadProvider(id: credential.providerID)?.kind ?? credential.providerKind
+        var modelIDs = providerKind.builtInModels
+        let fallbackModel = credential.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !fallbackModel.isEmpty && !modelIDs.contains(where: { $0.caseInsensitiveCompare(fallbackModel) == .orderedSame }) {
+            modelIDs.insert(fallbackModel, at: 0)
+        }
+
+        let selectedModel = currentModelMenuTitle()
+        if !selectedModel.isEmpty, !modelIDs.contains(where: { $0.caseInsensitiveCompare(selectedModel) == .orderedSame }) {
+            modelIDs.insert(selectedModel, at: 0)
+        }
+
+        let actions = modelIDs.map { modelID in
             UIAction(
-                title: effort.displayName,
-                state: effort == selectedReasoningEffort ? .on : .off
+                title: modelID,
+                state: modelID.caseInsensitiveCompare(selectedModel) == .orderedSame ? .on : .off
             ) { [weak self] _ in
-                self?.selectedReasoningEffort = effort
+                self?.selectedModelID = modelID
+                let normalizedModel = self?.normalizedModelID(modelID) ?? modelID.lowercased()
+                if let self {
+                    let profile = self.reasoningProfile(forModelID: modelID, providerKind: providerKind)
+                    if let selected = self.selectedReasoningEffortsByModelID[normalizedModel], profile.supported.contains(selected) {
+                        self.selectedReasoningEffortsByModelID[normalizedModel] = selected
+                    } else {
+                        self.selectedReasoningEffortsByModelID[normalizedModel] = profile.defaultEffort
+                    }
+                }
                 self?.refreshNavigationItems()
             }
         }
-        return UIMenu(title: String(localized: "chat.menu.reasoning"), children: actions)
+        let selectedReasoning = resolvedReasoningEffort(forModelID: selectedModel, providerKind: providerKind)
+        let profile = reasoningProfile(forModelID: selectedModel, providerKind: providerKind)
+        let reasoningActions = profile.supported.map { effort in
+            UIAction(
+                title: effort.displayName,
+                state: effort == selectedReasoning ? .on : .off
+            ) { [weak self] _ in
+                guard let self else {
+                    return
+                }
+                let key = self.normalizedModelID(selectedModel)
+                self.selectedReasoningEffortsByModelID[key] = effort
+                self.refreshNavigationItems()
+            }
+        }
+
+        let modelSection = UIMenu(
+            title: String(localized: "chat.menu.model"),
+            options: .displayInline,
+            children: actions
+        )
+        let reasoningSection = UIMenu(
+            title: String(format: String(localized: "chat.menu.reasoning_for_model_format"), selectedModel),
+            options: .displayInline,
+            children: reasoningActions
+        )
+        return UIMenu(
+            title: String(localized: "chat.menu.model"),
+            children: [modelSection, reasoningSection]
+        )
     }
 
     private func handleSwitchThread(threadID: String) {
@@ -470,13 +596,13 @@ final class CodexProjectChatViewController: UIViewController {
         refreshNavigationItems()
     }
 
-    private func buildThreadContext() -> CodexProjectChatService.ThreadContext? {
+    private func buildThreadContext() -> ProjectChatService.ThreadContext? {
         guard let currentThread else {
             return nil
         }
         let memoryFilePath = threadStore.currentMemoryFilePath(for: currentThread)
         let memoryContent = threadStore.loadThreadMemory(projectURL: projectURL, thread: currentThread)
-        return CodexProjectChatService.ThreadContext(
+        return ProjectChatService.ThreadContext(
             threadID: currentThread.id,
             version: currentThread.currentVersion,
             memoryFilePath: memoryFilePath,
@@ -635,7 +761,7 @@ final class CodexProjectChatViewController: UIViewController {
         tableView.scrollToRow(at: indexPath, at: .bottom, animated: true)
     }
 
-    private func buildHistoryTurns() -> [CodexProjectChatService.ChatTurn] {
+    private func buildHistoryTurns() -> [ProjectChatService.ChatTurn] {
         messages.compactMap { message in
             let normalizedText = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !normalizedText.isEmpty else {
@@ -725,6 +851,23 @@ final class CodexProjectChatViewController: UIViewController {
         refreshNavigationItems()
     }
 
+    private func runtimeCredential(from base: ProjectChatService.ProviderCredential) -> ProjectChatService.ProviderCredential {
+        let normalizedSelectedModel = selectedModelID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !normalizedSelectedModel.isEmpty else {
+            return base
+        }
+        return ProjectChatService.ProviderCredential(
+            providerID: base.providerID,
+            providerLabel: base.providerLabel,
+            providerKind: base.providerKind,
+            authMode: base.authMode,
+            modelID: normalizedSelectedModel,
+            baseURL: base.baseURL,
+            bearerToken: base.bearerToken,
+            chatGPTAccountID: base.chatGPTAccountID
+        )
+    }
+
     @objc
     private func didTapClose() {
         persistCurrentThreadMessages()
@@ -742,7 +885,7 @@ final class CodexProjectChatViewController: UIViewController {
         guard !userInput.isEmpty else {
             return
         }
-        guard let providerCredential else {
+        guard let baseProviderCredential = providerCredential else {
             _ = appendMessage(role: .system, text: LocalError.noAvailableProvider.localizedDescription)
             return
         }
@@ -750,6 +893,7 @@ final class CodexProjectChatViewController: UIViewController {
             _ = appendMessage(role: .system, text: LocalError.noThreadAvailable.localizedDescription)
             return
         }
+        let providerCredential = runtimeCredential(from: baseProviderCredential)
 
         inputTextView.text = ""
         refreshInputPlaceholder()
@@ -785,6 +929,15 @@ final class CodexProjectChatViewController: UIViewController {
 
             do {
                 let threadContext = buildThreadContext()
+                let requestReasoningEffort: ProjectChatService.ReasoningEffort = {
+                    guard let providerKind = self.currentProviderKind() else {
+                        return .high
+                    }
+                    return self.resolvedReasoningEffort(
+                        forModelID: providerCredential.modelID,
+                        providerKind: providerKind
+                    )
+                }()
                 let result = try await chatService.sendAndApply(
                     userMessage: userInput,
                     history: historyTurns,
@@ -792,7 +945,7 @@ final class CodexProjectChatViewController: UIViewController {
                     credential: providerCredential,
                     memory: sessionMemory,
                     threadContext: threadContext,
-                    reasoningEffort: selectedReasoningEffort,
+                    reasoningEffort: requestReasoningEffort,
                     onStreamedText: nil,
                     onProgress: { [weak self] phaseText in
                         guard let self else {
@@ -899,7 +1052,7 @@ final class CodexProjectChatViewController: UIViewController {
     }
 }
 
-extension CodexProjectChatViewController: UITableViewDataSource {
+extension ProjectChatViewController: UITableViewDataSource {
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
         messages.count
     }
@@ -920,7 +1073,7 @@ extension CodexProjectChatViewController: UITableViewDataSource {
     }
 }
 
-extension CodexProjectChatViewController: UITextViewDelegate {
+extension ProjectChatViewController: UITextViewDelegate {
     func textViewDidChange(_ textView: UITextView) {
         refreshInputPlaceholder()
         updateInputTextViewHeight()
@@ -1001,9 +1154,9 @@ private final class ChatMessageCell: UITableViewCell {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func configure(message: CodexProjectChatViewController.Message, now: Date) {
+    func configure(message: ProjectChatViewController.Message, now: Date) {
         let animatedText = displayText(for: message, now: now)
-        messageLabel.text = "\(message.role.prefix)：\(animatedText)"
+        messageLabel.text = animatedText
         metaLabel.text = metadataText(for: message, now: now)
 
         switch message.role {
@@ -1035,7 +1188,7 @@ private final class ChatMessageCell: UITableViewCell {
         }
     }
 
-    private func displayText(for message: CodexProjectChatViewController.Message, now: Date) -> String {
+    private func displayText(for message: ProjectChatViewController.Message, now: Date) -> String {
         guard message.isProgress, message.finishedAt == nil else {
             return message.text
         }
@@ -1049,7 +1202,7 @@ private final class ChatMessageCell: UITableViewCell {
         return baseText + dots
     }
 
-    private func metadataText(for message: CodexProjectChatViewController.Message, now: Date) -> String {
+    private func metadataText(for message: ProjectChatViewController.Message, now: Date) -> String {
         let timestamp = Self.timestampFormatter.string(from: message.createdAt)
         let endAt = message.finishedAt ?? now
         let duration = max(0, endAt.timeIntervalSince(message.startedAt))

@@ -326,25 +326,25 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Describe what you want Codex to modify"
+            "value" : "Describe what you want to modify"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "描述你想让 Codex 修改的内容"
+            "value" : "描述你想让 AI 修改的内容"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "描述你想讓 Codex 修改的內容"
+            "value" : "描述你想讓 AI 修改的內容"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "描述你想讓 Codex 修改的內容"
+            "value" : "描述你想讓 AI 修改的內容"
           }
         }
       }
@@ -407,6 +407,35 @@
         }
       }
     },
+    "chat.menu.model" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Model"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型"
+          }
+        }
+      }
+    },
     "chat.menu.reasoning" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -432,6 +461,35 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "推理"
+          }
+        }
+      }
+    },
+    "chat.menu.reasoning_for_model_format" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reasoning (%@)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "推理（%@）"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "推理（%@）"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "推理（%@）"
           }
         }
       }
@@ -558,25 +616,25 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Codex"
+            "value" : "Assistant"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Codex"
+            "value" : "助手"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Codex"
+            "value" : "助手"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Codex"
+            "value" : "助手"
           }
         }
       }
@@ -848,25 +906,25 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Codex Chat"
+            "value" : "AI Chat"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Codex 聊天"
+            "value" : "AI 聊天"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Codex 聊天"
+            "value" : "AI 聊天"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Codex 聊天"
+            "value" : "AI 聊天"
           }
         }
       }
@@ -3071,6 +3129,93 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "無法訪問本地文檔目錄。"
+          }
+        }
+      }
+    },
+    "project_template.blank_page.hint.chat" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Use chat to tell AI what you want to build."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "通过聊天告诉 AI 你想要实现的效果。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "通過聊天告訴 AI 你想要實現的效果。"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "通過聊天告訴 AI 你想要實現的效果。"
+          }
+        }
+      }
+    },
+    "project_template.blank_page.hint.empty" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This is a blank page."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这是一个空白页面。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "這是一個空白頁面。"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "這是一個空白頁面。"
+          }
+        }
+      }
+    },
+    "project_template.blank_page.tag" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Blank Project"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "空白项目"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "空白項目"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "空白項目"
           }
         }
       }

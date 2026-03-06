@@ -80,7 +80,8 @@ final class ManageProvidersViewController: UITableViewController {
 
         let provider = providers[indexPath.row]
         let cell = tableView.dequeueReusableCell(withIdentifier: "ProviderCell", for: indexPath)
-        cell.selectionStyle = .none
+        cell.selectionStyle = .default
+        cell.accessoryType = .disclosureIndicator
 
         var configuration = cell.defaultContentConfiguration()
         configuration.image = provider.authMode == .apiKey
@@ -111,6 +112,23 @@ final class ManageProvidersViewController: UITableViewController {
         }
         deleteAction.backgroundColor = .systemRed
         return UISwipeActionsConfiguration(actions: [deleteAction])
+    }
+
+    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        defer { tableView.deselectRow(at: indexPath, animated: true) }
+        guard !providers.isEmpty else {
+            return
+        }
+
+        let provider = providers[indexPath.row]
+        switch provider.authMode {
+        case .apiKey:
+            let controller = OpenAIAPIKeyProviderFormViewController(provider: provider)
+            navigationController?.pushViewController(controller, animated: true)
+        case .oauth:
+            let controller = OpenAIOAuthProviderFormViewController(provider: provider)
+            navigationController?.pushViewController(controller, animated: true)
+        }
     }
 
     private func reloadProviders() {

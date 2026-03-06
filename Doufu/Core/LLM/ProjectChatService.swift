@@ -1,5 +1,5 @@
 //
-//  CodexProjectChatService.swift
+//  ProjectChatService.swift
 //  Doufu
 //
 //  Created by Codex on 2026/03/05.
@@ -7,11 +7,14 @@
 
 import Foundation
 
-final class CodexProjectChatService {
+final class ProjectChatService {
 
     struct ProviderCredential {
         let providerID: String
         let providerLabel: String
+        let providerKind: LLMProviderRecord.Kind
+        let authMode: LLMProviderRecord.AuthMode
+        let modelID: String
         let baseURL: URL
         let bearerToken: String
         let chatGPTAccountID: String?
@@ -105,10 +108,10 @@ final class CodexProjectChatService {
         }
     }
 
-    private let orchestrator: CodexChatOrchestrator
+    private let orchestrator: ProjectChatOrchestrator
 
-    init(configuration: CodexChatConfiguration = .default) {
-        orchestrator = CodexChatOrchestrator(configuration: configuration)
+    init(configuration: ProjectChatConfiguration = .default) {
+        orchestrator = ProjectChatOrchestrator(configuration: configuration)
     }
 
     func sendAndApply(

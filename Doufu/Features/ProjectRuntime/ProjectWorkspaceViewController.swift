@@ -603,7 +603,7 @@ final class ProjectWorkspaceViewController: UIViewController {
             return
         }
 
-        let chatController = CodexProjectChatViewController(projectName: projectName, projectURL: projectURL)
+        let chatController = ProjectChatViewController(projectName: projectName, projectURL: projectURL)
         chatController.onProjectFilesUpdated = { [weak self] in
             guard let self else { return }
             self.hasProjectBeenModified = true
