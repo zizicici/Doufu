@@ -13,6 +13,11 @@ final class SettingsViewController: UITableViewController {
         case llmProviders
     }
 
+    private enum LLMProvidersRow: Int, CaseIterable {
+        case manageProviders
+        case tokenUsage
+    }
+
     private let store = LLMProviderSettingsStore.shared
 
     init() {
@@ -43,7 +48,7 @@ final class SettingsViewController: UITableViewController {
         guard Section(rawValue: section) == .llmProviders else {
             return 0
         }
-        return 1
+        return LLMProvidersRow.allCases.count
     }
 
     override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
@@ -67,14 +72,25 @@ final class SettingsViewController: UITableViewController {
         let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
         cell.accessoryType = .disclosureIndicator
 
-        let providersCount = store.loadProviders().count
+        guard let row = LLMProvidersRow(rawValue: indexPath.row) else {
+            return cell
+        }
+
         var configuration = cell.defaultContentConfiguration()
-        configuration.image = UIImage(systemName: "server.rack")
-        configuration.text = String(localized: "settings.manage_providers.title")
-        configuration.secondaryText = String(
-            format: String(localized: "settings.manage_providers.configured_count_format"),
-            providersCount
-        )
+        switch row {
+        case .manageProviders:
+            let providersCount = store.loadProviders().count
+            configuration.image = UIImage(systemName: "server.rack")
+            configuration.text = String(localized: "settings.manage_providers.title")
+            configuration.secondaryText = String(
+                format: String(localized: "settings.manage_providers.configured_count_format"),
+                providersCount
+            )
+        case .tokenUsage:
+            configuration.image = UIImage(systemName: "chart.bar.xaxis")
+            configuration.text = String(localized: "providers.manage.item.token_usage")
+            configuration.secondaryText = String(localized: "providers.manage.item.token_usage.subtitle")
+        }
         configuration.secondaryTextProperties.color = .secondaryLabel
         cell.contentConfiguration = configuration
         return cell
@@ -85,8 +101,16 @@ final class SettingsViewController: UITableViewController {
         guard Section(rawValue: indexPath.section) == .llmProviders else {
             return
         }
-
-        let controller = ManageProvidersViewController()
-        navigationController?.pushViewController(controller, animated: true)
+        guard let row = LLMProvidersRow(rawValue: indexPath.row) else {
+            return
+        }
+        switch row {
+        case .manageProviders:
+            let controller = ManageProvidersViewController()
+            navigationController?.pushViewController(controller, animated: true)
+        case .tokenUsage:
+            let controller = TokenUsageViewController()
+            navigationController?.pushViewController(controller, animated: true)
+        }
     }
 }

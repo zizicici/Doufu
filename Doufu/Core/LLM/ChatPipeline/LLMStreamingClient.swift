@@ -8,9 +8,15 @@
 import Foundation
 
 final class LLMStreamingClient {
+    private struct StreamingResponseResult {
+        let text: String
+        let usage: ResponsesUsage?
+    }
+
     private let configuration: CodexChatConfiguration
     private let jsonDecoder = JSONDecoder()
     private let jsonEncoder = JSONEncoder()
+    private let tokenUsageStore = LLMTokenUsageStore.shared
 
     init(configuration: CodexChatConfiguration) {
         self.configuration = configuration
@@ -105,7 +111,7 @@ final class LLMStreamingClient {
             }
 
             do {
-                return try await consumeStreamingResponse(
+                let responseResult = try await consumeStreamingResponse(
                     bytes: bytes,
                     request: request,
                     httpResponse: httpResponse,
@@ -113,6 +119,14 @@ final class LLMStreamingClient {
                     timeoutSeconds: timeoutSeconds,
                     requestLabel: requestLabel
                 )
+                tokenUsageStore.recordUsage(
+                    providerID: credential.providerID,
+                    providerLabel: credential.providerLabel,
+                    model: model,
+                    inputTokens: responseResult.usage?.inputTokens,
+                    outputTokens: responseResult.usage?.outputTokens
+                )
+                return responseResult.text
             } catch let serviceError as CodexProjectChatService.ServiceError {
                 guard case let .networkFailed(errorMessage) = serviceError else {
                     throw serviceError
@@ -152,10 +166,11 @@ final class LLMStreamingClient {
         onStreamedText: (@MainActor (String) -> Void)?,
         timeoutSeconds: TimeInterval,
         requestLabel: String
-    ) async throws -> String {
+    ) async throws -> StreamingResponseResult {
         return try await withTimeout(seconds: timeoutSeconds + configuration.streamCompletionGraceSeconds) { [self] in
             var streamedText = ""
             var completedResponseText: String?
+            var usage: ResponsesUsage?
             var pendingDataLines: [String] = []
             var rawSSEEventPayloads: [String] = []
 
@@ -167,6 +182,7 @@ final class LLMStreamingClient {
                         from: pendingDataLines,
                         streamedText: &streamedText,
                         completedResponseText: &completedResponseText,
+                        usage: &usage,
                         onStreamedText: onStreamedText
                     )
                     pendingDataLines.removeAll(keepingCapacity: true)
@@ -189,6 +205,7 @@ final class LLMStreamingClient {
                 from: pendingDataLines,
                 streamedText: &streamedText,
                 completedResponseText: &completedResponseText,
+                usage: &usage,
                 onStreamedText: onStreamedText
             )
 
@@ -210,10 +227,11 @@ final class LLMStreamingClient {
                     request: request,
                     httpResponse: httpResponse,
                     finalResponseText: finalResponseText,
+                    usage: usage,
                     rawSSEEventPayloads: rawSSEEventPayloads,
                     requestLabel: requestLabel
                 )
-                return finalResponseText
+                return StreamingResponseResult(text: finalResponseText, usage: usage)
             }
 
             self.logInvalidResponseDebug(
@@ -232,6 +250,7 @@ final class LLMStreamingClient {
         from dataLines: [String],
         streamedText: inout String,
         completedResponseText: inout String?,
+        usage: inout ResponsesUsage?,
         onStreamedText: (@MainActor (String) -> Void)?
     ) async throws {
         guard !dataLines.isEmpty else {
@@ -249,6 +268,7 @@ final class LLMStreamingClient {
                 eventType: eventType,
                 streamedText: &streamedText,
                 completedResponseText: &completedResponseText,
+                usage: &usage,
                 onStreamedText: onStreamedText
             )
             return
@@ -269,6 +289,7 @@ final class LLMStreamingClient {
                 eventType: eventType,
                 streamedText: &streamedText,
                 completedResponseText: &completedResponseText,
+                usage: &usage,
                 onStreamedText: onStreamedText
             )
         }
@@ -317,6 +338,7 @@ final class LLMStreamingClient {
         eventType: String,
         streamedText: inout String,
         completedResponseText: inout String?,
+        usage: inout ResponsesUsage?,
         onStreamedText: (@MainActor (String) -> Void)?
     ) async throws {
         switch eventType {
@@ -361,6 +383,10 @@ final class LLMStreamingClient {
                 return
             }
 
+            if let extractedUsage = extractUsage(fromResponseObject: responseObject) {
+                usage = extractedUsage
+            }
+
             if let text = extractText(fromResponseObject: responseObject),
                !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 completedResponseText = text
@@ -370,16 +396,20 @@ final class LLMStreamingClient {
             }
 
             if let responseData = try? JSONSerialization.data(withJSONObject: responseObject),
-               let decodedResponse = try? jsonDecoder.decode(ResponsesResponse.self, from: responseData),
-               let text = extractOutputText(from: decodedResponse),
-               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                if completedResponseText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true {
-                    completedResponseText = text
+               let decodedResponse = try? jsonDecoder.decode(ResponsesResponse.self, from: responseData) {
+                if usage == nil, let decodedUsage = decodedResponse.usage {
+                    usage = decodedUsage
                 }
-                if streamedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                   let onStreamedText,
-                   let finalText = completedResponseText {
-                    await onStreamedText(finalText)
+                if let text = extractOutputText(from: decodedResponse),
+                   !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    if completedResponseText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true {
+                        completedResponseText = text
+                    }
+                    if streamedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                       let onStreamedText,
+                       let finalText = completedResponseText {
+                        await onStreamedText(finalText)
+                    }
                 }
             }
 
@@ -514,6 +544,17 @@ final class LLMStreamingClient {
         let texts = outputItems.compactMap { extractText(fromOutputItemObject: $0) }
         let merged = texts.joined(separator: "\n")
         return merged.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : merged
+    }
+
+    private func extractUsage(fromResponseObject responseObject: [String: Any]) -> ResponsesUsage? {
+        guard
+            let usageObject = responseObject["usage"] as? [String: Any],
+            let usageData = try? JSONSerialization.data(withJSONObject: usageObject),
+            let usage = try? jsonDecoder.decode(ResponsesUsage.self, from: usageData)
+        else {
+            return nil
+        }
+        return usage
     }
 
     private func extractText(fromOutputItemObject outputItem: [String: Any]) -> String? {
@@ -666,6 +707,7 @@ final class LLMStreamingClient {
         request: URLRequest,
         httpResponse: HTTPURLResponse,
         finalResponseText: String,
+        usage: ResponsesUsage?,
         rawSSEEventPayloads: [String],
         requestLabel: String
     ) {
@@ -677,6 +719,11 @@ final class LLMStreamingClient {
         print("Response Headers: \(httpResponse.allHeaderFields)")
         print("Request Body: <redacted>")
         print("Final Response Text: \(truncatedDebugText(finalResponseText))")
+        if let usage {
+            print("Usage: input=\(usage.inputTokens ?? 0), output=\(usage.outputTokens ?? 0), total=\(usage.totalTokens ?? 0)")
+        } else {
+            print("Usage: <none>")
+        }
         print("SSE Event Count: \(rawSSEEventPayloads.count)")
         if rawSSEEventPayloads.isEmpty {
             print("SSE Events: <none>")

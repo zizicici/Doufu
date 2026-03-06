@@ -116,6 +116,39 @@ struct ResponseInputContent: Encodable {
 
 struct ResponsesResponse: Decodable {
     let output: [ResponsesOutputItem]?
+    let usage: ResponsesUsage?
+}
+
+struct ResponsesUsage: Decodable {
+    let inputTokens: Int?
+    let outputTokens: Int?
+    let totalTokens: Int?
+    let inputTokensDetails: ResponsesInputTokensDetails?
+    let outputTokensDetails: ResponsesOutputTokensDetails?
+
+    private enum CodingKeys: String, CodingKey {
+        case inputTokens = "input_tokens"
+        case outputTokens = "output_tokens"
+        case totalTokens = "total_tokens"
+        case inputTokensDetails = "input_tokens_details"
+        case outputTokensDetails = "output_tokens_details"
+    }
+}
+
+struct ResponsesInputTokensDetails: Decodable {
+    let cachedTokens: Int?
+
+    private enum CodingKeys: String, CodingKey {
+        case cachedTokens = "cached_tokens"
+    }
+}
+
+struct ResponsesOutputTokensDetails: Decodable {
+    let reasoningTokens: Int?
+
+    private enum CodingKeys: String, CodingKey {
+        case reasoningTokens = "reasoning_tokens"
+    }
 }
 
 struct ResponsesOutputItem: Decodable {
