@@ -19,23 +19,38 @@ final class OpenAIOAuthProviderFormViewController: UITableViewController, SFSafa
     private enum ManualRow: Int, CaseIterable {
         case httpsURL
         case bearerToken
+        case model
         case addProvider
     }
 
     private let store = LLMProviderSettingsStore.shared
-    private var oauthService: OpenAICodexOAuthService?
+    private let editingProvider: LLMProviderRecord?
+    private let providerKind: LLMProviderRecord.Kind
+    private var oauthService: OpenAIOAuthService?
     private weak var loginSafariViewController: SFSafariViewController?
 
     private var labelText = ""
     private var manualBaseURLText = ""
     private var manualBearerTokenText = ""
+    private var modelIDText = ""
     private var oauthSuggestedAutoAppendV1 = true
     private var oauthDerivedChatGPTAccountID: String?
+
+    private var isEditingProvider: Bool {
+        editingProvider != nil
+    }
+
+    private var submitButtonTitle: String {
+        isEditingProvider
+            ? String(localized: "common.action.save")
+            : String(localized: "providers.form.button.add_provider")
+    }
 
     private var canSubmitProvider: Bool {
         let trimmedLabel = labelText.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedToken = manualBearerTokenText.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedBaseURL = manualBaseURLText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedModelID = modelIDText.trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard !trimmedLabel.isEmpty else {
             return false
@@ -43,10 +58,28 @@ final class OpenAIOAuthProviderFormViewController: UITableViewController, SFSafa
         guard !trimmedToken.isEmpty else {
             return false
         }
+        guard !trimmedModelID.isEmpty else {
+            return false
+        }
         return isValidOptionalBaseURL(trimmedBaseURL)
     }
 
-    init() {
+    init(providerKind: LLMProviderRecord.Kind) {
+        editingProvider = nil
+        self.providerKind = providerKind
+        oauthSuggestedAutoAppendV1 = providerKind.defaultAutoAppendV1
+        modelIDText = providerKind.defaultModelID
+        super.init(style: .insetGrouped)
+    }
+
+    init(provider: LLMProviderRecord) {
+        editingProvider = provider
+        providerKind = provider.kind
+        labelText = provider.label
+        manualBaseURLText = provider.baseURLString
+        modelIDText = provider.effectiveModelID
+        oauthSuggestedAutoAppendV1 = provider.autoAppendV1
+        oauthDerivedChatGPTAccountID = provider.chatGPTAccountID
         super.init(style: .insetGrouped)
     }
 
@@ -57,7 +90,10 @@ final class OpenAIOAuthProviderFormViewController: UITableViewController, SFSafa
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        title = String(localized: "providers.oauth_form.title")
+        title = providerKind.displayName + " · " + String(localized: "providers.auth_method.oauth.title")
+        if let editingProvider {
+            manualBearerTokenText = (try? store.loadOAuthBearerToken(for: editingProvider.id)) ?? ""
+        }
         tableView.keyboardDismissMode = .onDrag
         tableView.register(SettingsTextInputCell.self, forCellReuseIdentifier: SettingsTextInputCell.reuseIdentifier)
         tableView.register(SettingsSecureInputCell.self, forCellReuseIdentifier: SettingsSecureInputCell.reuseIdentifier)
@@ -103,9 +139,9 @@ final class OpenAIOAuthProviderFormViewController: UITableViewController, SFSafa
 
         switch section {
         case .oauth:
-            return String(localized: "providers.oauth_form.footer.oauth")
+            return oauthFooterText()
         case .manual:
-            return String(localized: "providers.form.footer.base_url_default")
+            return "Default Base URL: \(providerKind.defaultBaseURLString)\nBuilt-in Models: \(providerKind.builtInModels.joined(separator: ", "))"
         default:
             return nil
         }
@@ -150,7 +186,7 @@ final class OpenAIOAuthProviderFormViewController: UITableViewController, SFSafa
                 return UITableViewCell()
             }
             cell.configure(
-                title: String(localized: "providers.oauth_form.button.sign_in"),
+                title: signInButtonTitle(),
                 isEnabled: oauthService == nil
             )
             return cell
@@ -173,7 +209,7 @@ final class OpenAIOAuthProviderFormViewController: UITableViewController, SFSafa
                 cell.configure(
                     title: nil,
                     text: manualBaseURLText,
-                    placeholder: String(localized: "providers.form.placeholder.base_url"),
+                    placeholder: providerKind.defaultBaseURLString,
                     keyboardType: .URL,
                     autocapitalizationType: .none
                 ) { [weak self] text in
@@ -200,6 +236,26 @@ final class OpenAIOAuthProviderFormViewController: UITableViewController, SFSafa
                 }
                 return cell
 
+            case .model:
+                guard
+                    let cell = tableView.dequeueReusableCell(
+                        withIdentifier: SettingsTextInputCell.reuseIdentifier,
+                        for: indexPath
+                    ) as? SettingsTextInputCell
+                else {
+                    return UITableViewCell()
+                }
+                cell.configure(
+                    title: nil,
+                    text: modelIDText,
+                    placeholder: providerKind.defaultModelID,
+                    autocapitalizationType: .none
+                ) { [weak self] text in
+                    self?.modelIDText = text
+                    self?.refreshAddProviderCell()
+                }
+                return cell
+
             case .addProvider:
                 guard
                     let cell = tableView.dequeueReusableCell(
@@ -209,7 +265,7 @@ final class OpenAIOAuthProviderFormViewController: UITableViewController, SFSafa
                 else {
                     return UITableViewCell()
                 }
-                cell.configure(title: String(localized: "providers.form.button.add_provider"), isEnabled: canSubmitProvider)
+                cell.configure(title: submitButtonTitle, isEnabled: canSubmitProvider)
                 return cell
             }
         }
@@ -242,22 +298,38 @@ final class OpenAIOAuthProviderFormViewController: UITableViewController, SFSafa
 
         switch section {
         case .oauth:
-            signInWithOpenAI()
+            signInWithProvider()
         case .manual:
             if ManualRow(rawValue: indexPath.row) == .addProvider, canSubmitProvider {
-                addProvider()
+                submitProvider()
             }
         case .label:
             break
         }
     }
 
-    private func signInWithOpenAI() {
+    private func signInWithProvider() {
+        switch providerKind {
+        case .openAICompatible:
+            signInWithOpenAIOAuth()
+        case .anthropic, .googleGemini:
+            guard let loginURL = oauthLoginURL(for: providerKind) else {
+                showError(message: "OAuth login URL unavailable.")
+                return
+            }
+            let safariController = SFSafariViewController(url: loginURL)
+            safariController.delegate = self
+            loginSafariViewController = safariController
+            present(safariController, animated: true)
+        }
+    }
+
+    private func signInWithOpenAIOAuth() {
         guard oauthService == nil else {
             return
         }
 
-        let oauthService = OpenAICodexOAuthService()
+        let oauthService = OpenAIOAuthService()
         do {
             let authorizeURL = try oauthService.start { [weak self] result in
                 self?.handleOAuthResult(result)
@@ -275,7 +347,7 @@ final class OpenAIOAuthProviderFormViewController: UITableViewController, SFSafa
         }
     }
 
-    private func addProvider() {
+    private func submitProvider() {
         view.endEditing(true)
 
         let trimmedToken = manualBearerTokenText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -286,14 +358,31 @@ final class OpenAIOAuthProviderFormViewController: UITableViewController, SFSafa
 
         do {
             let autoAppendV1 = resolveAutoAppendV1()
-            let provider = try store.addOpenAICompatibleProviderUsingOAuth(
-                label: labelText,
-                baseURLString: manualBaseURLText,
-                autoAppendV1: autoAppendV1,
-                bearerToken: trimmedToken,
-                chatGPTAccountID: oauthDerivedChatGPTAccountID
-            )
-            showAddedAlert(providerLabel: provider.label)
+            let trimmedModelID = modelIDText.trimmingCharacters(in: .whitespacesAndNewlines)
+            let accountID = providerKind == .openAICompatible ? oauthDerivedChatGPTAccountID : nil
+            if let editingProvider {
+                _ = try store.updateProviderUsingOAuth(
+                    providerID: editingProvider.id,
+                    label: labelText,
+                    baseURLString: manualBaseURLText,
+                    autoAppendV1: autoAppendV1,
+                    bearerToken: trimmedToken,
+                    chatGPTAccountID: accountID,
+                    modelID: trimmedModelID
+                )
+                popToManageProviders()
+            } else {
+                let provider = try store.addProviderUsingOAuth(
+                    kind: providerKind,
+                    label: labelText,
+                    baseURLString: manualBaseURLText,
+                    autoAppendV1: autoAppendV1,
+                    bearerToken: trimmedToken,
+                    chatGPTAccountID: accountID,
+                    modelID: trimmedModelID
+                )
+                showAddedAlert(providerLabel: provider.label)
+            }
         } catch {
             showError(message: error.localizedDescription)
         }
@@ -301,7 +390,9 @@ final class OpenAIOAuthProviderFormViewController: UITableViewController, SFSafa
 
     private func showError(message: String) {
         let alert = UIAlertController(
-            title: String(localized: "providers.form.alert.add_failed.title"),
+            title: isEditingProvider
+                ? String(localized: "file_viewer.alert.save_failed.title")
+                : String(localized: "providers.form.alert.add_failed.title"),
             message: message,
             preferredStyle: .alert
         )
@@ -309,7 +400,7 @@ final class OpenAIOAuthProviderFormViewController: UITableViewController, SFSafa
         present(alert, animated: true)
     }
 
-    private func handleOAuthResult(_ result: Result<OpenAICodexOAuthService.SignInResult, Error>) {
+    private func handleOAuthResult(_ result: Result<OpenAIOAuthService.SignInResult, Error>) {
         oauthService = nil
         dismissLoginIfNeeded()
         refreshOAuthAndAddProviderCells()
@@ -326,7 +417,7 @@ final class OpenAIOAuthProviderFormViewController: UITableViewController, SFSafa
 
         case let .failure(error):
             if
-                let serviceError = error as? OpenAICodexOAuthService.ServiceError,
+                let serviceError = error as? OpenAIOAuthService.ServiceError,
                 case .cancelled = serviceError
             {
                 return
@@ -395,7 +486,7 @@ final class OpenAIOAuthProviderFormViewController: UITableViewController, SFSafa
             return
         }
 
-        let rows = [ManualRow.httpsURL.rawValue, ManualRow.bearerToken.rawValue]
+        let rows = [ManualRow.httpsURL.rawValue, ManualRow.bearerToken.rawValue, ManualRow.model.rawValue]
         let indexPaths = rows.compactMap { row -> IndexPath? in
             guard tableView.numberOfRows(inSection: sectionIndex) > row else {
                 return nil
@@ -435,7 +526,43 @@ final class OpenAIOAuthProviderFormViewController: UITableViewController, SFSafa
         if loweredBaseURL.contains("chatgpt.com/backend-api/codex") {
             return false
         }
-        return true
+        if isEditingProvider {
+            return oauthSuggestedAutoAppendV1
+        }
+        return providerKind.defaultAutoAppendV1
+    }
+
+    private func signInButtonTitle() -> String {
+        switch providerKind {
+        case .openAICompatible:
+            return String(localized: "providers.oauth_form.button.sign_in")
+        case .anthropic:
+            return "Sign in with Anthropic"
+        case .googleGemini:
+            return "Sign in with Google for Cloud Code Assist"
+        }
+    }
+
+    private func oauthFooterText() -> String {
+        switch providerKind {
+        case .openAICompatible:
+            return String(localized: "providers.oauth_form.footer.oauth")
+        case .anthropic:
+            return "Login opens Anthropic account page. Paste OAuth bearer token below."
+        case .googleGemini:
+            return "Login opens Google OAuth page for Cloud Code Assist. Paste OAuth bearer token below."
+        }
+    }
+
+    private func oauthLoginURL(for kind: LLMProviderRecord.Kind) -> URL? {
+        switch kind {
+        case .openAICompatible:
+            return URL(string: "https://auth.openai.com/log-in")
+        case .anthropic:
+            return URL(string: "https://console.anthropic.com/login")
+        case .googleGemini:
+            return URL(string: "https://accounts.google.com/o/oauth2/v2/auth")
+        }
     }
 
     private func popToManageProviders() {

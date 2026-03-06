@@ -13,6 +13,7 @@ final class OpenAIAPIKeyProviderFormViewController: UITableViewController {
         case label
         case apiKey
         case customAPI
+        case model
         case addProvider
     }
 
@@ -22,24 +23,55 @@ final class OpenAIAPIKeyProviderFormViewController: UITableViewController {
     }
 
     private let store = LLMProviderSettingsStore.shared
+    private let editingProvider: LLMProviderRecord?
+    private let providerKind: LLMProviderRecord.Kind
 
     private var labelText = ""
     private var apiKeyText = ""
     private var customBaseURLText = ""
     private var shouldAutoAppendV1 = true
+    private var modelIDText = ""
+
+    private var isEditingProvider: Bool {
+        editingProvider != nil
+    }
+
+    private var submitButtonTitle: String {
+        isEditingProvider
+            ? String(localized: "common.action.save")
+            : String(localized: "providers.form.button.add_provider")
+    }
 
     private var canSubmitProvider: Bool {
         let trimmedLabel = labelText.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedAPIKey = apiKeyText.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedBaseURL = customBaseURLText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedModelID = modelIDText.trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard !trimmedLabel.isEmpty, !trimmedAPIKey.isEmpty else {
+            return false
+        }
+        guard !trimmedModelID.isEmpty else {
             return false
         }
         return isValidOptionalBaseURL(trimmedBaseURL)
     }
 
-    init() {
+    init(providerKind: LLMProviderRecord.Kind) {
+        editingProvider = nil
+        self.providerKind = providerKind
+        shouldAutoAppendV1 = providerKind.defaultAutoAppendV1
+        modelIDText = providerKind.defaultModelID
+        super.init(style: .insetGrouped)
+    }
+
+    init(provider: LLMProviderRecord) {
+        editingProvider = provider
+        providerKind = provider.kind
+        labelText = provider.label
+        customBaseURLText = provider.baseURLString
+        shouldAutoAppendV1 = provider.autoAppendV1
+        modelIDText = provider.effectiveModelID
         super.init(style: .insetGrouped)
     }
 
@@ -50,7 +82,10 @@ final class OpenAIAPIKeyProviderFormViewController: UITableViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        title = String(localized: "providers.api_key_form.title")
+        title = providerKind.displayName + " · " + String(localized: "providers.auth_method.api_key.title")
+        if let editingProvider {
+            apiKeyText = (try? store.loadAPIKey(for: editingProvider.id)) ?? ""
+        }
         tableView.keyboardDismissMode = .onDrag
         tableView.register(SettingsTextInputCell.self, forCellReuseIdentifier: SettingsTextInputCell.reuseIdentifier)
         tableView.register(SettingsSecureInputCell.self, forCellReuseIdentifier: SettingsSecureInputCell.reuseIdentifier)
@@ -68,7 +103,7 @@ final class OpenAIAPIKeyProviderFormViewController: UITableViewController {
         }
 
         switch section {
-        case .label, .apiKey, .addProvider:
+        case .label, .apiKey, .model, .addProvider:
             return 1
         case .customAPI:
             return CustomAPIRow.allCases.count
@@ -87,6 +122,8 @@ final class OpenAIAPIKeyProviderFormViewController: UITableViewController {
             return String(localized: "providers.form.section.api_key")
         case .customAPI:
             return String(localized: "providers.api_key_form.section.custom_api")
+        case .model:
+            return "Model"
         case .addProvider:
             return nil
         }
@@ -99,7 +136,9 @@ final class OpenAIAPIKeyProviderFormViewController: UITableViewController {
 
         switch section {
         case .customAPI:
-            return String(localized: "providers.form.footer.base_url_default")
+            return "Default: \(providerKind.defaultBaseURLString)"
+        case .model:
+            return "Built-in: \(providerKind.builtInModels.joined(separator: ", "))"
         default:
             return nil
         }
@@ -170,7 +209,7 @@ final class OpenAIAPIKeyProviderFormViewController: UITableViewController {
                 cell.configure(
                     title: nil,
                     text: customBaseURLText,
-                    placeholder: String(localized: "providers.form.placeholder.base_url"),
+                    placeholder: providerKind.defaultBaseURLString,
                     keyboardType: .URL,
                     autocapitalizationType: .none
                 ) { [weak self] text in
@@ -194,6 +233,26 @@ final class OpenAIAPIKeyProviderFormViewController: UITableViewController {
                 return cell
             }
 
+        case .model:
+            guard
+                let cell = tableView.dequeueReusableCell(
+                    withIdentifier: SettingsTextInputCell.reuseIdentifier,
+                    for: indexPath
+                ) as? SettingsTextInputCell
+            else {
+                return UITableViewCell()
+            }
+            cell.configure(
+                title: nil,
+                text: modelIDText,
+                placeholder: providerKind.defaultModelID,
+                autocapitalizationType: .none
+            ) { [weak self] text in
+                self?.modelIDText = text
+                self?.refreshAddProviderCell()
+            }
+            return cell
+
         case .addProvider:
             guard
                 let cell = tableView.dequeueReusableCell(
@@ -203,7 +262,7 @@ final class OpenAIAPIKeyProviderFormViewController: UITableViewController {
             else {
                 return UITableViewCell()
             }
-            cell.configure(title: String(localized: "providers.form.button.add_provider"), isEnabled: canSubmitProvider)
+            cell.configure(title: submitButtonTitle, isEnabled: canSubmitProvider)
             return cell
         }
     }
@@ -221,20 +280,34 @@ final class OpenAIAPIKeyProviderFormViewController: UITableViewController {
         guard Section(rawValue: indexPath.section) == .addProvider, canSubmitProvider else {
             return
         }
-        addProvider()
+        submitProvider()
     }
 
-    private func addProvider() {
+    private func submitProvider() {
         view.endEditing(true)
 
         do {
-            let provider = try store.addOpenAICompatibleProviderUsingAPIKey(
-                label: labelText,
-                apiKey: apiKeyText,
-                baseURLString: customBaseURLText,
-                autoAppendV1: shouldAutoAppendV1
-            )
-            showAddedAlert(providerLabel: provider.label)
+            if let editingProvider {
+                _ = try store.updateProviderUsingAPIKey(
+                    providerID: editingProvider.id,
+                    label: labelText,
+                    apiKey: apiKeyText,
+                    baseURLString: customBaseURLText,
+                    autoAppendV1: shouldAutoAppendV1,
+                    modelID: modelIDText
+                )
+                popToManageProviders()
+            } else {
+                let provider = try store.addProviderUsingAPIKey(
+                    kind: providerKind,
+                    label: labelText,
+                    apiKey: apiKeyText,
+                    baseURLString: customBaseURLText,
+                    autoAppendV1: shouldAutoAppendV1,
+                    modelID: modelIDText
+                )
+                showAddedAlert(providerLabel: provider.label)
+            }
         } catch {
             showError(message: error.localizedDescription)
         }
@@ -242,7 +315,9 @@ final class OpenAIAPIKeyProviderFormViewController: UITableViewController {
 
     private func showError(message: String) {
         let alert = UIAlertController(
-            title: String(localized: "providers.form.alert.add_failed.title"),
+            title: isEditingProvider
+                ? String(localized: "file_viewer.alert.save_failed.title")
+                : String(localized: "providers.form.alert.add_failed.title"),
             message: message,
             preferredStyle: .alert
         )

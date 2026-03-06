@@ -8,6 +8,11 @@
 import UIKit
 
 final class AddProviderViewController: UITableViewController {
+    private let providerKinds: [LLMProviderRecord.Kind] = [
+        .openAICompatible,
+        .anthropic,
+        .googleGemini
+    ]
 
     init() {
         super.init(style: .insetGrouped)
@@ -29,7 +34,7 @@ final class AddProviderViewController: UITableViewController {
     }
 
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        1
+        providerKinds.count
     }
 
     override func tableView(
@@ -45,11 +50,15 @@ final class AddProviderViewController: UITableViewController {
     ) -> UITableViewCell {
         let cell = tableView.dequeueReusableCell(withIdentifier: "ProviderOptionCell", for: indexPath)
         cell.accessoryType = .disclosureIndicator
+        guard indexPath.row < providerKinds.count else {
+            return cell
+        }
+        let kind = providerKinds[indexPath.row]
 
         var configuration = cell.defaultContentConfiguration()
-        configuration.image = UIImage(systemName: "sparkles.rectangle.stack")
-        configuration.text = String(localized: "providers.kind.openai_compatible.title")
-        configuration.secondaryText = String(localized: "providers.kind.openai_compatible.subtitle")
+        configuration.image = UIImage(systemName: kind.iconSystemName)
+        configuration.text = kind.displayName
+        configuration.secondaryText = kind.subtitle
         configuration.secondaryTextProperties.color = .secondaryLabel
         cell.contentConfiguration = configuration
         return cell
@@ -57,7 +66,10 @@ final class AddProviderViewController: UITableViewController {
 
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
-        let controller = OpenAIProviderAuthMethodViewController()
+        guard indexPath.row < providerKinds.count else {
+            return
+        }
+        let controller = OpenAIProviderAuthMethodViewController(providerKind: providerKinds[indexPath.row])
         navigationController?.pushViewController(controller, animated: true)
     }
 }

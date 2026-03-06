@@ -488,6 +488,10 @@ final class AppProjectStore {
         now: Date,
         projectURL: URL
     ) throws {
+        let blankPageTag = String(localized: "project_template.blank_page.tag")
+        let blankPageHintEmpty = String(localized: "project_template.blank_page.hint.empty")
+        let blankPageHintChat = String(localized: "project_template.blank_page.hint.chat")
+
         let indexHTML = """
         <!doctype html>
         <html lang="zh-CN">
@@ -500,10 +504,10 @@ final class AppProjectStore {
           <body>
             <main class="screen">
               <section class="empty-card">
-                <p class="tag">Blank Project</p>
+                <p class="tag">\(blankPageTag)</p>
                 <h1>\(name)</h1>
-                <p class="hint">这是一个空白页面。</p>
-                <p class="hint">点击右上角「聊天」，告诉 Codex 你想要的效果。</p>
+                <p class="hint">\(blankPageHintEmpty)</p>
+                <p class="hint">\(blankPageHintChat)</p>
               </section>
             </main>
             <script src="./script.js"></script>

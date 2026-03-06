@@ -8,18 +8,18 @@
 import Foundation
 
 final class SessionMemoryManager {
-    private let configuration: CodexChatConfiguration
+    private let configuration: ProjectChatConfiguration
     private let jsonEncoder = JSONEncoder()
 
-    init(configuration: CodexChatConfiguration) {
+    init(configuration: ProjectChatConfiguration) {
         self.configuration = configuration
         jsonEncoder.outputFormatting = [.prettyPrinted, .sortedKeys]
     }
 
     func normalizedHistoryTurns(
-        _ history: [CodexProjectChatService.ChatTurn],
+        _ history: [ProjectChatService.ChatTurn],
         excludingLatestUserMessage userMessage: String
-    ) -> [CodexProjectChatService.ChatTurn] {
+    ) -> [ProjectChatService.ChatTurn] {
         var turns = history
         let normalizedUserMessage = userMessage.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -32,7 +32,7 @@ final class SessionMemoryManager {
         return Array(turns.suffix(configuration.maxHistoryTurns))
     }
 
-    func buildHistoryInputMessages(from historyTurns: [CodexProjectChatService.ChatTurn]) -> [ResponseInputMessage] {
+    func buildHistoryInputMessages(from historyTurns: [ProjectChatService.ChatTurn]) -> [ResponseInputMessage] {
         let turns = Array(historyTurns.suffix(configuration.maxHistoryTurns))
         guard turns.count > configuration.maxHistoryTurnsDirectlyIncluded else {
             return turns.map { ResponseInputMessage(role: $0.role.rawValue, text: $0.text) }
@@ -56,9 +56,9 @@ final class SessionMemoryManager {
     }
 
     func buildRequestMemory(
-        base: CodexProjectChatService.SessionMemory?,
+        base: ProjectChatService.SessionMemory?,
         latestUserMessage: String
-    ) -> CodexProjectChatService.SessionMemory {
+    ) -> ProjectChatService.SessionMemory {
         var memory = base ?? .empty
         if let objective = normalizedMemoryItem(memory.objective, maxCharacters: configuration.maxMemoryObjectiveCharacters) {
             memory.objective = objective
@@ -84,12 +84,12 @@ final class SessionMemoryManager {
     }
 
     func buildRolledMemory(
-        current: CodexProjectChatService.SessionMemory,
+        current: ProjectChatService.SessionMemory,
         userMessage: String,
         assistantMessage: String,
         changedPaths: [String],
         modelMemoryUpdate: PatchMemoryUpdate?
-    ) -> CodexProjectChatService.SessionMemory {
+    ) -> ProjectChatService.SessionMemory {
         var memory = current
 
         if let modelMemoryUpdate {
@@ -155,9 +155,9 @@ final class SessionMemoryManager {
     }
 
     func rollTodoFromRemainingTasks(
-        memory: CodexProjectChatService.SessionMemory,
+        memory: ProjectChatService.SessionMemory,
         remainingTasks: [TaskPlanItem]
-    ) -> CodexProjectChatService.SessionMemory {
+    ) -> ProjectChatService.SessionMemory {
         var nextMemory = memory
         let remainingTodoItems = remainingTasks.map { "待处理：\($0.title) - \($0.goal)" }
         nextMemory.todoItems = sanitizeMemoryItems(remainingTodoItems, limit: configuration.maxMemoryTodoItems)
@@ -196,7 +196,7 @@ final class SessionMemoryManager {
         }
     }
 
-    func encodeMemoryToJSONString(_ memory: CodexProjectChatService.SessionMemory) -> String {
+    func encodeMemoryToJSONString(_ memory: ProjectChatService.SessionMemory) -> String {
         let payload = MemoryPromptPayload(
             objective: memory.objective,
             constraints: memory.constraints,
@@ -212,7 +212,7 @@ final class SessionMemoryManager {
         return text
     }
 
-    private func summarizeHistoryTurns(_ turns: [CodexProjectChatService.ChatTurn]) -> String {
+    private func summarizeHistoryTurns(_ turns: [ProjectChatService.ChatTurn]) -> String {
         guard !turns.isEmpty else {
             return ""
         }
@@ -242,7 +242,7 @@ final class SessionMemoryManager {
         return lines.joined(separator: "\n")
     }
 
-    private func sanitizeMemory(_ memory: CodexProjectChatService.SessionMemory) -> CodexProjectChatService.SessionMemory {
+    private func sanitizeMemory(_ memory: ProjectChatService.SessionMemory) -> ProjectChatService.SessionMemory {
         let objective = normalizedMemoryItem(
             memory.objective,
             maxCharacters: configuration.maxMemoryObjectiveCharacters
@@ -250,7 +250,7 @@ final class SessionMemoryManager {
         let constraints = sanitizeMemoryItems(memory.constraints, limit: configuration.maxMemoryConstraintItems)
         let changedFiles = sanitizeChangedFileItems(memory.changedFiles, limit: configuration.maxMemoryChangedFiles)
         let todoItems = sanitizeMemoryItems(memory.todoItems, limit: configuration.maxMemoryTodoItems)
-        return CodexProjectChatService.SessionMemory(
+        return ProjectChatService.SessionMemory(
             objective: objective,
             constraints: constraints,
             changedFiles: changedFiles,

@@ -1,5 +1,5 @@
 //
-//  CodexProjectChatService.swift
+//  ProjectChatService.swift
 //  Doufu
 //
 //  Created by Codex on 2026/03/05.
@@ -7,11 +7,14 @@
 
 import Foundation
 
-final class CodexProjectChatService {
+final class ProjectChatService {
 
     struct ProviderCredential {
         let providerID: String
         let providerLabel: String
+        let providerKind: LLMProviderRecord.Kind
+        let authMode: LLMProviderRecord.AuthMode
+        let modelID: String
         let baseURL: URL
         let bearerToken: String
         let chatGPTAccountID: String?
@@ -61,6 +64,18 @@ final class CodexProjectChatService {
         }
     }
 
+    struct ModelExecutionOptions {
+        let reasoningEffort: ReasoningEffort
+        let anthropicThinkingEnabled: Bool
+        let geminiThinkingEnabled: Bool
+
+        static let `default` = ModelExecutionOptions(
+            reasoningEffort: .high,
+            anthropicThinkingEnabled: true,
+            geminiThinkingEnabled: true
+        )
+    }
+
     struct ThreadContext {
         let threadID: String
         let version: Int
@@ -75,11 +90,21 @@ final class CodexProjectChatService {
         let nextVersionContentMarkdown: String?
     }
 
+    struct RequestTokenUsage: Codable, Equatable, Hashable {
+        let inputTokens: Int64
+        let outputTokens: Int64
+
+        var totalTokens: Int64 {
+            inputTokens + outputTokens
+        }
+    }
+
     struct ResultPayload {
         let assistantMessage: String
         let changedPaths: [String]
         let updatedMemory: SessionMemory
         let threadMemoryUpdate: ThreadMemoryUpdate?
+        let requestTokenUsage: RequestTokenUsage?
     }
 
     enum ServiceError: LocalizedError {
@@ -105,10 +130,10 @@ final class CodexProjectChatService {
         }
     }
 
-    private let orchestrator: CodexChatOrchestrator
+    private let orchestrator: ProjectChatOrchestrator
 
-    init(configuration: CodexChatConfiguration = .default) {
-        orchestrator = CodexChatOrchestrator(configuration: configuration)
+    init(configuration: ProjectChatConfiguration = .default) {
+        orchestrator = ProjectChatOrchestrator(configuration: configuration)
     }
 
     func sendAndApply(
@@ -118,7 +143,7 @@ final class CodexProjectChatService {
         credential: ProviderCredential,
         memory: SessionMemory? = nil,
         threadContext: ThreadContext?,
-        reasoningEffort: ReasoningEffort,
+        executionOptions: ModelExecutionOptions,
         onStreamedText: (@MainActor (String) -> Void)? = nil,
         onProgress: (@MainActor (String) -> Void)? = nil
     ) async throws -> ResultPayload {
@@ -129,7 +154,7 @@ final class CodexProjectChatService {
             credential: credential,
             memory: memory,
             threadContext: threadContext,
-            reasoningEffort: reasoningEffort,
+            executionOptions: executionOptions,
             onStreamedText: onStreamedText,
             onProgress: onProgress
         )

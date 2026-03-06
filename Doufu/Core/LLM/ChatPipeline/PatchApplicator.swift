@@ -38,27 +38,27 @@ final class PatchApplicator {
         for fileChange in searchReplaceChanges {
             let resolved = try resolveSafeDestination(path: fileChange.path, projectURL: projectURL)
             guard FileManager.default.fileExists(atPath: resolved.destinationURL.path) else {
-                throw CodexProjectChatService.ServiceError.invalidPatchJSON
+                throw ProjectChatService.ServiceError.invalidPatchJSON
             }
 
             var currentContent: String
             do {
                 currentContent = try String(contentsOf: resolved.destinationURL, encoding: .utf8)
             } catch {
-                throw CodexProjectChatService.ServiceError.invalidPatchJSON
+                throw ProjectChatService.ServiceError.invalidPatchJSON
             }
 
             let originalContent = currentContent
             for operation in fileChange.operations {
                 let search = operation.search
                 guard !search.isEmpty else {
-                    throw CodexProjectChatService.ServiceError.invalidPatchJSON
+                    throw ProjectChatService.ServiceError.invalidPatchJSON
                 }
 
                 let options: String.CompareOptions = operation.ignoreCase ? [.caseInsensitive] : []
                 if operation.replaceAll {
                     guard currentContent.range(of: search, options: options) != nil else {
-                        throw CodexProjectChatService.ServiceError.invalidPatchJSON
+                        throw ProjectChatService.ServiceError.invalidPatchJSON
                     }
                     currentContent = currentContent.replacingOccurrences(
                         of: search,
@@ -68,7 +68,7 @@ final class PatchApplicator {
                     )
                 } else {
                     guard let range = currentContent.range(of: search, options: options) else {
-                        throw CodexProjectChatService.ServiceError.invalidPatchJSON
+                        throw ProjectChatService.ServiceError.invalidPatchJSON
                     }
                     currentContent.replaceSubrange(range, with: operation.replace)
                 }
@@ -90,13 +90,13 @@ final class PatchApplicator {
         let rawPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedPath = rawPath.replacingOccurrences(of: "\\", with: "/")
         guard isSafeRelativePath(normalizedPath) else {
-            throw CodexProjectChatService.ServiceError.invalidPath(path)
+            throw ProjectChatService.ServiceError.invalidPath(path)
         }
 
         let destinationURL = projectURL.appendingPathComponent(normalizedPath)
         let destinationPath = destinationURL.standardizedFileURL.path
         guard destinationPath.hasPrefix(rootPrefix) else {
-            throw CodexProjectChatService.ServiceError.invalidPath(path)
+            throw ProjectChatService.ServiceError.invalidPath(path)
         }
         return (normalizedPath, destinationURL)
     }

@@ -8,10 +8,10 @@
 import Foundation
 
 final class ProjectFileScanner {
-    private let configuration: CodexChatConfiguration
+    private let configuration: ProjectChatConfiguration
     private let jsonEncoder = JSONEncoder()
 
-    init(configuration: CodexChatConfiguration) {
+    init(configuration: ProjectChatConfiguration) {
         self.configuration = configuration
         jsonEncoder.outputFormatting = [.prettyPrinted, .sortedKeys]
     }
@@ -25,7 +25,7 @@ final class ProjectFileScanner {
             includingPropertiesForKeys: [.isDirectoryKey],
             options: [.skipsHiddenFiles]
         ) else {
-            throw CodexProjectChatService.ServiceError.noProjectFiles
+            throw ProjectChatService.ServiceError.noProjectFiles
         }
 
         var candidates: [ProjectFileCandidate] = []
@@ -72,7 +72,7 @@ final class ProjectFileScanner {
 
         let sorted = candidates.sorted { $0.path < $1.path }
         guard !sorted.isEmpty else {
-            throw CodexProjectChatService.ServiceError.noProjectFiles
+            throw ProjectChatService.ServiceError.noProjectFiles
         }
         return sorted
     }

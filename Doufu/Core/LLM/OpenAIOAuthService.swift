@@ -1,5 +1,5 @@
 //
-//  OpenAICodexOAuthService.swift
+//  OpenAIOAuthService.swift
 //  Doufu
 //
 //  Created by Codex on 2026/03/04.
@@ -9,7 +9,7 @@ import CryptoKit
 import Foundation
 import Network
 
-final class OpenAICodexOAuthService {
+final class OpenAIOAuthService {
 
     struct SignInResult {
         let baseURLString: String
