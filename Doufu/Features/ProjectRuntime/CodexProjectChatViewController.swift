@@ -48,6 +48,9 @@ final class CodexProjectChatViewController: UIViewController {
         let role: Role
         var text: String
         let createdAt: Date
+        let startedAt: Date
+        var finishedAt: Date?
+        let isProgress: Bool
     }
 
     private let projectName: String
@@ -62,8 +65,12 @@ final class CodexProjectChatViewController: UIViewController {
     private var threadSessionMemories: [String: CodexProjectChatService.SessionMemory] = [:]
     private var isSending = false
     private var sendTask: Task<Void, Never>?
-    private var activeStreamingMessageIndex: Int?
     private var didCancelCurrentRequest = false
+    private var didAppendCancelMessage = false
+    private var lastProgressPhaseText: String?
+    private var activeProgressMessageID: UUID?
+    private var currentRequestStartedAt: Date?
+    private var progressUIUpdateTimer: Timer?
     private var threadIndex: ProjectChatThreadIndex?
     private var currentThread: ProjectChatThreadRecord?
     private var selectedReasoningEffort: CodexProjectChatService.ReasoningEffort = .high
@@ -135,10 +142,12 @@ final class CodexProjectChatViewController: UIViewController {
 
     private lazy var sendButton: UIButton = {
         var configuration = UIButton.Configuration.filled()
-        configuration.title = "发送"
+        configuration.image = UIImage(systemName: "paperplane.fill")
+        configuration.cornerStyle = .capsule
         let button = UIButton(configuration: configuration)
         button.translatesAutoresizingMaskIntoConstraints = false
         button.addTarget(self, action: #selector(didTapSend), for: .touchUpInside)
+        button.accessibilityLabel = "发送"
         return button
     }()
 
@@ -171,8 +180,19 @@ final class CodexProjectChatViewController: UIViewController {
         updateInputTextViewHeight()
     }
 
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        if isSending {
+            startProgressUIUpdateTimerIfNeeded()
+        }
+        refreshVisibleMessageCellsForDynamicState()
+    }
+
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
+        if view.window == nil {
+            stopProgressUIUpdateTimer()
+        }
         persistCurrentThreadMessages()
     }
 
@@ -182,18 +202,10 @@ final class CodexProjectChatViewController: UIViewController {
     }
 
     private func refreshNavigationItems() {
-        if isSending {
-            navigationItem.leftBarButtonItem = UIBarButtonItem(
-                title: "取消",
-                style: .plain,
-                target: self,
-                action: #selector(didTapCancelRequest)
-            )
-        } else {
-            threadBarButtonItem.title = currentThread?.title ?? "Threads"
-            threadBarButtonItem.menu = buildThreadMenu()
-            navigationItem.leftBarButtonItem = threadBarButtonItem
-        }
+        threadBarButtonItem.title = currentThread?.title ?? "Threads"
+        threadBarButtonItem.menu = isSending ? nil : buildThreadMenu()
+        threadBarButtonItem.isEnabled = !isSending
+        navigationItem.leftBarButtonItem = threadBarButtonItem
         reasoningBarButtonItem.title = selectedReasoningEffort.displayName
         reasoningBarButtonItem.menu = buildReasoningMenu()
         reasoningBarButtonItem.isEnabled = !isSending
@@ -239,7 +251,7 @@ final class CodexProjectChatViewController: UIViewController {
             sendButton.trailingAnchor.constraint(equalTo: inputContainer.trailingAnchor, constant: -12),
             sendButton.bottomAnchor.constraint(equalTo: inputTextView.bottomAnchor),
             sendButton.heightAnchor.constraint(equalToConstant: 38),
-            sendButton.widthAnchor.constraint(equalToConstant: 68)
+            sendButton.widthAnchor.constraint(equalToConstant: 38)
         ])
     }
 
@@ -416,7 +428,24 @@ final class CodexProjectChatViewController: UIViewController {
             guard !text.isEmpty else {
                 return nil
             }
-            return Message(role: role, text: text, createdAt: persistedMessage.createdAt)
+            let startedAt = persistedMessage.startedAt ?? persistedMessage.createdAt
+            let finishedAt: Date? = {
+                if let finishedAt = persistedMessage.finishedAt {
+                    return finishedAt
+                }
+                if persistedMessage.isProgress {
+                    return startedAt
+                }
+                return persistedMessage.createdAt
+            }()
+            return Message(
+                role: role,
+                text: text,
+                createdAt: persistedMessage.createdAt,
+                startedAt: startedAt,
+                finishedAt: finishedAt,
+                isProgress: persistedMessage.isProgress
+            )
         }
 
         if appendStatusMessage {
@@ -455,7 +484,10 @@ final class CodexProjectChatViewController: UIViewController {
             return ProjectChatPersistedMessage(
                 role: message.role.rawValue,
                 text: text,
-                createdAt: message.createdAt
+                createdAt: message.createdAt,
+                startedAt: message.startedAt,
+                finishedAt: message.finishedAt,
+                isProgress: message.isProgress
             )
         }
         threadStore.saveMessages(projectURL: projectURL, threadID: threadID, messages: persisted)
@@ -503,36 +535,83 @@ final class CodexProjectChatViewController: UIViewController {
     }
 
     @discardableResult
-    private func appendMessage(role: Message.Role, text: String) -> Int? {
+    private func appendMessage(
+        role: Message.Role,
+        text: String,
+        isProgress: Bool = false,
+        startedAt: Date? = nil,
+        finishedAt: Date? = nil
+    ) -> Int? {
         let normalizedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedText.isEmpty else {
             return nil
         }
 
-        messages.append(Message(role: role, text: normalizedText, createdAt: Date()))
+        let createdAt = Date()
+        let startedAt = startedAt ?? createdAt
+        let resolvedFinishedAt = finishedAt ?? (isProgress ? nil : createdAt)
+
+        messages.append(
+            Message(
+                role: role,
+                text: normalizedText,
+                createdAt: createdAt,
+                startedAt: startedAt,
+                finishedAt: resolvedFinishedAt,
+                isProgress: isProgress
+            )
+        )
         tableView.reloadData()
         scrollToBottomIfNeeded()
+        refreshVisibleMessageCellsForDynamicState()
         return messages.count - 1
     }
 
-    private func updateMessage(at index: Int, text: String) {
-        guard messages.indices.contains(index) else {
+    private func finalizeActiveProgressMessage(finishedAt: Date = Date()) {
+        guard let activeProgressMessageID else {
             return
         }
-
-        let normalizedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        messages[index].text = normalizedText.isEmpty ? "Codex 正在生成..." : normalizedText
-        tableView.reloadData()
-        scrollToBottomIfNeeded()
+        guard let index = messages.firstIndex(where: { $0.id == activeProgressMessageID }) else {
+            self.activeProgressMessageID = nil
+            return
+        }
+        if messages[index].finishedAt == nil {
+            messages[index].finishedAt = finishedAt
+            refreshVisibleMessageCellsForDynamicState()
+        }
+        self.activeProgressMessageID = nil
     }
 
-    private func removeMessage(at index: Int) {
-        guard messages.indices.contains(index) else {
+    private func startProgressUIUpdateTimerIfNeeded() {
+        guard progressUIUpdateTimer == nil else {
             return
         }
+        let timer = Timer(timeInterval: 0.4, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.refreshVisibleMessageCellsForDynamicState()
+            }
+        }
+        progressUIUpdateTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
 
-        messages.remove(at: index)
-        tableView.reloadData()
+    private func stopProgressUIUpdateTimer() {
+        progressUIUpdateTimer?.invalidate()
+        progressUIUpdateTimer = nil
+    }
+
+    private func refreshVisibleMessageCellsForDynamicState() {
+        let now = Date()
+        let visibleRows = tableView.indexPathsForVisibleRows ?? []
+        for indexPath in visibleRows {
+            guard messages.indices.contains(indexPath.row) else {
+                continue
+            }
+            guard let cell = tableView.cellForRow(at: indexPath) as? ChatMessageCell else {
+                continue
+            }
+            cell.configure(message: messages[indexPath.row], now: now)
+        }
     }
 
     private func scrollToBottomIfNeeded() {
@@ -554,10 +633,35 @@ final class CodexProjectChatViewController: UIViewController {
             case .user:
                 return .init(role: .user, text: normalizedText)
             case .assistant:
+                if message.isProgress {
+                    return nil
+                }
                 return .init(role: .assistant, text: normalizedText)
             case .system:
                 return nil
             }
+        }
+    }
+
+    private func appendProgressMessageIfNeeded(_ phaseText: String) {
+        let normalizedText = phaseText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedText.isEmpty else {
+            return
+        }
+        guard normalizedText != lastProgressPhaseText else {
+            return
+        }
+        let now = Date()
+        finalizeActiveProgressMessage(finishedAt: now)
+        lastProgressPhaseText = normalizedText
+        if let index = appendMessage(
+            role: .assistant,
+            text: normalizedText,
+            isProgress: true,
+            startedAt: now,
+            finishedAt: nil
+        ) {
+            activeProgressMessageID = messages[index].id
         }
     }
 
@@ -585,7 +689,25 @@ final class CodexProjectChatViewController: UIViewController {
         let hasText = !currentInputText().isEmpty
         let hasProvider = providerCredential != nil
         let hasThread = currentThread != nil
-        sendButton.isEnabled = hasText && !isSending && hasProvider && hasThread
+        if isSending {
+            sendButton.isEnabled = true
+            var configuration = sendButton.configuration ?? UIButton.Configuration.filled()
+            configuration.image = UIImage(systemName: "xmark.circle.fill")
+            configuration.baseBackgroundColor = .systemRed
+            configuration.baseForegroundColor = .white
+            configuration.cornerStyle = .capsule
+            sendButton.configuration = configuration
+            sendButton.accessibilityLabel = "取消"
+        } else {
+            sendButton.isEnabled = hasText && hasProvider && hasThread
+            var configuration = sendButton.configuration ?? UIButton.Configuration.filled()
+            configuration.image = UIImage(systemName: "paperplane.fill")
+            configuration.baseBackgroundColor = .systemBlue
+            configuration.baseForegroundColor = .white
+            configuration.cornerStyle = .capsule
+            sendButton.configuration = configuration
+            sendButton.accessibilityLabel = "发送"
+        }
         inputTextView.isEditable = !isSending
         inputTextView.alpha = isSending ? 0.72 : 1.0
         refreshNavigationItems()
@@ -593,21 +715,14 @@ final class CodexProjectChatViewController: UIViewController {
 
     @objc
     private func didTapClose() {
-        if isSending {
-            cancelCurrentRequest(showMessage: false)
-        }
         persistCurrentThreadMessages()
         dismiss(animated: true)
     }
 
     @objc
-    private func didTapCancelRequest() {
-        cancelCurrentRequest(showMessage: true)
-    }
-
-    @objc
     private func didTapSend() {
-        guard !isSending else {
+        if isSending {
+            cancelCurrentRequest(showMessage: true)
             return
         }
 
@@ -630,19 +745,27 @@ final class CodexProjectChatViewController: UIViewController {
         _ = appendMessage(role: .user, text: userInput)
         inputTextView.resignFirstResponder()
         let historyTurns = buildHistoryTurns()
-        let streamingMessageIndex = appendMessage(role: .assistant, text: "Codex 正在生成...")
-        activeStreamingMessageIndex = streamingMessageIndex
+        currentRequestStartedAt = Date()
         isSending = true
         didCancelCurrentRequest = false
+        didAppendCancelMessage = false
+        lastProgressPhaseText = nil
+        activeProgressMessageID = nil
+        startProgressUIUpdateTimerIfNeeded()
         persistCurrentThreadMessages()
         refreshSendButton()
 
         sendTask = Task { [weak self] in
             guard let self else { return }
             defer {
+                finalizeActiveProgressMessage()
+                stopProgressUIUpdateTimer()
                 sendTask = nil
-                activeStreamingMessageIndex = nil
                 didCancelCurrentRequest = false
+                didAppendCancelMessage = false
+                lastProgressPhaseText = nil
+                activeProgressMessageID = nil
+                currentRequestStartedAt = nil
                 isSending = false
                 refreshSendButton()
                 persistCurrentThreadMessages()
@@ -660,27 +783,27 @@ final class CodexProjectChatViewController: UIViewController {
                     reasoningEffort: selectedReasoningEffort,
                     onStreamedText: nil,
                     onProgress: { [weak self] phaseText in
-                        guard let self, let streamingMessageIndex else {
+                        guard let self else {
                             return
                         }
-                        self.updateMessage(at: streamingMessageIndex, text: phaseText)
+                        self.appendProgressMessageIfNeeded(phaseText)
                     }
                 )
 
                 sessionMemory = result.updatedMemory
                 threadSessionMemories[currentThread.id] = result.updatedMemory
 
+                finalizeActiveProgressMessage()
                 var assistantText = result.assistantMessage
                 if !result.changedPaths.isEmpty {
                     let changesSummary = result.changedPaths.joined(separator: ", ")
                     assistantText += "\n\n已更新文件：\(changesSummary)"
                 }
-
-                if let streamingMessageIndex {
-                    updateMessage(at: streamingMessageIndex, text: assistantText)
-                } else {
-                    _ = appendMessage(role: .assistant, text: assistantText)
-                }
+                _ = appendMessage(
+                    role: .assistant,
+                    text: assistantText,
+                    startedAt: currentRequestStartedAt
+                )
 
                 do {
                     let applyResult = try threadStore.applyThreadMemoryUpdate(
@@ -706,24 +829,34 @@ final class CodexProjectChatViewController: UIViewController {
                     onProjectFilesUpdated?()
                 }
             } catch is CancellationError {
-                if let streamingMessageIndex {
-                    updateMessage(at: streamingMessageIndex, text: "已取消本次请求。")
-                } else {
-                    _ = appendMessage(role: .system, text: "已取消本次请求。")
+                finalizeActiveProgressMessage()
+                if !didAppendCancelMessage {
+                    _ = appendMessage(
+                        role: .system,
+                        text: "已取消本次请求。",
+                        startedAt: currentRequestStartedAt
+                    )
+                    didAppendCancelMessage = true
                 }
             } catch {
                 if didCancelCurrentRequest {
-                    if let streamingMessageIndex {
-                        updateMessage(at: streamingMessageIndex, text: "已取消本次请求。")
-                    } else {
-                        _ = appendMessage(role: .system, text: "已取消本次请求。")
+                    finalizeActiveProgressMessage()
+                    if !didAppendCancelMessage {
+                        _ = appendMessage(
+                            role: .system,
+                            text: "已取消本次请求。",
+                            startedAt: currentRequestStartedAt
+                        )
+                        didAppendCancelMessage = true
                     }
                     return
                 }
-                if let streamingMessageIndex {
-                    removeMessage(at: streamingMessageIndex)
-                }
-                _ = appendMessage(role: .system, text: error.localizedDescription)
+                finalizeActiveProgressMessage()
+                _ = appendMessage(
+                    role: .system,
+                    text: error.localizedDescription,
+                    startedAt: currentRequestStartedAt
+                )
             }
         }
     }
@@ -734,12 +867,13 @@ final class CodexProjectChatViewController: UIViewController {
         }
         didCancelCurrentRequest = true
         sendTask?.cancel()
-        if showMessage {
-            if let index = activeStreamingMessageIndex {
-                updateMessage(at: index, text: "已取消本次请求。")
-            } else {
-                _ = appendMessage(role: .system, text: "已取消本次请求。")
-            }
+        if showMessage, !didAppendCancelMessage {
+            _ = appendMessage(
+                role: .system,
+                text: "已取消本次请求。",
+                startedAt: currentRequestStartedAt
+            )
+            didAppendCancelMessage = true
         }
     }
 }
@@ -760,7 +894,7 @@ extension CodexProjectChatViewController: UITableViewDataSource {
         }
 
         let message = messages[indexPath.row]
-        cell.configure(prefix: message.role.prefix, text: message.text, role: message.role)
+        cell.configure(message: message, now: Date())
         return cell
     }
 }
@@ -776,11 +910,19 @@ extension CodexProjectChatViewController: UITextViewDelegate {
 private final class ChatMessageCell: UITableViewCell {
     static let reuseIdentifier = "ChatMessageCell"
 
+    private static let timestampFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss"
+        return formatter
+    }()
+
     private let bubbleContainer: UIView = {
         let view = UIView()
         view.translatesAutoresizingMaskIntoConstraints = false
         view.layer.cornerRadius = 12
         view.layer.cornerCurve = .continuous
+        view.layer.borderWidth = 1
+        view.layer.borderColor = UIColor.clear.cgColor
         return view
     }()
 
@@ -789,6 +931,14 @@ private final class ChatMessageCell: UITableViewCell {
         label.translatesAutoresizingMaskIntoConstraints = false
         label.numberOfLines = 0
         label.font = .systemFont(ofSize: 15)
+        return label
+    }()
+
+    private let metaLabel: UILabel = {
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.numberOfLines = 1
+        label.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
         return label
     }()
 
@@ -803,21 +953,25 @@ private final class ChatMessageCell: UITableViewCell {
 
         contentView.addSubview(bubbleContainer)
         bubbleContainer.addSubview(messageLabel)
+        bubbleContainer.addSubview(metaLabel)
 
-        leadingConstraint = bubbleContainer.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 18)
-        trailingConstraint = bubbleContainer.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -18)
+        leadingConstraint = bubbleContainer.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 10)
+        trailingConstraint = bubbleContainer.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -10)
 
         NSLayoutConstraint.activate([
-            bubbleContainer.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 6),
-            bubbleContainer.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -6),
+            bubbleContainer.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 4),
+            bubbleContainer.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -4),
             leadingConstraint,
             trailingConstraint,
-            bubbleContainer.widthAnchor.constraint(lessThanOrEqualTo: contentView.widthAnchor, multiplier: 0.86),
+            bubbleContainer.widthAnchor.constraint(lessThanOrEqualTo: contentView.widthAnchor, multiplier: 0.92),
 
             messageLabel.topAnchor.constraint(equalTo: bubbleContainer.topAnchor, constant: 10),
             messageLabel.leadingAnchor.constraint(equalTo: bubbleContainer.leadingAnchor, constant: 12),
             messageLabel.trailingAnchor.constraint(equalTo: bubbleContainer.trailingAnchor, constant: -12),
-            messageLabel.bottomAnchor.constraint(equalTo: bubbleContainer.bottomAnchor, constant: -10)
+            metaLabel.topAnchor.constraint(equalTo: messageLabel.bottomAnchor, constant: 8),
+            metaLabel.leadingAnchor.constraint(equalTo: bubbleContainer.leadingAnchor, constant: 12),
+            metaLabel.trailingAnchor.constraint(equalTo: bubbleContainer.trailingAnchor, constant: -12),
+            metaLabel.bottomAnchor.constraint(equalTo: bubbleContainer.bottomAnchor, constant: -10)
         ])
     }
 
@@ -826,25 +980,72 @@ private final class ChatMessageCell: UITableViewCell {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func configure(prefix: String, text: String, role: CodexProjectChatViewController.Message.Role) {
-        messageLabel.text = "\(prefix)：\(text)"
+    func configure(message: CodexProjectChatViewController.Message, now: Date) {
+        let animatedText = displayText(for: message, now: now)
+        messageLabel.text = "\(message.role.prefix)：\(animatedText)"
+        metaLabel.text = metadataText(for: message, now: now)
 
-        switch role {
+        switch message.role {
         case .user:
             trailingConstraint.isActive = true
             leadingConstraint.isActive = false
             bubbleContainer.backgroundColor = tintColor
             messageLabel.textColor = .white
+            metaLabel.textColor = UIColor.white.withAlphaComponent(0.78)
+            bubbleContainer.layer.borderColor = UIColor.clear.cgColor
         case .assistant:
             trailingConstraint.isActive = false
             leadingConstraint.isActive = true
             bubbleContainer.backgroundColor = .secondarySystemGroupedBackground
             messageLabel.textColor = .label
+            metaLabel.textColor = .secondaryLabel
+            if message.isProgress && message.finishedAt == nil {
+                bubbleContainer.layer.borderColor = tintColor.withAlphaComponent(0.45).cgColor
+            } else {
+                bubbleContainer.layer.borderColor = UIColor.clear.cgColor
+            }
         case .system:
             trailingConstraint.isActive = false
             leadingConstraint.isActive = true
             bubbleContainer.backgroundColor = UIColor.systemYellow.withAlphaComponent(0.24)
             messageLabel.textColor = .secondaryLabel
+            metaLabel.textColor = .tertiaryLabel
+            bubbleContainer.layer.borderColor = UIColor.clear.cgColor
         }
+    }
+
+    private func displayText(for message: CodexProjectChatViewController.Message, now: Date) -> String {
+        guard message.isProgress, message.finishedAt == nil else {
+            return message.text
+        }
+        let baseText = message.text.replacingOccurrences(
+            of: #"[.。…\s]+$"#,
+            with: "",
+            options: .regularExpression
+        )
+        let phase = Int((now.timeIntervalSinceReferenceDate * 2).rounded(.down)) % 3 + 1
+        let dots = String(repeating: ".", count: phase)
+        return baseText + dots
+    }
+
+    private func metadataText(for message: CodexProjectChatViewController.Message, now: Date) -> String {
+        let timestamp = Self.timestampFormatter.string(from: message.createdAt)
+        let endAt = message.finishedAt ?? now
+        let duration = max(0, endAt.timeIntervalSince(message.startedAt))
+        let durationString = formatDuration(duration)
+        return "\(timestamp) · \(durationString)"
+    }
+
+    private func formatDuration(_ duration: TimeInterval) -> String {
+        if duration < 1 {
+            let milliseconds = Int((duration * 1000).rounded())
+            return "耗时 \(milliseconds)ms"
+        }
+        if duration < 60 {
+            return String(format: "耗时 %.1fs", duration)
+        }
+        let minutes = Int(duration) / 60
+        let seconds = duration - Double(minutes * 60)
+        return String(format: "耗时 %dm %.1fs", minutes, seconds)
     }
 }

@@ -73,6 +73,10 @@ final class CodexChatOrchestrator {
             credential: credential,
             reasoningEffort: requestReasoningEffort
         )
+        if let onProgress {
+            let routeText = executionRoute == .singlePass ? "单次快速路径" : "多任务路径"
+            await onProgress("执行策略：\(routeText)")
+        }
 
         if executionRoute == .singlePass {
             return try await sendAndApplySinglePass(
@@ -102,6 +106,13 @@ final class CodexChatOrchestrator {
             credential: credential,
             reasoningEffort: requestReasoningEffort
         )
+        if let onProgress {
+            let taskLines = taskPlan.tasks.enumerated().map { index, task in
+                "\(index + 1). \(task.title)"
+            }
+            let planSummary = taskLines.joined(separator: "\n")
+            await onProgress("执行计划已生成（共 \(taskPlan.tasks.count) 项）：\n\(planSummary)")
+        }
 
         var allChangedPaths: [String] = []
         var currentMemory = requestMemory
@@ -119,7 +130,7 @@ final class CodexChatOrchestrator {
             )
 
             if let onProgress {
-                await onProgress("正在执行任务 \(stepNumber)/\(totalSteps)：\(task.title)")
+                await onProgress("任务 \(stepNumber)/\(totalSteps)：\(task.title)\n目标：\(task.goal)")
             }
 
             do {
@@ -141,7 +152,7 @@ final class CodexChatOrchestrator {
                 let filesJSON = try scanner.encodeFileSnapshotsToJSONString(snapshots)
 
                 if let onProgress {
-                    await onProgress("正在生成任务 \(stepNumber)/\(totalSteps) 的改动...")
+                    await onProgress("任务 \(stepNumber)/\(totalSteps)「\(task.title)」：正在生成改动...")
                 }
 
                 let responseText = try await requestPatchResponseStreaming(
@@ -160,7 +171,7 @@ final class CodexChatOrchestrator {
                 }
 
                 if let onProgress {
-                    await onProgress("正在应用任务 \(stepNumber)/\(totalSteps) 的改动...")
+                    await onProgress("任务 \(stepNumber)/\(totalSteps)「\(task.title)」：正在应用改动...")
                 }
 
                 let changedPaths = try patchApplicator.applyPatchPayload(patch, to: projectURL)
@@ -175,6 +186,11 @@ final class CodexChatOrchestrator {
                     } catch {
                         debugLog("[DoufuCodexChat Debug] file candidate refresh failed, continue with previous snapshot. error=\(error.localizedDescription)")
                     }
+                }
+                if let onProgress {
+                    let changedCount = changedPaths.count
+                    let changedText = changedCount == 0 ? "未产生文件变更" : "更新 \(changedCount) 个文件"
+                    await onProgress("任务 \(stepNumber)/\(totalSteps)「\(task.title)」已完成：\(changedText)。")
                 }
 
                 let message = patch.assistantMessage.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -245,7 +261,7 @@ final class CodexChatOrchestrator {
         onProgress: (@MainActor (String) -> Void)?
     ) async throws -> CodexProjectChatService.ResultPayload {
         if let onProgress {
-            await onProgress("正在快速生成改动...")
+            await onProgress("单次快速路径：正在生成改动...")
         }
 
         let selectedPaths = scanner.fallbackSelectionPaths(from: fileCandidates, userMessage: userMessage)
@@ -269,10 +285,15 @@ final class CodexChatOrchestrator {
         let patch = try parsePatchPayload(from: responseText)
 
         if let onProgress {
-            await onProgress("正在应用改动...")
+            await onProgress("单次快速路径：正在应用改动...")
         }
 
         let changedPaths = try patchApplicator.applyPatchPayload(patch, to: projectURL)
+        if let onProgress {
+            let changedCount = changedPaths.count
+            let changedText = changedCount == 0 ? "未产生文件变更" : "更新 \(changedCount) 个文件"
+            await onProgress("单次快速路径已完成：\(changedText)。")
+        }
         if !changedPaths.isEmpty {
             AppProjectStore.shared.touchProjectUpdatedAt(projectURL: projectURL)
             createAutoSnapshotIfNeeded(projectURL: projectURL, changedPaths: changedPaths)

@@ -41,6 +41,7 @@ final class ProjectWorkspaceViewController: UIViewController {
     private var panelState: PanelPresentationState = .expanded
     private var panelPanStartFrame: CGRect = .zero
     private var autoCollapseWorkItem: DispatchWorkItem?
+    private var chatNavigationController: UINavigationController?
 
     private lazy var webView: WKWebView = {
         let configuration = WKWebViewConfiguration()
@@ -596,6 +597,12 @@ final class ProjectWorkspaceViewController: UIViewController {
     @objc
     private func didTapChat() {
         scheduleAutoCollapse()
+        if let chatNavigationController {
+            guard presentedViewController == nil else { return }
+            present(chatNavigationController, animated: true)
+            return
+        }
+
         let chatController = CodexProjectChatViewController(projectName: projectName, projectURL: projectURL)
         chatController.onProjectFilesUpdated = { [weak self] in
             guard let self else { return }
@@ -610,6 +617,7 @@ final class ProjectWorkspaceViewController: UIViewController {
             sheet.detents = [.medium(), .large()]
             sheet.prefersGrabberVisible = true
         }
+        chatNavigationController = navigationController
         present(navigationController, animated: true)
     }
 

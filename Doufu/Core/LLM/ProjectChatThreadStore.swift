@@ -24,6 +24,44 @@ struct ProjectChatPersistedMessage: Codable {
     let role: String
     let text: String
     let createdAt: Date
+    let startedAt: Date?
+    let finishedAt: Date?
+    let isProgress: Bool
+
+    init(
+        role: String,
+        text: String,
+        createdAt: Date,
+        startedAt: Date? = nil,
+        finishedAt: Date? = nil,
+        isProgress: Bool = false
+    ) {
+        self.role = role
+        self.text = text
+        self.createdAt = createdAt
+        self.startedAt = startedAt
+        self.finishedAt = finishedAt
+        self.isProgress = isProgress
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case role
+        case text
+        case createdAt
+        case startedAt
+        case finishedAt
+        case isProgress
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        role = try container.decode(String.self, forKey: .role)
+        text = try container.decode(String.self, forKey: .text)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        startedAt = try container.decodeIfPresent(Date.self, forKey: .startedAt)
+        finishedAt = try container.decodeIfPresent(Date.self, forKey: .finishedAt)
+        isProgress = try container.decodeIfPresent(Bool.self, forKey: .isProgress) ?? false
+    }
 }
 
 struct AppliedThreadMemoryResult {
