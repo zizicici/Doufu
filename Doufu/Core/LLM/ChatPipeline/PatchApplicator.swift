@@ -84,18 +84,23 @@ final class PatchApplicator {
     }
 
     private func resolveSafeDestination(path: String, projectURL: URL) throws -> (normalizedPath: String, destinationURL: URL) {
-        let rootPath = projectURL.standardizedFileURL.path
-        let rootPrefix = rootPath.hasSuffix("/") ? rootPath : rootPath + "/"
-
         let rawPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedPath = rawPath.replacingOccurrences(of: "\\", with: "/")
         guard isSafeRelativePath(normalizedPath) else {
+            debugUnsafePath(rawPath: rawPath, normalizedPath: normalizedPath, reason: "isSafeRelativePath=false")
             throw ProjectChatService.ServiceError.invalidPath(path)
         }
 
-        let destinationURL = projectURL.appendingPathComponent(normalizedPath)
-        let destinationPath = destinationURL.standardizedFileURL.path
-        guard destinationPath.hasPrefix(rootPrefix) else {
+        let rootURL = projectURL.standardizedFileURL.resolvingSymlinksInPath()
+        let destinationURL = rootURL.appendingPathComponent(normalizedPath).standardizedFileURL.resolvingSymlinksInPath()
+        guard isSubpath(destinationURL, of: rootURL) else {
+            debugUnsafePath(
+                rawPath: rawPath,
+                normalizedPath: normalizedPath,
+                reason: "resolved destination escaped root",
+                destinationPath: destinationURL.path,
+                rootPath: rootURL.path
+            )
             throw ProjectChatService.ServiceError.invalidPath(path)
         }
         return (normalizedPath, destinationURL)
@@ -108,10 +113,54 @@ final class PatchApplicator {
         if path.hasPrefix("/") || path.hasPrefix("~") {
             return false
         }
-        if path.contains("..") {
+
+        let components = path.split(separator: "/", omittingEmptySubsequences: false)
+        guard !components.isEmpty else {
             return false
         }
+        for component in components {
+            if component.isEmpty || component == "." || component == ".." {
+                return false
+            }
+        }
+
         return true
+    }
+
+    private func isSubpath(_ candidate: URL, of root: URL) -> Bool {
+        let rootComponents = root.standardizedFileURL.pathComponents
+        let candidateComponents = candidate.standardizedFileURL.pathComponents
+        guard candidateComponents.count >= rootComponents.count else {
+            return false
+        }
+        for (index, component) in rootComponents.enumerated() {
+            if candidateComponents[index] != component {
+                return false
+            }
+        }
+        return true
+    }
+
+    private func debugUnsafePath(
+        rawPath: String,
+        normalizedPath: String,
+        reason: String,
+        destinationPath: String? = nil,
+        rootPath: String? = nil
+    ) {
+#if DEBUG
+        let scalarDump = normalizedPath.unicodeScalars
+            .map { String(format: "U+%04X", $0.value) }
+            .joined(separator: " ")
+        var message = "[DoufuCodexChat Debug] unsafe path rejected reason=\(reason) raw=\(String(reflecting: rawPath)) normalized=\(String(reflecting: normalizedPath)) scalars=[\(scalarDump)]"
+        if let destinationPath {
+            message += " destination=\(destinationPath)"
+        }
+        if let rootPath {
+            message += " root=\(rootPath)"
+        }
+        print(message)
+#endif
     }
 
     private func appendUniquePaths(_ paths: [String], into target: inout [String]) {

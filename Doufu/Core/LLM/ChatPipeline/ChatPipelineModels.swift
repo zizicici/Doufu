@@ -278,9 +278,32 @@ struct MemoryPromptPayload: Encodable {
 }
 
 struct PatchMemoryUpdate: Decodable {
+    struct MemoryDelta: Decodable {
+        let objective: String?
+        let constraints: [String]
+        let todoItems: [String]
+        let notes: [String]
+
+        private enum CodingKeys: String, CodingKey {
+            case objective
+            case constraints
+            case todoItems = "todo_items"
+            case notes
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            objective = try container.decodeIfPresent(String.self, forKey: .objective)
+            constraints = try container.decodeIfPresent([String].self, forKey: .constraints) ?? []
+            todoItems = try container.decodeIfPresent([String].self, forKey: .todoItems) ?? []
+            notes = try container.decodeIfPresent([String].self, forKey: .notes) ?? []
+        }
+    }
+
     let objective: String?
     let constraints: [String]?
     let todoItems: [String]?
+    let memoryDelta: MemoryDelta?
     let threadContentMarkdown: String?
     let threadShouldRollOver: Bool
     let threadNextVersionSummary: String?
@@ -290,6 +313,7 @@ struct PatchMemoryUpdate: Decodable {
         case objective
         case constraints
         case todoItems = "todo_items"
+        case memoryDelta = "memory_delta"
         case threadContentMarkdown = "thread_content_markdown"
         case threadShouldRollOver = "thread_should_rollover"
         case threadNextVersionSummary = "thread_next_version_summary"
@@ -309,6 +333,7 @@ struct PatchMemoryUpdate: Decodable {
         objective = try container.decodeIfPresent(String.self, forKey: .objective)
         constraints = try container.decodeIfPresent([String].self, forKey: .constraints)
         todoItems = try container.decodeIfPresent([String].self, forKey: .todoItems)
+        memoryDelta = try container.decodeIfPresent(MemoryDelta.self, forKey: .memoryDelta)
 
         if let flattened = try container.decodeIfPresent(String.self, forKey: .threadContentMarkdown) {
             threadContentMarkdown = flattened
@@ -345,6 +370,24 @@ struct PatchMemoryUpdate: Decodable {
         } else {
             threadNextVersionContentMarkdown = nil
         }
+    }
+
+    var resolvedObjective: String? {
+        memoryDelta?.objective ?? objective
+    }
+
+    var resolvedConstraints: [String] {
+        let value = memoryDelta?.constraints ?? constraints ?? []
+        return value
+    }
+
+    var resolvedTodoItems: [String] {
+        let value = memoryDelta?.todoItems ?? todoItems ?? []
+        return value
+    }
+
+    var resolvedNotes: [String] {
+        memoryDelta?.notes ?? []
     }
 }
 

@@ -43,7 +43,7 @@ final class ProjectChatViewController: UIViewController {
         let requestTokenUsage: ProjectChatService.RequestTokenUsage?
     }
 
-    private let projectName: String
+    private var projectName: String
     private let projectURL: URL
     private let chatService = ProjectChatService()
     private let providerStore = LLMProviderSettingsStore.shared
@@ -74,24 +74,25 @@ final class ProjectChatViewController: UIViewController {
     private let inputMaxHeight: CGFloat = 120
     private var inputHeightConstraint: NSLayoutConstraint?
 
-    private lazy var closeBarButtonItem = UIBarButtonItem(
-        barButtonSystemItem: .close,
-        target: self,
-        action: #selector(didTapClose)
-    )
-
     private lazy var modelBarButtonItem = UIBarButtonItem(
-        title: "Model",
+        image: UIImage(systemName: "theatermask.and.paintbrush"),
         style: .plain,
         target: self,
         action: #selector(didTapModelSettings)
     )
 
     private lazy var usageBarButtonItem = UIBarButtonItem(
-        image: UIImage(systemName: "chart.bar.xaxis"),
+        image: UIImage(systemName: "chart.bar"),
         style: .plain,
         target: self,
         action: #selector(didTapProjectUsage)
+    )
+
+    private lazy var moreBarButtonItem = UIBarButtonItem(
+        image: UIImage(systemName: "ellipsis.circle"),
+        style: .plain,
+        target: nil,
+        action: nil
     )
 
     private lazy var threadBarButtonItem = UIBarButtonItem(
@@ -145,7 +146,7 @@ final class ProjectChatViewController: UIViewController {
 
     private lazy var sendButton: UIButton = {
         var configuration = UIButton.Configuration.filled()
-        configuration.image = UIImage(systemName: "paperplane.fill")
+        configuration.image = UIImage(systemName: "arrow.up")
         configuration.cornerStyle = .capsule
         let button = UIButton(configuration: configuration)
         button.translatesAutoresizingMaskIntoConstraints = false
@@ -200,7 +201,7 @@ final class ProjectChatViewController: UIViewController {
     }
 
     private func configureNavigation() {
-        navigationItem.rightBarButtonItems = [closeBarButtonItem, modelBarButtonItem, usageBarButtonItem]
+        navigationItem.rightBarButtonItems = [moreBarButtonItem, modelBarButtonItem, usageBarButtonItem]
         refreshNavigationItems()
     }
 
@@ -209,10 +210,13 @@ final class ProjectChatViewController: UIViewController {
         threadBarButtonItem.menu = isSending ? nil : buildThreadMenu()
         threadBarButtonItem.isEnabled = !isSending
         navigationItem.leftBarButtonItem = threadBarButtonItem
-        modelBarButtonItem.title = currentModelMenuButtonTitle()
+        modelBarButtonItem.image = UIImage(systemName: "theatermask.and.paintbrush")
+        modelBarButtonItem.accessibilityLabel = currentModelMenuButtonTitle()
         modelBarButtonItem.menu = nil
         modelBarButtonItem.isEnabled = !isSending && providerCredential != nil
         usageBarButtonItem.isEnabled = !isSending
+        moreBarButtonItem.menu = isSending ? nil : buildMoreMenu()
+        moreBarButtonItem.isEnabled = !isSending
     }
 
     private func configureLayout() {
@@ -436,6 +440,29 @@ final class ProjectChatViewController: UIViewController {
             self?.createAndSwitchThread()
         }
         return UIMenu(title: String(localized: "chat.thread.button_title"), children: threadActions + [createAction])
+    }
+
+    private func buildMoreMenu() -> UIMenu {
+        let filesAction = UIAction(
+            title: String(localized: "workspace.panel.files"),
+            image: UIImage(systemName: "folder")
+        ) { [weak self] _ in
+            self?.presentProjectFiles()
+        }
+        let settingsAction = UIAction(
+            title: String(localized: "workspace.panel.settings"),
+            image: UIImage(systemName: "gearshape")
+        ) { [weak self] _ in
+            self?.presentProjectSettings()
+        }
+        let closeAction = UIAction(
+            title: String(localized: "common.action.close"),
+            image: UIImage(systemName: "xmark"),
+            attributes: .destructive
+        ) { [weak self] _ in
+            self?.didTapClose()
+        }
+        return UIMenu(children: [filesAction, settingsAction, closeAction])
     }
 
     private func currentModelMenuTitle() -> String {
@@ -1110,7 +1137,7 @@ final class ProjectChatViewController: UIViewController {
         if isSending {
             sendButton.isEnabled = true
             var configuration = sendButton.configuration ?? UIButton.Configuration.filled()
-            configuration.image = UIImage(systemName: "xmark.circle.fill")
+            configuration.image = UIImage(systemName: "stop")
             configuration.baseBackgroundColor = .systemRed
             configuration.baseForegroundColor = .white
             configuration.cornerStyle = .capsule
@@ -1119,7 +1146,7 @@ final class ProjectChatViewController: UIViewController {
         } else {
             sendButton.isEnabled = hasText && hasProvider && hasThread
             var configuration = sendButton.configuration ?? UIButton.Configuration.filled()
-            configuration.image = UIImage(systemName: "paperplane.fill")
+            configuration.image = UIImage(systemName: "arrow.up")
             configuration.baseBackgroundColor = .systemBlue
             configuration.baseForegroundColor = .white
             configuration.cornerStyle = .capsule
@@ -1237,6 +1264,36 @@ final class ProjectChatViewController: UIViewController {
             selectedModelID = selectedModel
         }
         refreshNavigationItems()
+    }
+
+    private func presentProjectFiles() {
+        let controller = ProjectFileBrowserViewController(projectName: projectName, rootURL: projectURL)
+        let navigationController = UINavigationController(rootViewController: controller)
+        navigationController.modalPresentationStyle = .pageSheet
+        if let sheet = navigationController.sheetPresentationController {
+            sheet.detents = [.medium(), .large()]
+            sheet.prefersGrabberVisible = true
+        }
+        present(navigationController, animated: true)
+    }
+
+    private func presentProjectSettings() {
+        let settingsController = ProjectSettingsViewController(
+            projectURL: projectURL,
+            projectName: projectName
+        )
+        settingsController.onProjectUpdated = { [weak self] updatedProjectName in
+            guard let self else { return }
+            self.projectName = updatedProjectName
+            self.onProjectFilesUpdated?()
+        }
+        let navigationController = UINavigationController(rootViewController: settingsController)
+        navigationController.modalPresentationStyle = .pageSheet
+        if let sheet = navigationController.sheetPresentationController {
+            sheet.detents = [.medium(), .large()]
+            sheet.prefersGrabberVisible = true
+        }
+        present(navigationController, animated: true)
     }
 
     @objc
@@ -1568,14 +1625,16 @@ private final class ChatMessageCell: UITableViewCell {
 
     private func metadataText(for message: ProjectChatViewController.Message, now: Date) -> String {
         let timestamp = Self.timestampFormatter.string(from: message.createdAt)
-        let endAt = message.finishedAt ?? now
-        let duration = max(0, endAt.timeIntervalSince(message.startedAt))
-        let durationString = formatDuration(duration)
         var parts: [String] = [timestamp]
-        if message.isProgress {
-            parts.append(message.finishedAt == nil ? "执行中" : "已完成")
+        if message.role != .user {
+            let endAt = message.finishedAt ?? now
+            let duration = max(0, endAt.timeIntervalSince(message.startedAt))
+            let durationString = formatDuration(duration)
+            if message.isProgress {
+                parts.append(message.finishedAt == nil ? "执行中" : "已完成")
+            }
+            parts.append(durationString)
         }
-        parts.append(durationString)
         if let usageText = tokenUsageText(for: message.requestTokenUsage), message.finishedAt != nil {
             parts.append(usageText)
         }
@@ -1666,14 +1725,9 @@ final class ProjectModelConfigurationViewController: UITableViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        title = String(localized: "chat.menu.model")
+        refreshNavigationTitle()
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "ProjectModelConfigCell")
         tableView.register(SettingsToggleCell.self, forCellReuseIdentifier: SettingsToggleCell.reuseIdentifier)
-        navigationItem.rightBarButtonItem = UIBarButtonItem(
-            barButtonSystemItem: .done,
-            target: self,
-            action: #selector(didTapDone)
-        )
         reloadUsageData()
     }
 
@@ -1749,7 +1803,7 @@ final class ProjectModelConfigurationViewController: UITableViewController {
             let provider = providers[indexPath.row]
             var configuration = cell.defaultContentConfiguration()
             configuration.text = providerTitle(for: provider)
-            configuration.secondaryText = formattedTokenCount(providerTokenUsage(for: provider.providerID))
+            configuration.secondaryText = providerSubtitle(for: provider)
             configuration.secondaryTextProperties.color = .secondaryLabel
             cell.contentConfiguration = configuration
             cell.accessoryType = provider.providerID == state.selectedProviderID ? .checkmark : .none
@@ -1767,7 +1821,7 @@ final class ProjectModelConfigurationViewController: UITableViewController {
             let modelID = modelIDs[indexPath.row]
             var configuration = cell.defaultContentConfiguration()
             configuration.text = modelID
-            configuration.secondaryText = formattedTokenCount(
+            configuration.secondaryText = usedTokenCountText(
                 modelTokenUsage(
                     providerID: selectedProvider.providerID,
                     modelID: modelID
@@ -1915,11 +1969,6 @@ final class ProjectModelConfigurationViewController: UITableViewController {
         }
     }
 
-    @objc
-    private func didTapDone() {
-        dismiss(animated: true)
-    }
-
     private func selectedProviderCredential() -> ProjectChatService.ProviderCredential? {
         if let credential = providers.first(where: { $0.providerID == state.selectedProviderID }) {
             return credential
@@ -2037,6 +2086,21 @@ final class ProjectModelConfigurationViewController: UITableViewController {
         usageByProviderModel[providerModelUsageKey(providerID: providerID, modelID: modelID)] ?? 0
     }
 
+    private func providerSubtitle(for provider: ProjectChatService.ProviderCredential) -> String {
+        let providerKindName = provider.providerKind.displayName
+        let usageText = usedTokenCountText(providerTokenUsage(for: provider.providerID))
+        return String(
+            format: String(localized: "providers.usage.detail.section.model_format"),
+            providerKindName,
+            usageText
+        )
+    }
+
+    private func usedTokenCountText(_ value: Int64) -> String {
+        let tokenCountText = formattedTokenCount(value)
+        return String(format: String(localized: "providers.usage.used_tokens_format"), tokenCountText)
+    }
+
     private func formattedTokenCount(_ value: Int64) -> String {
         let number = NSNumber(value: value)
         let formatted = numberFormatter.string(from: number) ?? "\(value)"
@@ -2044,7 +2108,16 @@ final class ProjectModelConfigurationViewController: UITableViewController {
     }
 
     private func notifySelectionChanged() {
+        refreshNavigationTitle()
         onSelectionStateChanged?(state)
+    }
+
+    private func refreshNavigationTitle() {
+        guard let provider = selectedProviderCredential() else {
+            title = String(localized: "chat.menu.model")
+            return
+        }
+        title = providerTitle(for: provider) + "-" + selectedModelID(for: provider)
     }
 }
 

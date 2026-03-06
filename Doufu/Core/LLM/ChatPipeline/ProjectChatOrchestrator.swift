@@ -132,29 +132,40 @@ final class ProjectChatOrchestrator {
         )
 
         if executionRoute.mode == .singlePass {
-            let result = try await sendAndApplySinglePass(
-                userMessage: trimmedMessage,
-                historyItems: historyItems,
-                fileCandidates: fileCandidates,
-                projectURL: projectURL,
-                credential: credential,
-                modelID: modelID,
-                requestMemory: requestMemory,
-                threadContext: threadContext,
-                reasoningEffort: requestReasoningEffort,
-                projectUsageIdentifier: projectUsageIdentifier,
-                executionOptions: executionOptions,
-                onStreamedText: onStreamedText,
-                onProgress: onProgress,
-                usageAccumulator: usageAccumulator
-            )
-            return ProjectChatService.ResultPayload(
-                assistantMessage: result.assistantMessage,
-                changedPaths: result.changedPaths,
-                updatedMemory: result.updatedMemory,
-                threadMemoryUpdate: result.threadMemoryUpdate,
-                requestTokenUsage: usageAccumulator.usage
-            )
+            do {
+                let result = try await sendAndApplySinglePass(
+                    userMessage: trimmedMessage,
+                    historyItems: historyItems,
+                    fileCandidates: fileCandidates,
+                    projectURL: projectURL,
+                    credential: credential,
+                    modelID: modelID,
+                    requestMemory: requestMemory,
+                    threadContext: threadContext,
+                    reasoningEffort: requestReasoningEffort,
+                    projectUsageIdentifier: projectUsageIdentifier,
+                    executionOptions: executionOptions,
+                    onStreamedText: onStreamedText,
+                    onProgress: onProgress,
+                    usageAccumulator: usageAccumulator
+                )
+                return ProjectChatService.ResultPayload(
+                    assistantMessage: result.assistantMessage,
+                    changedPaths: result.changedPaths,
+                    updatedMemory: result.updatedMemory,
+                    threadMemoryUpdate: result.threadMemoryUpdate,
+                    requestTokenUsage: usageAccumulator.usage
+                )
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                guard isPatchPayloadFailure(error) else {
+                    throw error
+                }
+                if let onProgress {
+                    await onProgress("单次路径补丁解析失败，自动切换多任务拆分执行...")
+                }
+            }
         }
 
         if let onProgress {
@@ -227,7 +238,7 @@ final class ProjectChatOrchestrator {
                     await onProgress("任务 \(stepNumber)/\(totalSteps)「\(task.title)」：正在生成改动...")
                 }
 
-                let responseText = try await requestPatchResponseStreaming(
+                let patch = try await requestPatchPayloadWithRetry(
                     userMessage: taskRequestText,
                     historyItems: historyItems,
                     memory: currentMemory,
@@ -239,9 +250,9 @@ final class ProjectChatOrchestrator {
                     projectUsageIdentifier: projectUsageIdentifier,
                     executionOptions: executionOptions,
                     onStreamedText: onStreamedText,
+                    onProgress: onProgress,
                     usageAccumulator: usageAccumulator
                 )
-                let patch = try parsePatchPayload(from: responseText)
                 if let normalizedThreadMemoryUpdate = normalizedThreadMemoryUpdate(from: patch) {
                     latestThreadMemoryUpdate = normalizedThreadMemoryUpdate
                 }
@@ -285,6 +296,21 @@ final class ProjectChatOrchestrator {
                     remainingTasks: Array(taskPlan.tasks.suffix(totalSteps - stepNumber))
                 )
             } catch {
+                if isPatchPayloadFailure(error), allChangedPaths.isEmpty {
+                    let message = "模型补丁返回过长或格式异常，已自动紧凑重试但仍失败。请将需求拆成更小步骤后重试。"
+                    currentMemory = memoryManager.rollTodoFromRemainingTasks(
+                        memory: currentMemory,
+                        remainingTasks: Array(taskPlan.tasks.suffix(taskPlan.tasks.count - (stepNumber - 1)))
+                    )
+                    return ProjectChatService.ResultPayload(
+                        assistantMessage: message,
+                        changedPaths: [],
+                        updatedMemory: currentMemory,
+                        threadMemoryUpdate: latestThreadMemoryUpdate,
+                        requestTokenUsage: usageAccumulator.usage
+                    )
+                }
+
                 let failureDescription = error.localizedDescription
                 let normalizedFailure = failureDescription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     ? "未知错误"
@@ -354,7 +380,7 @@ final class ProjectChatOrchestrator {
         )
         let filesJSON = try scanner.encodeFileSnapshotsToJSONString(snapshots)
 
-        let responseText = try await requestPatchResponseStreaming(
+        let patch = try await requestPatchPayloadWithRetry(
             userMessage: userMessage,
             historyItems: historyItems,
             memory: requestMemory,
@@ -366,9 +392,9 @@ final class ProjectChatOrchestrator {
             projectUsageIdentifier: projectUsageIdentifier,
             executionOptions: executionOptions,
             onStreamedText: onStreamedText,
+            onProgress: onProgress,
             usageAccumulator: usageAccumulator
         )
-        let patch = try parsePatchPayload(from: responseText)
 
         if let onProgress {
             await onProgress("单次快速路径：正在应用改动...")
@@ -445,7 +471,7 @@ final class ProjectChatOrchestrator {
         return payload
     }
 
-    private func requestPatchResponseStreaming(
+    private func requestPatchPayloadWithRetry(
         userMessage: String,
         historyItems: [ResponseInputMessage],
         memory: ProjectChatService.SessionMemory,
@@ -457,9 +483,77 @@ final class ProjectChatOrchestrator {
         projectUsageIdentifier: String,
         executionOptions: ProjectChatService.ModelExecutionOptions,
         onStreamedText: (@MainActor (String) -> Void)?,
+        onProgress: (@MainActor (String) -> Void)?,
+        usageAccumulator: UsageAccumulator
+    ) async throws -> PatchPayload {
+        let primaryResponseText = try await requestPatchResponseStreaming(
+            userMessage: userMessage,
+            historyItems: historyItems,
+            memory: memory,
+            filesJSON: filesJSON,
+            threadContext: threadContext,
+            credential: credential,
+            modelID: modelID,
+            reasoningEffort: reasoningEffort,
+            projectUsageIdentifier: projectUsageIdentifier,
+            executionOptions: executionOptions,
+            compactMode: false,
+            onStreamedText: onStreamedText,
+            usageAccumulator: usageAccumulator
+        )
+        do {
+            return try parsePatchPayload(from: primaryResponseText)
+        } catch ProjectChatService.ServiceError.invalidPatchJSON {
+            if let onProgress {
+                await onProgress("改动响应过长或格式异常，正在请求紧凑补丁重试...")
+            }
+            let compactResponseText = try await requestPatchResponseStreaming(
+                userMessage: userMessage,
+                historyItems: historyItems,
+                memory: memory,
+                filesJSON: filesJSON,
+                threadContext: threadContext,
+                credential: credential,
+                modelID: modelID,
+                reasoningEffort: reasoningEffort,
+                projectUsageIdentifier: projectUsageIdentifier,
+                executionOptions: executionOptions,
+                compactMode: true,
+                onStreamedText: onStreamedText,
+                usageAccumulator: usageAccumulator
+            )
+            return try parsePatchPayload(from: compactResponseText)
+        }
+    }
+
+    private func isPatchPayloadFailure(_ error: Error) -> Bool {
+        guard let serviceError = error as? ProjectChatService.ServiceError else {
+            return false
+        }
+        switch serviceError {
+        case .invalidPatchJSON, .invalidResponse:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func requestPatchResponseStreaming(
+        userMessage: String,
+        historyItems: [ResponseInputMessage],
+        memory: ProjectChatService.SessionMemory,
+        filesJSON: String,
+        threadContext: ProjectChatService.ThreadContext?,
+        credential: ProjectChatService.ProviderCredential,
+        modelID: String,
+        reasoningEffort: ResponsesReasoning.Effort,
+        projectUsageIdentifier: String,
+        executionOptions: ProjectChatService.ModelExecutionOptions,
+        compactMode: Bool,
+        onStreamedText: (@MainActor (String) -> Void)?,
         usageAccumulator: UsageAccumulator
     ) async throws -> String {
-        let developerInstruction = promptBuilder.patchDeveloperInstruction()
+        let developerInstruction = promptBuilder.patchDeveloperInstruction(compactMode: compactMode)
         let memoryJSON = memoryManager.encodeMemoryToJSONString(memory)
         let userPrompt = promptBuilder.patchUserPrompt(
             memoryJSON: memoryJSON,
@@ -472,7 +566,7 @@ final class ProjectChatOrchestrator {
         inputItems.append(ResponseInputMessage(role: "user", text: userPrompt))
 
         return try await streamingClient.requestModelResponseStreaming(
-            requestLabel: "generate_patch",
+            requestLabel: compactMode ? "generate_patch_compact" : "generate_patch",
             model: modelID,
             developerInstruction: developerInstruction,
             inputItems: inputItems,
@@ -769,21 +863,57 @@ final class ProjectChatOrchestrator {
         memoryUpdate: PatchMemoryUpdate?,
         legacyThreadMemoryUpdate: PatchThreadMemoryUpdate? = nil
     ) -> ProjectChatService.ThreadMemoryUpdate? {
-        let modernContent = memoryUpdate?.threadContentMarkdown?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !modernContent.isEmpty {
-            let nextVersionSummary = normalizedTaskItem(
-                memoryUpdate?.threadNextVersionSummary,
+        if let memoryUpdate {
+            let objective = normalizedTaskItem(
+                memoryUpdate.resolvedObjective,
+                maxCharacters: configuration.maxMemoryObjectiveCharacters
+            )
+            let constraints = normalizedThreadMemoryItems(
+                memoryUpdate.resolvedConstraints,
+                limit: configuration.maxMemoryConstraintItems,
+                maxCharacters: configuration.maxMemoryItemCharacters
+            )
+            let todoItems = normalizedThreadMemoryItems(
+                memoryUpdate.resolvedTodoItems,
+                limit: configuration.maxMemoryTodoItems,
+                maxCharacters: configuration.maxMemoryItemCharacters
+            )
+            let notes = normalizedThreadMemoryItems(
+                memoryUpdate.resolvedNotes,
+                limit: configuration.maxMemoryTodoItems,
                 maxCharacters: configuration.maxHistorySummaryCharacters
             )
-            let nextVersionContentMarkdown = memoryUpdate?.threadNextVersionContentMarkdown?
+
+            let delta: ProjectChatService.ThreadMemoryUpdate.MemoryDelta?
+            if objective != nil || !constraints.isEmpty || !todoItems.isEmpty || !notes.isEmpty {
+                delta = .init(
+                    objective: objective,
+                    constraints: constraints,
+                    todoItems: todoItems,
+                    notes: notes
+                )
+            } else {
+                delta = nil
+            }
+
+            let modernContent = memoryUpdate.threadContentMarkdown?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            return ProjectChatService.ThreadMemoryUpdate(
-                contentMarkdown: modernContent,
-                shouldRollOver: memoryUpdate?.threadShouldRollOver ?? false,
-                nextVersionSummary: nextVersionSummary,
-                nextVersionContentMarkdown: nextVersionContentMarkdown
+            let nextVersionSummary = normalizedTaskItem(
+                memoryUpdate.threadNextVersionSummary,
+                maxCharacters: configuration.maxHistorySummaryCharacters
             )
+            let nextVersionContentMarkdown = memoryUpdate.threadNextVersionContentMarkdown?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+
+            if delta != nil || !(modernContent ?? "").isEmpty || memoryUpdate.threadShouldRollOver || nextVersionSummary != nil {
+                return ProjectChatService.ThreadMemoryUpdate(
+                    memoryDelta: delta,
+                    contentMarkdown: modernContent,
+                    shouldRollOver: memoryUpdate.threadShouldRollOver,
+                    nextVersionSummary: nextVersionSummary,
+                    nextVersionContentMarkdown: nextVersionContentMarkdown
+                )
+            }
         }
 
         guard let legacyThreadMemoryUpdate else {
@@ -803,6 +933,7 @@ final class ProjectChatOrchestrator {
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
         return ProjectChatService.ThreadMemoryUpdate(
+            memoryDelta: nil,
             contentMarkdown: legacyContent,
             shouldRollOver: legacyThreadMemoryUpdate.shouldRollOver,
             nextVersionSummary: nextVersionSummary,
@@ -847,9 +978,17 @@ final class ProjectChatOrchestrator {
         normalizedCandidates.reserveCapacity(candidates.count * 2)
         for candidate in candidates {
             normalizedCandidates.append(candidate)
-            let escapedMultiline = escapeBareNewlinesInsideJSONStringLiterals(candidate)
-            if escapedMultiline != candidate {
-                normalizedCandidates.append(escapedMultiline)
+            let sanitizedJSONString = sanitizeJSONStringLiterals(candidate)
+            if sanitizedJSONString != candidate {
+                normalizedCandidates.append(sanitizedJSONString)
+            }
+            let structurallyRepaired = repairJSONStructure(candidate)
+            if structurallyRepaired != candidate {
+                normalizedCandidates.append(structurallyRepaired)
+                let repairedAndSanitized = sanitizeJSONStringLiterals(structurallyRepaired)
+                if repairedAndSanitized != structurallyRepaired {
+                    normalizedCandidates.append(repairedAndSanitized)
+                }
             }
         }
 
@@ -867,7 +1006,7 @@ final class ProjectChatOrchestrator {
         }
 
         if let lastError {
-            debugLog("[DoufuCodexChat Debug] decode payload failed type=\(String(describing: T.self)) error=\(lastError.localizedDescription)")
+            debugLog("[DoufuCodexChat Debug] decode payload failed type=\(String(describing: T.self)) error=\(detailedDecodingErrorDescription(lastError))")
         }
         throw invalidError
     }
@@ -891,45 +1030,207 @@ final class ProjectChatOrchestrator {
         return lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private func escapeBareNewlinesInsideJSONStringLiterals(_ text: String) -> String {
+    private func sanitizeJSONStringLiterals(_ text: String) -> String {
+        let scalars = Array(text.unicodeScalars)
         var result = String()
-        result.reserveCapacity(text.count + 64)
+        result.reserveCapacity(text.count + 128)
 
         var isInsideString = false
-        var escapeNext = false
+        var index = 0
 
-        for character in text {
-            if isInsideString {
-                if escapeNext {
-                    result.append(character)
-                    escapeNext = false
-                    continue
-                }
+        while index < scalars.count {
+            let scalar = scalars[index]
 
-                switch character {
-                case "\\":
-                    result.append(character)
-                    escapeNext = true
-                case "\"":
-                    result.append(character)
-                    isInsideString = false
-                case "\n":
-                    result.append("\\n")
-                case "\r":
-                    continue
-                default:
-                    result.append(character)
-                }
-            } else {
-                result.append(character)
-                if character == "\"" {
+            if !isInsideString {
+                result.unicodeScalars.append(scalar)
+                if scalar == "\"" {
                     isInsideString = true
-                    escapeNext = false
+                }
+                index += 1
+                continue
+            }
+
+            if scalar == "\"" {
+                if shouldTreatAsStringTerminator(in: scalars, quoteIndex: index) {
+                    result.unicodeScalars.append(scalar)
+                    isInsideString = false
+                } else {
+                    // Recover from malformed JSON that contains bare quotes inside a string literal.
+                    result += "\\\""
+                }
+                index += 1
+                continue
+            }
+
+            if scalar == "\\" {
+                guard index + 1 < scalars.count else {
+                    result += "\\\\"
+                    index += 1
+                    continue
+                }
+
+                let next = scalars[index + 1]
+                if next == "u" {
+                    if index + 5 < scalars.count {
+                        let unicodeDigits = scalars[(index + 2)...(index + 5)]
+                        let hasValidUnicodeDigits = unicodeDigits.allSatisfy { isHexDigit($0) }
+                        if hasValidUnicodeDigits {
+                            result.unicodeScalars.append("\\")
+                            result.unicodeScalars.append(next)
+                            for digit in unicodeDigits {
+                                result.unicodeScalars.append(digit)
+                            }
+                            index += 6
+                            continue
+                        }
+                    }
+                    result += "\\\\"
+                    index += 1
+                    continue
+                }
+
+                let allowedEscapes: Set<UnicodeScalar> = ["\"", "\\", "/", "b", "f", "n", "r", "t"]
+                if allowedEscapes.contains(next) {
+                    result.unicodeScalars.append("\\")
+                    result.unicodeScalars.append(next)
+                    index += 2
+                    continue
+                }
+
+                result += "\\\\"
+                index += 1
+                continue
+            }
+
+            switch scalar {
+            case "\n":
+                result += "\\n"
+            case "\r":
+                result += "\\r"
+            case "\t":
+                result += "\\t"
+            default:
+                if scalar.value < 0x20 {
+                    result += String(format: "\\u%04X", scalar.value)
+                } else {
+                    result.unicodeScalars.append(scalar)
                 }
             }
+            index += 1
         }
 
         return result
+    }
+
+    private func repairJSONStructure(_ text: String) -> String {
+        let scalars = Array(text.unicodeScalars)
+        var result = String()
+        result.reserveCapacity(text.count + 64)
+
+        var stack: [UnicodeScalar] = []
+        var isInsideString = false
+        var isEscaped = false
+
+        for scalar in scalars {
+            if isInsideString {
+                result.unicodeScalars.append(scalar)
+                if isEscaped {
+                    isEscaped = false
+                    continue
+                }
+                if scalar == "\\" {
+                    isEscaped = true
+                } else if scalar == "\"" {
+                    isInsideString = false
+                }
+                continue
+            }
+
+            if scalar == "\"" {
+                isInsideString = true
+                result.unicodeScalars.append(scalar)
+                continue
+            }
+
+            if scalar == "{" || scalar == "[" {
+                stack.append(scalar)
+                result.unicodeScalars.append(scalar)
+                continue
+            }
+
+            if scalar == "}" || scalar == "]" {
+                let expectedOpen: UnicodeScalar = (scalar == "}") ? "{" : "["
+                while let top = stack.last, top != expectedOpen {
+                    stack.removeLast()
+                    result.unicodeScalars.append(top == "{" ? "}" : "]")
+                }
+                if stack.last == expectedOpen {
+                    stack.removeLast()
+                    result.unicodeScalars.append(scalar)
+                }
+                continue
+            }
+
+            result.unicodeScalars.append(scalar)
+        }
+
+        while let top = stack.popLast() {
+            result.unicodeScalars.append(top == "{" ? "}" : "]")
+        }
+
+        return result
+    }
+
+    private func shouldTreatAsStringTerminator(in scalars: [UnicodeScalar], quoteIndex: Int) -> Bool {
+        var lookahead = quoteIndex + 1
+        while lookahead < scalars.count {
+            let scalar = scalars[lookahead]
+            if CharacterSet.whitespacesAndNewlines.contains(scalar) {
+                lookahead += 1
+                continue
+            }
+            switch scalar {
+            case ",", "}", "]", ":":
+                return true
+            default:
+                return false
+            }
+        }
+        return true
+    }
+
+    private func isHexDigit(_ scalar: UnicodeScalar) -> Bool {
+        switch scalar.value {
+        case 48...57, 65...70, 97...102:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func detailedDecodingErrorDescription(_ error: Error) -> String {
+        if let decodingError = error as? DecodingError {
+            switch decodingError {
+            case let .typeMismatch(type, context):
+                return "typeMismatch(\(type)) at \(codingPathString(context.codingPath)): \(context.debugDescription)"
+            case let .valueNotFound(type, context):
+                return "valueNotFound(\(type)) at \(codingPathString(context.codingPath)): \(context.debugDescription)"
+            case let .keyNotFound(key, context):
+                return "keyNotFound(\(key.stringValue)) at \(codingPathString(context.codingPath)): \(context.debugDescription)"
+            case let .dataCorrupted(context):
+                return "dataCorrupted at \(codingPathString(context.codingPath)): \(context.debugDescription)"
+            @unknown default:
+                return error.localizedDescription
+            }
+        }
+        return error.localizedDescription
+    }
+
+    private func codingPathString(_ codingPath: [CodingKey]) -> String {
+        guard !codingPath.isEmpty else {
+            return "<root>"
+        }
+        return codingPath.map(\.stringValue).joined(separator: ".")
     }
 
     private func mapReasoningEffort(_ effort: ProjectChatService.ReasoningEffort) -> ResponsesReasoning.Effort {
@@ -995,6 +1296,28 @@ final class ProjectChatOrchestrator {
             return normalized
         }
         return String(normalized.prefix(maxCharacters)) + "..."
+    }
+
+    private func normalizedThreadMemoryItems(
+        _ items: [String],
+        limit: Int,
+        maxCharacters: Int
+    ) -> [String] {
+        var output: [String] = []
+        var seen = Set<String>()
+        for item in items {
+            guard let normalized = normalizedTaskItem(item, maxCharacters: maxCharacters) else {
+                continue
+            }
+            guard seen.insert(normalized).inserted else {
+                continue
+            }
+            output.append(normalized)
+            if output.count >= limit {
+                break
+            }
+        }
+        return output
     }
 
     private func debugLog(_ message: @autoclosure () -> String) {

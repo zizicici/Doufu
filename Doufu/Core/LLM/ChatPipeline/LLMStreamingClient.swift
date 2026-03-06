@@ -14,6 +14,15 @@ final class LLMStreamingClient {
     }
 
     private struct AnthropicMessageRequest: Encodable {
+        struct OutputConfig: Encodable {
+            struct Format: Encodable {
+                let type: String
+                let schema: JSONValue
+            }
+
+            let format: Format
+        }
+
         struct Thinking: Encodable {
             let type: String
             let budgetTokens: Int
@@ -39,6 +48,7 @@ final class LLMStreamingClient {
         let messages: [Message]
         let maxTokens: Int
         let thinking: Thinking?
+        let outputConfig: OutputConfig?
 
         private enum CodingKeys: String, CodingKey {
             case model
@@ -46,6 +56,7 @@ final class LLMStreamingClient {
             case messages
             case maxTokens = "max_tokens"
             case thinking
+            case outputConfig = "output_config"
         }
     }
 
@@ -177,6 +188,7 @@ final class LLMStreamingClient {
                 projectUsageIdentifier: projectUsageIdentifier,
                 initialReasoningEffort: initialReasoningEffort,
                 executionOptions: executionOptions,
+                responseFormat: responseFormat,
                 onStreamedText: onStreamedText,
                 onUsage: onUsage
             )
@@ -333,12 +345,15 @@ final class LLMStreamingClient {
         projectUsageIdentifier: String?,
         initialReasoningEffort: ResponsesReasoning.Effort,
         executionOptions: ProjectChatService.ModelExecutionOptions,
+        responseFormat: ResponsesTextFormat?,
         onStreamedText: (@MainActor (String) -> Void)?,
         onUsage: ((Int?, Int?) -> Void)?
     ) async throws -> String {
         let timeoutSeconds = timeoutSeconds(for: initialReasoningEffort)
         let url = credential.baseURL.appendingPathComponent("messages")
         var includeThinking = executionOptions.anthropicThinkingEnabled
+        var includeOutputConfig = responseFormat != nil
+        let structuredOutputConfig = responseFormat.flatMap { anthropicOutputConfig(from: $0) }
 
         while true {
             var request = URLRequest(url: url)
@@ -367,7 +382,8 @@ final class LLMStreamingClient {
                 maxTokens: 8192,
                 thinking: includeThinking
                     ? .init(type: "enabled", budgetTokens: anthropicThinkingBudgetTokens(for: initialReasoningEffort))
-                    : nil
+                    : nil,
+                outputConfig: includeOutputConfig ? structuredOutputConfig : nil
             )
             request.httpBody = try jsonEncoder.encode(requestBody)
 
@@ -379,6 +395,11 @@ final class LLMStreamingClient {
                 if includeThinking, shouldFallbackThinkingConfiguration(responseBodyData: data) {
                     includeThinking = false
                     debugLog("[DoufuCodexChat Debug] anthropic thinking config was rejected; retrying without thinking. stage=\(requestLabel)")
+                    continue
+                }
+                if includeOutputConfig, shouldFallbackAnthropicOutputConfiguration(responseBodyData: data) {
+                    includeOutputConfig = false
+                    debugLog("[DoufuCodexChat Debug] anthropic output_config.format was rejected; retrying without structured output config. stage=\(requestLabel)")
                     continue
                 }
                 logFailedResponseDebug(
@@ -400,7 +421,7 @@ final class LLMStreamingClient {
                 )
                 throw ProjectChatService.ServiceError.invalidResponse
             }
-            let finalResponseText = extractAnthropicText(from: decoded)
+            let finalResponseText = extractAnthropicText(from: decoded, rawResponseData: data)
             guard !finalResponseText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 logFailedResponseDebug(
                     request: request,
@@ -622,6 +643,24 @@ final class LLMStreamingClient {
         return false
     }
 
+    private func shouldFallbackAnthropicOutputConfiguration(responseBodyData: Data) -> Bool {
+        let message = parseErrorMessage(from: responseBodyData)?.lowercased() ?? ""
+        guard !message.isEmpty else {
+            return false
+        }
+
+        let hints = [
+            "output_config",
+            "output format",
+            "output_format",
+            "json_schema",
+            "unsupported",
+            "unknown field",
+            "additional property"
+        ]
+        return hints.contains { message.contains($0) }
+    }
+
     private func normalizedConversationMessages(
         from inputItems: [ResponseInputMessage],
         assistantRole: String,
@@ -650,8 +689,8 @@ final class LLMStreamingClient {
         }
     }
 
-    private func extractAnthropicText(from response: AnthropicMessageResponse) -> String {
-        (response.content ?? [])
+    private func extractAnthropicText(from response: AnthropicMessageResponse, rawResponseData: Data) -> String {
+        let textFromContentBlocks = (response.content ?? [])
             .compactMap { content -> String? in
                 guard (content.type?.lowercased() ?? "text") == "text" else {
                     return nil
@@ -663,6 +702,34 @@ final class LLMStreamingClient {
                 return text
             }
             .joined(separator: "\n")
+        if !textFromContentBlocks.isEmpty {
+            return textFromContentBlocks
+        }
+
+        // Structured outputs may be returned as `output_json` blocks instead of plain text blocks.
+        guard
+            let object = try? JSONSerialization.jsonObject(with: rawResponseData) as? [String: Any],
+            let contentBlocks = object["content"] as? [Any]
+        else {
+            return ""
+        }
+        let extracted = contentBlocks.compactMap { block -> String? in
+            guard let dictionary = block as? [String: Any] else {
+                return nil
+            }
+            if let text = dictionary["text"] as? String {
+                let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                return normalized.isEmpty ? nil : normalized
+            }
+            if let jsonPayload = dictionary["json"] {
+                return serializedJSONObjectString(from: jsonPayload)
+            }
+            if let inputPayload = dictionary["input"] {
+                return serializedJSONObjectString(from: inputPayload)
+            }
+            return nil
+        }
+        return extracted.joined(separator: "\n")
     }
 
     private func extractGeminiText(from response: GeminiGenerateContentResponse) -> String {
@@ -709,6 +776,30 @@ final class LLMStreamingClient {
             }
         }
         return components.url
+    }
+
+    private func anthropicOutputConfig(from format: ResponsesTextFormat) -> AnthropicMessageRequest.OutputConfig? {
+        let normalizedType = format.type.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard normalizedType == "json_schema" else {
+            return nil
+        }
+        return AnthropicMessageRequest.OutputConfig(
+            format: .init(
+                type: normalizedType,
+                schema: format.schema
+            )
+        )
+    }
+
+    private func serializedJSONObjectString(from object: Any) -> String? {
+        guard JSONSerialization.isValidJSONObject(object) else {
+            return nil
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: object) else {
+            return nil
+        }
+        let text = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return text.isEmpty ? nil : text
     }
 
     private func consumeStreamingResponse(

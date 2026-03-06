@@ -80,6 +80,15 @@ struct AppliedThreadMemoryResult {
     let memoryContent: String
 }
 
+private struct ThreadMemorySections {
+    let previousSummary: String
+    let objectiveItems: [String]
+    let constraintItems: [String]
+    let appliedChangeItems: [String]
+    let todoItems: [String]
+    let rollingNotes: [String]
+}
+
 enum ProjectChatThreadStoreError: LocalizedError {
     case threadNotFound
     case invalidThreadData
@@ -249,8 +258,27 @@ final class ProjectChatThreadStore {
 
         let normalizedCurrent = currentContent.trimmingCharacters(in: .whitespacesAndNewlines)
         let finalizedCurrentContent: String
-        if let update, !update.contentMarkdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            finalizedCurrentContent = update.contentMarkdown.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let update {
+            let legacyContent = update.contentMarkdown?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !legacyContent.isEmpty {
+                finalizedCurrentContent = legacyContent
+            } else if let memoryDelta = update.memoryDelta {
+                finalizedCurrentContent = composeThreadMemoryContentFromDelta(
+                    threadID: thread.id,
+                    version: thread.currentVersion,
+                    currentContent: normalizedCurrent,
+                    memoryDelta: memoryDelta,
+                    fallbackUserMessage: fallbackUserMessage,
+                    fallbackAssistantMessage: fallbackAssistantMessage
+                )
+            } else {
+                finalizedCurrentContent = appendFallbackEntry(
+                    to: normalizedCurrent,
+                    userMessage: fallbackUserMessage,
+                    assistantMessage: fallbackAssistantMessage
+                )
+            }
         } else {
             finalizedCurrentContent = appendFallbackEntry(
                 to: normalizedCurrent,
@@ -398,6 +426,206 @@ final class ProjectChatThreadStore {
         return output
     }
 
+    private func composeThreadMemoryContentFromDelta(
+        threadID: String,
+        version: Int,
+        currentContent: String,
+        memoryDelta: ProjectChatService.ThreadMemoryUpdate.MemoryDelta,
+        fallbackUserMessage: String,
+        fallbackAssistantMessage: String
+    ) -> String {
+        let parsed = parseThreadMemorySections(from: currentContent)
+        let updatedAt = ISO8601DateFormatter().string(from: Date())
+        let previousSummary = parsed.previousSummary.isEmpty ? "无" : parsed.previousSummary
+
+        let objectiveItems: [String]
+        if let objective = memoryDelta.objective?.trimmingCharacters(in: .whitespacesAndNewlines), !objective.isEmpty {
+            objectiveItems = [sanitizedSingleLine(objective, maxCharacters: 260)]
+        } else {
+            objectiveItems = parsed.objectiveItems
+        }
+
+        let constraints = mergeUniqueItems(
+            preferred: memoryDelta.constraints,
+            existing: parsed.constraintItems,
+            limit: 16,
+            maxCharacters: 220
+        )
+
+        let todos: [String]
+        if !memoryDelta.todoItems.isEmpty {
+            todos = mergeUniqueItems(
+                preferred: memoryDelta.todoItems,
+                existing: [],
+                limit: 20,
+                maxCharacters: 260
+            )
+        } else {
+            todos = parsed.todoItems
+        }
+
+        let timestamp = "[\(updatedAt)]"
+        var appliedChanges = mergeUniqueItems(
+            preferred: parsed.appliedChangeItems,
+            existing: [],
+            limit: 20,
+            maxCharacters: 280
+        )
+        let appliedChangeLine = "\(timestamp) \(sanitizedSingleLine(fallbackAssistantMessage, maxCharacters: 260))"
+        if !appliedChangeLine.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            appliedChanges = mergeUniqueItems(
+                preferred: [appliedChangeLine],
+                existing: appliedChanges,
+                limit: 20,
+                maxCharacters: 280
+            )
+        }
+
+        var rollingNotes = mergeUniqueItems(
+            preferred: parsed.rollingNotes,
+            existing: [],
+            limit: 32,
+            maxCharacters: 320
+        )
+        let userNote = "\(timestamp) User: \(sanitizedSingleLine(fallbackUserMessage, maxCharacters: 220))"
+        let assistantNote = "\(timestamp) Assistant: \(sanitizedSingleLine(fallbackAssistantMessage, maxCharacters: 220))"
+        let modelNotes = memoryDelta.notes.map { "\(timestamp) \($0)" }
+        rollingNotes = mergeUniqueItems(
+            preferred: [userNote, assistantNote] + modelNotes,
+            existing: rollingNotes,
+            limit: 32,
+            maxCharacters: 320
+        )
+
+        return """
+        # Thread Memory
+
+        - Thread ID: \(threadID)
+        - Version: \(version)
+        - Updated At: \(updatedAt)
+
+        ## Previous Version Summary
+        \(previousSummary)
+
+        ## Current Objective
+        \(markdownBulletList(objectiveItems))
+
+        ## Constraints
+        \(markdownBulletList(constraints))
+
+        ## Applied Changes
+        \(markdownBulletList(appliedChanges))
+
+        ## Open Todos
+        \(markdownBulletList(todos))
+
+        ## Rolling Notes
+        \(markdownBulletList(rollingNotes))
+        """
+    }
+
+    private func parseThreadMemorySections(from markdown: String) -> ThreadMemorySections {
+        let normalized = markdown.replacingOccurrences(of: "\r\n", with: "\n")
+        let lines = normalized.components(separatedBy: "\n")
+        var sectionLines: [String: [String]] = [:]
+        var currentSection: String?
+
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.hasPrefix("## ") {
+                let section = String(trimmed.dropFirst(3)).trimmingCharacters(in: .whitespacesAndNewlines)
+                currentSection = section
+                if sectionLines[section] == nil {
+                    sectionLines[section] = []
+                }
+                continue
+            }
+            guard let currentSection else {
+                continue
+            }
+            sectionLines[currentSection, default: []].append(line)
+        }
+
+        let previousSummary = sectionText(from: sectionLines["Previous Version Summary"] ?? [])
+        let objectiveItems = sectionItems(from: sectionLines["Current Objective"] ?? [])
+        let constraintItems = sectionItems(from: sectionLines["Constraints"] ?? [])
+        let appliedChangeItems = sectionItems(from: sectionLines["Applied Changes"] ?? [])
+        let todoItems = sectionItems(from: sectionLines["Open Todos"] ?? [])
+        let rollingNotes = sectionItems(from: sectionLines["Rolling Notes"] ?? [])
+
+        return ThreadMemorySections(
+            previousSummary: previousSummary.isEmpty ? "无" : previousSummary,
+            objectiveItems: objectiveItems,
+            constraintItems: constraintItems,
+            appliedChangeItems: appliedChangeItems,
+            todoItems: todoItems,
+            rollingNotes: rollingNotes
+        )
+    }
+
+    private func sectionText(from lines: [String]) -> String {
+        lines
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+    }
+
+    private func sectionItems(from lines: [String]) -> [String] {
+        var items: [String] = []
+        for raw in lines {
+            var line = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !line.isEmpty else {
+                continue
+            }
+            if line.hasPrefix("- ") {
+                line = String(line.dropFirst(2))
+            } else if line == "-" {
+                continue
+            }
+            let normalized = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !normalized.isEmpty else {
+                continue
+            }
+            items.append(normalized)
+        }
+        return items
+    }
+
+    private func markdownBulletList(_ items: [String]) -> String {
+        let normalized = items
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !normalized.isEmpty else {
+            return "-"
+        }
+        return normalized.map { "- \($0)" }.joined(separator: "\n")
+    }
+
+    private func mergeUniqueItems(
+        preferred: [String],
+        existing: [String],
+        limit: Int,
+        maxCharacters: Int
+    ) -> [String] {
+        var output: [String] = []
+        var seen = Set<String>()
+        for value in preferred + existing {
+            let normalized = sanitizedSingleLine(value, maxCharacters: maxCharacters)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !normalized.isEmpty else {
+                continue
+            }
+            guard seen.insert(normalized).inserted else {
+                continue
+            }
+            output.append(normalized)
+            if output.count >= limit {
+                break
+            }
+        }
+        return output
+    }
+
     private func summarizeForRollover(markdown: String) -> String {
         let normalized = markdown
             .replacingOccurrences(of: "\r\n", with: "\n")
@@ -430,6 +658,9 @@ final class ProjectChatThreadStore {
         \(previous)
 
         ## Current Objective
+        - 
+
+        ## Constraints
         - 
 
         ## Applied Changes

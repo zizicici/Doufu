@@ -14,8 +14,8 @@ final class PromptBuilder {
         self.configuration = configuration
     }
 
-    func patchDeveloperInstruction() -> String {
-        """
+    func patchDeveloperInstruction(compactMode: Bool = false) -> String {
+        var instruction = """
         你是 Doufu App 内的 Codex 工程助手。你会根据用户需求，直接修改本地网页项目文件。
         默认目标设备是 iPhone 竖屏，必须优先保证移动端体验，并尽量贴近 iOS 原生观感，避免强烈网页感。
         如果项目根目录存在 AGENTS.md，你必须严格遵循其规则，并在规则冲突时以 AGENTS.md 为最高优先级。
@@ -51,28 +51,42 @@ final class PromptBuilder {
             }
           ],
           "memory_update": {
-            "objective": "可选，更新后的目标摘要",
-            "constraints": ["可选，约束列表"],
-            "todo_items": ["可选，后续待办列表"],
-            "thread_content_markdown": "当前 thread_memory 文件应写入的完整 Markdown 内容",
+            "memory_delta": {
+              "objective": "可选，更新后的目标摘要",
+              "constraints": ["可选，约束列表"],
+              "todo_items": ["可选，后续待办列表"],
+              "notes": ["可选，重要记录项"]
+            },
             "thread_should_rollover": false,
-            "thread_next_version_summary": "可选；若 thread_should_rollover 为 true，需提供上一版本简短摘要",
-            "thread_next_version_content_markdown": "可选；若 thread_should_rollover 为 true，建议提供新版本完整 Markdown"
+            "thread_next_version_summary": "可选；若 thread_should_rollover 为 true，需提供上一版本简短摘要"
           }
         }
         规则：
         1) path 必须是相对路径，禁止以 / 开头，禁止 ..。
-        2) 只改与用户需求相关的最小文件集。
-        3) 若仅改大文件中的少量片段，优先使用 search_replace_changes 以减少冗余输出。
-        4) 若无需改动，返回 changes: [] 且 search_replace_changes: []。
-        5) 修改网页时尽量保证可直接运行（html/css/js 一致）。
-        6) memory_update 必须始终有意义：总结本轮用户意图、已执行改动、未完成事项。
-        7) 若你判断 thread_memory 过长难以维护，可将 thread_should_rollover 设为 true，并提供 thread_next_version_summary。
-        8) 所有 JSON 字符串必须是合法 JSON 转义：
+        2) 只改与用户需求相关的最小文件集，默认优先使用 search_replace_changes。
+        3) 除“新建文件”或“文件很短（<=300行）”外，禁止使用 changes 返回整文件内容。
+        4) 每次最多修改 6 个文件；每个文件最多 12 条 operations。
+        5) 若无需改动，返回 changes: [] 且 search_replace_changes: []。
+        6) 修改网页时尽量保证可直接运行（html/css/js 一致）。
+        7) memory_update 必须始终有意义：总结本轮用户意图、已执行改动、未完成事项。
+        8) 若你判断 thread_memory 过长难以维护，可将 thread_should_rollover 设为 true，并提供 thread_next_version_summary。
+        9) 禁止返回 thread_content_markdown 与 thread_next_version_content_markdown 字段。
+        10) 所有 JSON 字符串必须是合法 JSON 转义：
            - 换行写成 \\n
            - 双引号写成 \\\"
            - 反斜杠写成 \\\\
         """
+        if compactMode {
+            instruction += """
+
+            当前是紧凑重试模式（上一次响应过长或格式异常）：
+            A) 必须将 changes 置为 []，只允许使用 search_replace_changes。
+            B) 只输出必要的最小修改：最多 3 个文件，每个文件最多 6 条 operations。
+            C) memory_update.memory_delta.notes 保持精简，不超过 4 条。
+            D) assistant_message 保持一句话简述，不超过 120 字符。
+            """
+        }
+        return instruction
     }
 
     func patchUserPrompt(
@@ -189,13 +203,14 @@ final class PromptBuilder {
           "reason": "可选，简短理由",
           "assistant_message": "当 mode=direct_answer 时，给用户的最终直接回答",
           "memory_update": {
-            "objective": "可选，更新后的目标摘要",
-            "constraints": ["可选，约束列表"],
-            "todo_items": ["可选，后续待办列表"],
-            "thread_content_markdown": "当前 thread_memory 文件应写入的完整 Markdown 内容",
+            "memory_delta": {
+              "objective": "可选，更新后的目标摘要",
+              "constraints": ["可选，约束列表"],
+              "todo_items": ["可选，后续待办列表"],
+              "notes": ["可选，重要记录项"]
+            },
             "thread_should_rollover": false,
-            "thread_next_version_summary": "可选；若 thread_should_rollover 为 true，需提供上一版本简短摘要",
-            "thread_next_version_content_markdown": "可选；若 thread_should_rollover 为 true，建议提供新版本完整 Markdown"
+            "thread_next_version_summary": "可选；若 thread_should_rollover 为 true，需提供上一版本简短摘要"
           }
         }
         规则：
@@ -204,8 +219,9 @@ final class PromptBuilder {
         3) 若用户明确要求修改代码，且改动集中且低风险时可选 single_pass。
         4) 若用户明确要求修改代码，且请求复杂、跨多文件或需分阶段稳定推进时优先 multi_task。
         5) 当 mode=direct_answer 时，assistant_message 必须是可以直接展示给用户的最终回答，不需要再走后续步骤。
-        6) 当 mode=direct_answer 时，memory_update 必须包含 thread_content_markdown 与 thread_should_rollover。
-        7) 所有 JSON 字符串必须是合法 JSON 转义：
+        6) 当 mode=direct_answer 时，memory_update 至少应包含 memory_delta 或 thread_should_rollover。
+        7) 禁止返回 thread_content_markdown 与 thread_next_version_content_markdown 字段。
+        8) 所有 JSON 字符串必须是合法 JSON 转义：
            - 换行写成 \\n
            - 双引号写成 \\\"
            - 反斜杠写成 \\\\
@@ -236,20 +252,22 @@ final class PromptBuilder {
         {
           "assistant_message": "给用户的直接回答",
           "memory_update": {
-            "objective": "可选，更新后的目标摘要",
-            "constraints": ["可选，约束列表"],
-            "todo_items": ["可选，后续待办列表"],
-            "thread_content_markdown": "当前 thread_memory 文件应写入的完整 Markdown 内容",
+            "memory_delta": {
+              "objective": "可选，更新后的目标摘要",
+              "constraints": ["可选，约束列表"],
+              "todo_items": ["可选，后续待办列表"],
+              "notes": ["可选，重要记录项"]
+            },
             "thread_should_rollover": false,
-            "thread_next_version_summary": "可选；若 thread_should_rollover 为 true，需提供上一版本简短摘要",
-            "thread_next_version_content_markdown": "可选；若 thread_should_rollover 为 true，建议提供新版本完整 Markdown"
+            "thread_next_version_summary": "可选；若 thread_should_rollover 为 true，需提供上一版本简短摘要"
           }
         }
         规则：
         1) 直接回答用户问题，不要输出文件修改建议列表。
         2) assistant_message 要简洁、可执行、可理解。
-        3) memory_update 必须包含 thread_content_markdown 与 thread_should_rollover。
-        4) 所有 JSON 字符串必须是合法 JSON 转义：
+        3) memory_update 至少应包含 memory_delta 或 thread_should_rollover。
+        4) 禁止返回 thread_content_markdown 与 thread_next_version_content_markdown 字段。
+        5) 所有 JSON 字符串必须是合法 JSON 转义：
            - 换行写成 \\n
            - 双引号写成 \\\"
            - 反斜杠写成 \\\\
@@ -279,14 +297,24 @@ final class PromptBuilder {
             schema: .object([
                 "type": .string("object"),
                 "properties": .object([
-                    "assistant_message": .object(["type": .string("string")]),
+                    "assistant_message": .object([
+                        "type": .string("string"),
+                        "maxLength": .integer(500)
+                    ]),
                     "changes": .object([
                         "type": .string("array"),
+                        "maxItems": .integer(6),
                         "items": .object([
                             "type": .string("object"),
                             "properties": .object([
-                                "path": .object(["type": .string("string")]),
-                                "content": .object(["type": .string("string")])
+                                "path": .object([
+                                    "type": .string("string"),
+                                    "maxLength": .integer(512)
+                                ]),
+                                "content": .object([
+                                    "type": .string("string"),
+                                    "maxLength": .integer(12_000)
+                                ])
                             ]),
                             "required": .array([.string("path"), .string("content")]),
                             "additionalProperties": .bool(false)
@@ -294,17 +322,28 @@ final class PromptBuilder {
                     ]),
                     "search_replace_changes": .object([
                         "type": .string("array"),
+                        "maxItems": .integer(6),
                         "items": .object([
                             "type": .string("object"),
                             "properties": .object([
-                                "path": .object(["type": .string("string")]),
+                                "path": .object([
+                                    "type": .string("string"),
+                                    "maxLength": .integer(512)
+                                ]),
                                 "operations": .object([
                                     "type": .string("array"),
+                                    "maxItems": .integer(12),
                                     "items": .object([
                                         "type": .string("object"),
                                         "properties": .object([
-                                            "search": .object(["type": .string("string")]),
-                                            "replace": .object(["type": .string("string")]),
+                                            "search": .object([
+                                                "type": .string("string"),
+                                                "maxLength": .integer(10_000)
+                                            ]),
+                                            "replace": .object([
+                                                "type": .string("string"),
+                                                "maxLength": .integer(10_000)
+                                            ]),
                                             "replace_all": .object(["type": .string("boolean")]),
                                             "ignore_case": .object(["type": .string("boolean")])
                                         ]),
@@ -442,21 +481,46 @@ final class PromptBuilder {
         .object([
             "type": .string("object"),
             "properties": .object([
-                "objective": .object(["type": .string("string")]),
-                "constraints": .object([
-                    "type": .string("array"),
-                    "items": .object(["type": .string("string")])
+                "memory_delta": .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "objective": .object([
+                            "type": .string("string"),
+                            "maxLength": .integer(400)
+                        ]),
+                        "constraints": .object([
+                            "type": .string("array"),
+                            "maxItems": .integer(16),
+                            "items": .object([
+                                "type": .string("string"),
+                                "maxLength": .integer(300)
+                            ])
+                        ]),
+                        "todo_items": .object([
+                            "type": .string("array"),
+                            "maxItems": .integer(20),
+                            "items": .object([
+                                "type": .string("string"),
+                                "maxLength": .integer(300)
+                            ])
+                        ]),
+                        "notes": .object([
+                            "type": .string("array"),
+                            "maxItems": .integer(20),
+                            "items": .object([
+                                "type": .string("string"),
+                                "maxLength": .integer(600)
+                            ])
+                        ])
+                    ]),
+                    "additionalProperties": .bool(false)
                 ]),
-                "todo_items": .object([
-                    "type": .string("array"),
-                    "items": .object(["type": .string("string")])
-                ]),
-                "thread_content_markdown": .object(["type": .string("string")]),
                 "thread_should_rollover": .object(["type": .string("boolean")]),
-                "thread_next_version_summary": .object(["type": .string("string")]),
-                "thread_next_version_content_markdown": .object(["type": .string("string")])
+                "thread_next_version_summary": .object([
+                    "type": .string("string"),
+                    "maxLength": .integer(800)
+                ])
             ]),
-            "required": .array([.string("thread_content_markdown"), .string("thread_should_rollover")]),
             "additionalProperties": .bool(false)
         ])
     }

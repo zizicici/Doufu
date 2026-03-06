@@ -94,19 +94,21 @@ final class SessionMemoryManager {
 
         if let modelMemoryUpdate {
             if let objective = normalizedMemoryItem(
-                modelMemoryUpdate.objective,
+                modelMemoryUpdate.resolvedObjective,
                 maxCharacters: configuration.maxMemoryObjectiveCharacters
             ) {
                 memory.objective = objective
             }
-            if let constraints = modelMemoryUpdate.constraints, !constraints.isEmpty {
+            let constraints = modelMemoryUpdate.resolvedConstraints
+            if !constraints.isEmpty {
                 memory.constraints = mergeUniqueItems(
                     constraints,
                     memory.constraints,
                     limit: configuration.maxMemoryConstraintItems
                 )
             }
-            if let todoItems = modelMemoryUpdate.todoItems, !todoItems.isEmpty {
+            let todoItems = modelMemoryUpdate.resolvedTodoItems
+            if !todoItems.isEmpty {
                 memory.todoItems = mergeUniqueItems(
                     todoItems,
                     memory.todoItems,
@@ -401,9 +403,17 @@ final class SessionMemoryManager {
         if path.hasPrefix("/") || path.hasPrefix("~") {
             return false
         }
-        if path.contains("..") {
+
+        let components = path.split(separator: "/", omittingEmptySubsequences: false)
+        guard !components.isEmpty else {
             return false
         }
+        for component in components {
+            if component.isEmpty || component == "." || component == ".." {
+                return false
+            }
+        }
+
         return true
     }
 }

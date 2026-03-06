@@ -84,7 +84,15 @@ final class ProjectChatService {
     }
 
     struct ThreadMemoryUpdate {
-        let contentMarkdown: String
+        struct MemoryDelta {
+            let objective: String?
+            let constraints: [String]
+            let todoItems: [String]
+            let notes: [String]
+        }
+
+        let memoryDelta: MemoryDelta?
+        let contentMarkdown: String?
         let shouldRollOver: Bool
         let nextVersionSummary: String?
         let nextVersionContentMarkdown: String?
