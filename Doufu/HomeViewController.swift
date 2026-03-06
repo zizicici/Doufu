@@ -254,7 +254,7 @@ final class HomeViewController: UIViewController {
 
     private func findPreviewImagePath(in projectURL: URL) -> String? {
         let fileManager = FileManager.default
-        let candidates = ["preview.png", "thumbnail.png", "snapshot.png"]
+        let candidates = ["preview.jpg", "preview.jpeg", "preview.png", "thumbnail.png", "snapshot.png"]
 
         for fileName in candidates {
             let imageURL = projectURL.appendingPathComponent(fileName)

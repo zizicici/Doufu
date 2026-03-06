@@ -635,6 +635,37 @@ final class AppProjectStore {
         - Preserve `manifest.json` and `index.html` as entry structure unless requested.
         """
 
+        let projectMemoryDocument = """
+        # DOUFU.MD
+
+        ## Project Identity
+        - Name: \(name)
+        - Project ID: \(projectID)
+        - Entry: index.html
+        - Created At: \(isoFormatter.string(from: now))
+
+        ## Architecture
+        - Runtime: Static web app (html/css/js) rendered in WKWebView.
+        - Default device target: iPhone portrait.
+        - Key constraints are defined in AGENTS.md.
+
+        ## Core Files
+        - index.html: App shell and semantic structure.
+        - style.css: Visual system and layout behavior.
+        - script.js: Interaction logic and state updates.
+        - manifest.json: Project metadata.
+        - AGENTS.md: Coding/UX constraints for AI edits.
+        - DOUFU.MD: Long-lived project memory and architecture notes.
+
+        ## Product Intent
+        - This project should feel like a mobile-native app, not a desktop webpage.
+        - Prefer simple, maintainable structure over heavy frameworks.
+
+        ## Important Notes
+        - Keep safe-area support and touch ergonomics as first-class requirements.
+        - When introducing new features, update this file with architecture changes.
+        """
+
         let manifestObject: [String: Any] = [
             "projectId": projectID,
             "name": name,
@@ -651,11 +682,13 @@ final class AppProjectStore {
         let scriptURL = projectURL.appendingPathComponent("script.js")
         let manifestURL = projectURL.appendingPathComponent("manifest.json")
         let agentsURL = projectURL.appendingPathComponent("AGENTS.md")
+        let doufuURL = projectURL.appendingPathComponent("DOUFU.MD")
 
         try indexHTML.write(to: indexURL, atomically: true, encoding: .utf8)
         try styleCSS.write(to: styleURL, atomically: true, encoding: .utf8)
         try scriptJS.write(to: scriptURL, atomically: true, encoding: .utf8)
         try projectAgentsInstructions.write(to: agentsURL, atomically: true, encoding: .utf8)
+        try projectMemoryDocument.write(to: doufuURL, atomically: true, encoding: .utf8)
         let manifestData = try JSONSerialization.data(withJSONObject: manifestObject, options: [.prettyPrinted, .sortedKeys])
         try manifestData.write(to: manifestURL, options: .atomic)
     }

@@ -47,9 +47,17 @@ final class LLMStreamingClient {
             request.setValue("Bearer \(credential.bearerToken)", forHTTPHeaderField: "Authorization")
             request.setValue("responses=experimental", forHTTPHeaderField: "OpenAI-Beta")
             request.setValue("codex_cli_rs", forHTTPHeaderField: "originator")
-            let timeoutSeconds = activeRequestBody.reasoning?.effort == .xhigh
-                ? configuration.xhighReasoningTimeoutSeconds
-                : configuration.highReasoningTimeoutSeconds
+            let timeoutSeconds: TimeInterval
+            switch activeRequestBody.reasoning?.effort ?? .high {
+            case .low:
+                timeoutSeconds = configuration.lowReasoningTimeoutSeconds
+            case .medium:
+                timeoutSeconds = configuration.mediumReasoningTimeoutSeconds
+            case .high:
+                timeoutSeconds = configuration.highReasoningTimeoutSeconds
+            case .xhigh:
+                timeoutSeconds = configuration.xhighReasoningTimeoutSeconds
+            }
             request.timeoutInterval = timeoutSeconds
             if let accountID = credential.chatGPTAccountID?.trimmingCharacters(in: .whitespacesAndNewlines), !accountID.isEmpty {
                 request.setValue(accountID, forHTTPHeaderField: "chatgpt-account-id")

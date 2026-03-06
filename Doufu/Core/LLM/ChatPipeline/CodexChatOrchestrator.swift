@@ -38,6 +38,8 @@ final class CodexChatOrchestrator {
         projectURL: URL,
         credential: CodexProjectChatService.ProviderCredential,
         memory: CodexProjectChatService.SessionMemory? = nil,
+        threadContext: CodexProjectChatService.ThreadContext?,
+        reasoningEffort: CodexProjectChatService.ReasoningEffort,
         onStreamedText: (@MainActor (String) -> Void)? = nil,
         onProgress: (@MainActor (String) -> Void)? = nil
     ) async throws -> CodexProjectChatService.ResultPayload {
@@ -50,12 +52,29 @@ final class CodexChatOrchestrator {
             await onProgress("正在扫描项目文件...")
         }
 
-        var fileCandidates = try scanner.collectProjectFileCandidates(from: projectURL)
+        var fileCandidates = try scanner.collectProjectFileCandidates(
+            from: projectURL,
+            activeThreadMemoryPath: threadContext?.memoryFilePath
+        )
         let normalizedHistory = memoryManager.normalizedHistoryTurns(history, excludingLatestUserMessage: trimmedMessage)
         let requestMemory = memoryManager.buildRequestMemory(base: memory, latestUserMessage: trimmedMessage)
         let historyItems = memoryManager.buildHistoryInputMessages(from: normalizedHistory)
+        let requestReasoningEffort = mapReasoningEffort(reasoningEffort)
 
-        if shouldUseSinglePassMode(userMessage: trimmedMessage, fileCandidates: fileCandidates) {
+        if let onProgress {
+            await onProgress("正在决定执行策略...")
+        }
+        let executionRoute = try await resolveExecutionRouteOrFallback(
+            userMessage: trimmedMessage,
+            historyItems: historyItems,
+            memory: requestMemory,
+            fileCandidates: fileCandidates,
+            threadContext: threadContext,
+            credential: credential,
+            reasoningEffort: requestReasoningEffort
+        )
+
+        if executionRoute == .singlePass {
             return try await sendAndApplySinglePass(
                 userMessage: trimmedMessage,
                 historyItems: historyItems,
@@ -63,6 +82,8 @@ final class CodexChatOrchestrator {
                 projectURL: projectURL,
                 credential: credential,
                 requestMemory: requestMemory,
+                threadContext: threadContext,
+                reasoningEffort: requestReasoningEffort,
                 onStreamedText: onStreamedText,
                 onProgress: onProgress
             )
@@ -77,12 +98,15 @@ final class CodexChatOrchestrator {
             historyItems: historyItems,
             memory: requestMemory,
             fileCandidates: fileCandidates,
-            credential: credential
+            threadContext: threadContext,
+            credential: credential,
+            reasoningEffort: requestReasoningEffort
         )
 
         var allChangedPaths: [String] = []
         var currentMemory = requestMemory
         var taskMessages: [String] = []
+        var latestThreadMemoryUpdate: CodexProjectChatService.ThreadMemoryUpdate?
 
         for (index, task) in taskPlan.tasks.enumerated() {
             let stepNumber = index + 1
@@ -104,7 +128,9 @@ final class CodexChatOrchestrator {
                     historyItems: historyItems,
                     memory: currentMemory,
                     fileCandidates: fileCandidates,
-                    credential: credential
+                    threadContext: threadContext,
+                    credential: credential,
+                    reasoningEffort: requestReasoningEffort
                 )
 
                 let snapshots = scanner.buildContextSnapshots(
@@ -123,10 +149,15 @@ final class CodexChatOrchestrator {
                     historyItems: historyItems,
                     memory: currentMemory,
                     filesJSON: filesJSON,
+                    threadContext: threadContext,
                     credential: credential,
+                    reasoningEffort: requestReasoningEffort,
                     onStreamedText: onStreamedText
                 )
                 let patch = try parsePatchPayload(from: responseText)
+                if let normalizedThreadMemoryUpdate = normalizedThreadMemoryUpdate(from: patch) {
+                    latestThreadMemoryUpdate = normalizedThreadMemoryUpdate
+                }
 
                 if let onProgress {
                     await onProgress("正在应用任务 \(stepNumber)/\(totalSteps) 的改动...")
@@ -137,7 +168,10 @@ final class CodexChatOrchestrator {
                     AppProjectStore.shared.touchProjectUpdatedAt(projectURL: projectURL)
                     memoryManager.mergeChangedPaths(changedPaths, into: &allChangedPaths)
                     do {
-                        fileCandidates = try scanner.collectProjectFileCandidates(from: projectURL)
+                        fileCandidates = try scanner.collectProjectFileCandidates(
+                            from: projectURL,
+                            activeThreadMemoryPath: threadContext?.memoryFilePath
+                        )
                     } catch {
                         debugLog("[DoufuCodexChat Debug] file candidate refresh failed, continue with previous snapshot. error=\(error.localizedDescription)")
                     }
@@ -177,7 +211,8 @@ final class CodexChatOrchestrator {
                     return CodexProjectChatService.ResultPayload(
                         assistantMessage: partialSummary,
                         changedPaths: allChangedPaths,
-                        updatedMemory: currentMemory
+                        updatedMemory: currentMemory,
+                        threadMemoryUpdate: latestThreadMemoryUpdate
                     )
                 }
                 throw error
@@ -192,7 +227,8 @@ final class CodexChatOrchestrator {
         return CodexProjectChatService.ResultPayload(
             assistantMessage: finalMessage,
             changedPaths: allChangedPaths,
-            updatedMemory: currentMemory
+            updatedMemory: currentMemory,
+            threadMemoryUpdate: latestThreadMemoryUpdate
         )
     }
 
@@ -203,6 +239,8 @@ final class CodexChatOrchestrator {
         projectURL: URL,
         credential: CodexProjectChatService.ProviderCredential,
         requestMemory: CodexProjectChatService.SessionMemory,
+        threadContext: CodexProjectChatService.ThreadContext?,
+        reasoningEffort: ResponsesReasoning.Effort,
         onStreamedText: (@MainActor (String) -> Void)?,
         onProgress: (@MainActor (String) -> Void)?
     ) async throws -> CodexProjectChatService.ResultPayload {
@@ -223,7 +261,9 @@ final class CodexChatOrchestrator {
             historyItems: historyItems,
             memory: requestMemory,
             filesJSON: filesJSON,
+            threadContext: threadContext,
             credential: credential,
+            reasoningEffort: reasoningEffort,
             onStreamedText: onStreamedText
         )
         let patch = try parsePatchPayload(from: responseText)
@@ -251,8 +291,44 @@ final class CodexChatOrchestrator {
         return CodexProjectChatService.ResultPayload(
             assistantMessage: normalizedMessage,
             changedPaths: changedPaths,
-            updatedMemory: updatedMemory
+            updatedMemory: updatedMemory,
+            threadMemoryUpdate: normalizedThreadMemoryUpdate(from: patch)
         )
+    }
+
+    private func requestExecutionRoute(
+        userMessage: String,
+        historyItems: [ResponseInputMessage],
+        memory: CodexProjectChatService.SessionMemory,
+        fileCandidates: [ProjectFileCandidate],
+        threadContext: CodexProjectChatService.ThreadContext?,
+        credential: CodexProjectChatService.ProviderCredential,
+        reasoningEffort: ResponsesReasoning.Effort
+    ) async throws -> ExecutionRouteMode {
+        let fileCatalogJSON = try scanner.encodeFileCatalogToJSONString(fileCandidates)
+        let developerInstruction = promptBuilder.executionRouteDeveloperInstruction()
+        let memoryJSON = memoryManager.encodeMemoryToJSONString(memory)
+        let userPrompt = promptBuilder.executionRouteUserPrompt(
+            userMessage: userMessage,
+            memoryJSON: memoryJSON,
+            fileCatalogJSON: fileCatalogJSON,
+            threadContext: threadContext
+        )
+
+        var inputItems = historyItems
+        inputItems.append(ResponseInputMessage(role: "user", text: userPrompt))
+        let responseText = try await streamingClient.requestModelResponseStreaming(
+            requestLabel: "route_execution_mode",
+            model: configuration.model,
+            developerInstruction: developerInstruction,
+            inputItems: inputItems,
+            credential: credential,
+            initialReasoningEffort: reasoningEffort,
+            responseFormat: promptBuilder.executionRouteResponseTextFormat(),
+            onStreamedText: nil
+        )
+        let payload = try parseExecutionRoutePayload(from: responseText)
+        return payload.mode
     }
 
     private func requestPatchResponseStreaming(
@@ -260,12 +336,19 @@ final class CodexChatOrchestrator {
         historyItems: [ResponseInputMessage],
         memory: CodexProjectChatService.SessionMemory,
         filesJSON: String,
+        threadContext: CodexProjectChatService.ThreadContext?,
         credential: CodexProjectChatService.ProviderCredential,
+        reasoningEffort: ResponsesReasoning.Effort,
         onStreamedText: (@MainActor (String) -> Void)?
     ) async throws -> String {
         let developerInstruction = promptBuilder.patchDeveloperInstruction()
         let memoryJSON = memoryManager.encodeMemoryToJSONString(memory)
-        let userPrompt = promptBuilder.patchUserPrompt(memoryJSON: memoryJSON, filesJSON: filesJSON, userMessage: userMessage)
+        let userPrompt = promptBuilder.patchUserPrompt(
+            memoryJSON: memoryJSON,
+            filesJSON: filesJSON,
+            userMessage: userMessage,
+            threadContext: threadContext
+        )
 
         var inputItems = historyItems
         inputItems.append(ResponseInputMessage(role: "user", text: userPrompt))
@@ -276,7 +359,7 @@ final class CodexChatOrchestrator {
             developerInstruction: developerInstruction,
             inputItems: inputItems,
             credential: credential,
-            initialReasoningEffort: recommendedReasoningEffort(for: userMessage),
+            initialReasoningEffort: reasoningEffort,
             responseFormat: promptBuilder.patchResponseTextFormat(),
             onStreamedText: onStreamedText
         )
@@ -287,7 +370,9 @@ final class CodexChatOrchestrator {
         historyItems: [ResponseInputMessage],
         memory: CodexProjectChatService.SessionMemory,
         fileCandidates: [ProjectFileCandidate],
-        credential: CodexProjectChatService.ProviderCredential
+        threadContext: CodexProjectChatService.ThreadContext?,
+        credential: CodexProjectChatService.ProviderCredential,
+        reasoningEffort: ResponsesReasoning.Effort
     ) async throws -> [String] {
         let fileCatalogJSON = try scanner.encodeFileCatalogToJSONString(fileCandidates)
         let developerInstruction = promptBuilder.fileSelectionDeveloperInstruction()
@@ -295,7 +380,8 @@ final class CodexChatOrchestrator {
         let userPrompt = promptBuilder.fileSelectionUserPrompt(
             userMessage: userMessage,
             memoryJSON: memoryJSON,
-            fileCatalogJSON: fileCatalogJSON
+            fileCatalogJSON: fileCatalogJSON,
+            threadContext: threadContext
         )
 
         var inputItems = historyItems
@@ -307,7 +393,7 @@ final class CodexChatOrchestrator {
             developerInstruction: developerInstruction,
             inputItems: inputItems,
             credential: credential,
-            initialReasoningEffort: .high,
+            initialReasoningEffort: reasoningEffort,
             responseFormat: promptBuilder.fileSelectionResponseTextFormat(),
             onStreamedText: nil
         )
@@ -320,7 +406,9 @@ final class CodexChatOrchestrator {
         historyItems: [ResponseInputMessage],
         memory: CodexProjectChatService.SessionMemory,
         fileCandidates: [ProjectFileCandidate],
-        credential: CodexProjectChatService.ProviderCredential
+        threadContext: CodexProjectChatService.ThreadContext?,
+        credential: CodexProjectChatService.ProviderCredential,
+        reasoningEffort: ResponsesReasoning.Effort
     ) async throws -> TaskPlan {
         let filePathListJSON = try scanner.encodeFilePathListToJSONString(fileCandidates)
         let developerInstruction = promptBuilder.taskPlanDeveloperInstruction()
@@ -328,7 +416,8 @@ final class CodexChatOrchestrator {
         let userPrompt = promptBuilder.taskPlanUserPrompt(
             userMessage: userMessage,
             memoryJSON: memoryJSON,
-            filePathListJSON: filePathListJSON
+            filePathListJSON: filePathListJSON,
+            threadContext: threadContext
         )
 
         var inputItems = historyItems
@@ -340,7 +429,7 @@ final class CodexChatOrchestrator {
             developerInstruction: developerInstruction,
             inputItems: inputItems,
             credential: credential,
-            initialReasoningEffort: .high,
+            initialReasoningEffort: reasoningEffort,
             responseFormat: promptBuilder.taskPlanResponseTextFormat(),
             onStreamedText: nil
         )
@@ -354,12 +443,41 @@ final class CodexChatOrchestrator {
         return TaskPlan(summary: summary, tasks: sanitizedTasks)
     }
 
+    private func resolveExecutionRouteOrFallback(
+        userMessage: String,
+        historyItems: [ResponseInputMessage],
+        memory: CodexProjectChatService.SessionMemory,
+        fileCandidates: [ProjectFileCandidate],
+        threadContext: CodexProjectChatService.ThreadContext?,
+        credential: CodexProjectChatService.ProviderCredential,
+        reasoningEffort: ResponsesReasoning.Effort
+    ) async throws -> ExecutionRouteMode {
+        do {
+            return try await requestExecutionRoute(
+                userMessage: userMessage,
+                historyItems: historyItems,
+                memory: memory,
+                fileCandidates: fileCandidates,
+                threadContext: threadContext,
+                credential: credential,
+                reasoningEffort: reasoningEffort
+            )
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            debugLog("[DoufuCodexChat Debug] execution route failed, fallback to multi_task. error=\(error.localizedDescription)")
+            return .multiTask
+        }
+    }
+
     private func resolveTaskPlanOrFallback(
         userMessage: String,
         historyItems: [ResponseInputMessage],
         memory: CodexProjectChatService.SessionMemory,
         fileCandidates: [ProjectFileCandidate],
-        credential: CodexProjectChatService.ProviderCredential
+        threadContext: CodexProjectChatService.ThreadContext?,
+        credential: CodexProjectChatService.ProviderCredential,
+        reasoningEffort: ResponsesReasoning.Effort
     ) async throws -> TaskPlan {
         do {
             return try await requestTaskPlan(
@@ -367,7 +485,9 @@ final class CodexChatOrchestrator {
                 historyItems: historyItems,
                 memory: memory,
                 fileCandidates: fileCandidates,
-                credential: credential
+                threadContext: threadContext,
+                credential: credential,
+                reasoningEffort: reasoningEffort
             )
         } catch is CancellationError {
             throw CancellationError()
@@ -412,7 +532,9 @@ final class CodexChatOrchestrator {
         historyItems: [ResponseInputMessage],
         memory: CodexProjectChatService.SessionMemory,
         fileCandidates: [ProjectFileCandidate],
-        credential: CodexProjectChatService.ProviderCredential
+        threadContext: CodexProjectChatService.ThreadContext?,
+        credential: CodexProjectChatService.ProviderCredential,
+        reasoningEffort: ResponsesReasoning.Effort
     ) async throws -> [String] {
         do {
             let selected = try await requestSelectedPaths(
@@ -420,7 +542,9 @@ final class CodexChatOrchestrator {
                 historyItems: historyItems,
                 memory: memory,
                 fileCandidates: fileCandidates,
-                credential: credential
+                threadContext: threadContext,
+                credential: credential,
+                reasoningEffort: reasoningEffort
             )
             if !selected.isEmpty {
                 return selected
@@ -449,6 +573,24 @@ final class CodexChatOrchestrator {
             return try jsonDecoder.decode(PatchPayload.self, from: data)
         } catch {
             throw CodexProjectChatService.ServiceError.invalidPatchJSON
+        }
+    }
+
+    private func parseExecutionRoutePayload(from responseText: String) throws -> ExecutionRoutePayload {
+        let trimmed = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw CodexProjectChatService.ServiceError.invalidResponse
+        }
+
+        let jsonString = extractJSONObject(from: trimmed) ?? trimmed
+        guard let data = jsonString.data(using: .utf8) else {
+            throw CodexProjectChatService.ServiceError.invalidResponse
+        }
+
+        do {
+            return try jsonDecoder.decode(ExecutionRoutePayload.self, from: data)
+        } catch {
+            throw CodexProjectChatService.ServiceError.invalidResponse
         }
     }
 
@@ -488,6 +630,32 @@ final class CodexChatOrchestrator {
         }
     }
 
+    private func normalizedThreadMemoryUpdate(from patch: PatchPayload) -> CodexProjectChatService.ThreadMemoryUpdate? {
+        guard let patchUpdate = patch.threadMemoryUpdate else {
+            return nil
+        }
+
+        let contentMarkdown = patchUpdate.contentMarkdown?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !contentMarkdown.isEmpty else {
+            return nil
+        }
+
+        let nextVersionSummary = normalizedTaskItem(
+            patchUpdate.nextVersionSummary,
+            maxCharacters: configuration.maxHistorySummaryCharacters
+        )
+        let nextVersionContentMarkdown = patchUpdate.nextVersionContentMarkdown?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return CodexProjectChatService.ThreadMemoryUpdate(
+            contentMarkdown: contentMarkdown,
+            shouldRollOver: patchUpdate.shouldRollOver,
+            nextVersionSummary: nextVersionSummary,
+            nextVersionContentMarkdown: nextVersionContentMarkdown
+        )
+    }
+
     private func extractJSONObject(from rawText: String) -> String? {
         guard let firstBrace = rawText.firstIndex(of: "{"), let lastBrace = rawText.lastIndex(of: "}") else {
             return nil
@@ -498,52 +666,17 @@ final class CodexChatOrchestrator {
         return String(rawText[firstBrace ... lastBrace])
     }
 
-    private func recommendedReasoningEffort(for userMessage: String) -> ResponsesReasoning.Effort {
-        let normalizedMessage = userMessage.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalizedMessage.isEmpty else {
+    private func mapReasoningEffort(_ effort: CodexProjectChatService.ReasoningEffort) -> ResponsesReasoning.Effort {
+        switch effort {
+        case .low:
+            return .low
+        case .medium:
+            return .medium
+        case .high:
             return .high
-        }
-
-        let lowered = normalizedMessage.lowercased()
-        let explicitXhighKeywords = [
-            "xhigh", "最高推理", "最强推理", "深度推理", "深度思考", "复杂重构", "大规模重构",
-            "系统级重构", "架构升级", "end-to-end architecture", "large refactor", "complex architecture"
-        ]
-
-        if explicitXhighKeywords.contains(where: { lowered.contains($0) }) {
+        case .xhigh:
             return .xhigh
         }
-        return .high
-    }
-
-    private func shouldUseSinglePassMode(
-        userMessage: String,
-        fileCandidates: [ProjectFileCandidate]
-    ) -> Bool {
-        guard fileCandidates.count <= configuration.singlePassFileThreshold else {
-            return false
-        }
-
-        let normalized = userMessage.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalized.isEmpty else {
-            return true
-        }
-
-        if normalized.count > 160 {
-            return false
-        }
-
-        let lowered = normalized.lowercased()
-        let multiStepHints = [
-            "并且", "同时", "然后", "先", "再", "另外", "分别",
-            "并行", "多步骤", "重构", "架构",
-            "and then", "also", "meanwhile", "refactor", "architecture"
-        ]
-        if multiStepHints.contains(where: { lowered.contains($0) || normalized.contains($0) }) {
-            return false
-        }
-
-        return true
     }
 
     private func createAutoSnapshotIfNeeded(projectURL: URL, changedPaths: [String]) {

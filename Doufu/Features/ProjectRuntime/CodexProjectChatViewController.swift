@@ -14,22 +14,20 @@ final class CodexProjectChatViewController: UIViewController {
 
     private enum LocalError: LocalizedError {
         case noAvailableProvider
+        case noThreadAvailable
 
         var errorDescription: String? {
             switch self {
             case .noAvailableProvider:
                 return "没有可用的 Provider。请先在设置中添加 API Key 或 OAuth Provider。"
+            case .noThreadAvailable:
+                return "没有可用线程，请先创建线程。"
             }
         }
     }
 
-    private struct PersistedSessionMemory: Codable {
-        let memory: CodexProjectChatService.SessionMemory
-        let updatedAt: Date
-    }
-
     fileprivate struct Message: Hashable {
-        enum Role: Hashable {
+        enum Role: String, Hashable {
             case user
             case assistant
             case system
@@ -49,26 +47,49 @@ final class CodexProjectChatViewController: UIViewController {
         let id = UUID()
         let role: Role
         var text: String
+        let createdAt: Date
     }
 
     private let projectName: String
     private let projectURL: URL
     private let chatService = CodexProjectChatService()
     private let providerStore = LLMProviderSettingsStore.shared
+    private let threadStore = ProjectChatThreadStore.shared
 
     private var messages: [Message] = []
     private var providerCredential: CodexProjectChatService.ProviderCredential?
     private var sessionMemory: CodexProjectChatService.SessionMemory?
+    private var threadSessionMemories: [String: CodexProjectChatService.SessionMemory] = [:]
     private var isSending = false
     private var sendTask: Task<Void, Never>?
     private var activeStreamingMessageIndex: Int?
     private var didCancelCurrentRequest = false
-    private let sessionMemoryFileName = ".doufu_chat_session.json"
-    private let persistedDecoder = JSONDecoder()
-    private let persistedEncoder = JSONEncoder()
+    private var threadIndex: ProjectChatThreadIndex?
+    private var currentThread: ProjectChatThreadRecord?
+    private var selectedReasoningEffort: CodexProjectChatService.ReasoningEffort = .high
     private let inputMinHeight: CGFloat = 38
     private let inputMaxHeight: CGFloat = 120
     private var inputHeightConstraint: NSLayoutConstraint?
+
+    private lazy var closeBarButtonItem = UIBarButtonItem(
+        barButtonSystemItem: .close,
+        target: self,
+        action: #selector(didTapClose)
+    )
+
+    private lazy var reasoningBarButtonItem = UIBarButtonItem(
+        title: selectedReasoningEffort.displayName,
+        style: .plain,
+        target: nil,
+        action: nil
+    )
+
+    private lazy var threadBarButtonItem = UIBarButtonItem(
+        title: "Threads",
+        style: .plain,
+        target: nil,
+        action: nil
+    )
 
     private lazy var tableView: UITableView = {
         let tableView = UITableView(frame: .zero, style: .insetGrouped)
@@ -124,9 +145,6 @@ final class CodexProjectChatViewController: UIViewController {
     init(projectName: String, projectURL: URL) {
         self.projectName = projectName
         self.projectURL = projectURL
-        persistedEncoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        persistedEncoder.dateEncodingStrategy = .iso8601
-        persistedDecoder.dateDecodingStrategy = .iso8601
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -141,7 +159,8 @@ final class CodexProjectChatViewController: UIViewController {
         view.backgroundColor = .systemGroupedBackground
         configureNavigation()
         configureLayout()
-        restoreSessionMemoryIfNeeded()
+        ensureProjectMemoryDocumentIfNeeded()
+        restoreThreadStateIfNeeded()
         configureProvider()
         refreshInputPlaceholder()
         refreshSendButton()
@@ -152,12 +171,13 @@ final class CodexProjectChatViewController: UIViewController {
         updateInputTextViewHeight()
     }
 
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        persistCurrentThreadMessages()
+    }
+
     private func configureNavigation() {
-        navigationItem.rightBarButtonItem = UIBarButtonItem(
-            barButtonSystemItem: .close,
-            target: self,
-            action: #selector(didTapClose)
-        )
+        navigationItem.rightBarButtonItems = [closeBarButtonItem, reasoningBarButtonItem]
         refreshNavigationItems()
     }
 
@@ -170,8 +190,13 @@ final class CodexProjectChatViewController: UIViewController {
                 action: #selector(didTapCancelRequest)
             )
         } else {
-            navigationItem.leftBarButtonItem = nil
+            threadBarButtonItem.title = currentThread?.title ?? "Threads"
+            threadBarButtonItem.menu = buildThreadMenu()
+            navigationItem.leftBarButtonItem = threadBarButtonItem
         }
+        reasoningBarButtonItem.title = selectedReasoningEffort.displayName
+        reasoningBarButtonItem.menu = buildReasoningMenu()
+        reasoningBarButtonItem.isEnabled = !isSending
     }
 
     private func configureLayout() {
@@ -218,18 +243,56 @@ final class CodexProjectChatViewController: UIViewController {
         ])
     }
 
+    private func restoreThreadStateIfNeeded() {
+        do {
+            threadIndex = try threadStore.loadOrCreateIndex(projectURL: projectURL)
+            if let currentThreadID = threadIndex?.currentThreadID {
+                try switchToThread(threadID: currentThreadID, appendStatusMessage: false)
+            }
+        } catch {
+            appendMessage(role: .system, text: error.localizedDescription)
+        }
+    }
+
+    private func ensureProjectMemoryDocumentIfNeeded() {
+        let memoryURL = projectURL.appendingPathComponent("DOUFU.MD")
+        guard !FileManager.default.fileExists(atPath: memoryURL.path) else {
+            return
+        }
+        let fallback = """
+        # DOUFU.MD
+
+        ## Project Overview
+        - Name: \(projectName)
+        - Runtime: Static html/css/js in WKWebView
+
+        ## Notes
+        - Keep this file updated with architecture and important feature notes.
+        - Keep AGENTS.md aligned with current UX constraints.
+        """
+        try? fallback.write(to: memoryURL, atomically: true, encoding: .utf8)
+    }
+
     private func configureProvider() {
         do {
             let credential = try resolveProviderCredential()
             providerCredential = credential
-            appendMessage(
-                role: .system,
-                text: "已连接 Provider「\(credential.providerLabel)」。你现在可以描述要改的网页需求。"
-            )
+            appendProviderStatusIfNeeded()
         } catch {
             providerCredential = nil
             appendMessage(role: .system, text: error.localizedDescription)
         }
+    }
+
+    private func appendProviderStatusIfNeeded() {
+        guard let credential = providerCredential else {
+            return
+        }
+        guard messages.isEmpty else {
+            return
+        }
+        _ = appendMessage(role: .system, text: "已连接 Provider「\(credential.providerLabel)」。你现在可以描述要改的网页需求。")
+        persistCurrentThreadMessages()
     }
 
     private func resolveProviderCredential() throws -> CodexProjectChatService.ProviderCredential {
@@ -256,6 +319,146 @@ final class CodexProjectChatViewController: UIViewController {
         }
 
         throw LocalError.noAvailableProvider
+    }
+
+    private func buildThreadMenu() -> UIMenu {
+        let threadActions: [UIAction]
+        if let index = threadIndex, !index.threads.isEmpty {
+            threadActions = index.threads
+                .sorted { lhs, rhs in
+                    if lhs.updatedAt == rhs.updatedAt {
+                        return lhs.createdAt > rhs.createdAt
+                    }
+                    return lhs.updatedAt > rhs.updatedAt
+                }
+                .map { thread in
+                    UIAction(
+                        title: thread.title,
+                        state: thread.id == currentThread?.id ? .on : .off
+                    ) { [weak self] _ in
+                        self?.handleSwitchThread(threadID: thread.id)
+                    }
+                }
+        } else {
+            threadActions = [
+                UIAction(title: "暂无线程", attributes: .disabled) { _ in }
+            ]
+        }
+
+        let createAction = UIAction(title: "新建线程", image: UIImage(systemName: "plus")) { [weak self] _ in
+            self?.createAndSwitchThread()
+        }
+        return UIMenu(title: "Threads", children: threadActions + [createAction])
+    }
+
+    private func buildReasoningMenu() -> UIMenu {
+        let actions = CodexProjectChatService.ReasoningEffort.allCases.map { effort in
+            UIAction(
+                title: effort.displayName,
+                state: effort == selectedReasoningEffort ? .on : .off
+            ) { [weak self] _ in
+                self?.selectedReasoningEffort = effort
+                self?.refreshNavigationItems()
+            }
+        }
+        return UIMenu(title: "Reasoning", children: actions)
+    }
+
+    private func handleSwitchThread(threadID: String) {
+        guard !isSending else {
+            return
+        }
+        do {
+            try switchToThread(threadID: threadID, appendStatusMessage: true)
+        } catch {
+            appendMessage(role: .system, text: error.localizedDescription)
+        }
+    }
+
+    private func createAndSwitchThread() {
+        guard !isSending else {
+            return
+        }
+        do {
+            persistCurrentThreadMessages()
+            _ = try threadStore.createThread(projectURL: projectURL, title: nil, makeCurrent: true)
+            threadIndex = try threadStore.loadOrCreateIndex(projectURL: projectURL)
+            guard let currentThreadID = threadIndex?.currentThreadID else {
+                throw LocalError.noThreadAvailable
+            }
+            try switchToThread(threadID: currentThreadID, appendStatusMessage: false)
+            _ = appendMessage(role: .system, text: "已创建并切换到新线程。")
+            persistCurrentThreadMessages()
+            refreshNavigationItems()
+        } catch {
+            appendMessage(role: .system, text: error.localizedDescription)
+        }
+    }
+
+    private func switchToThread(threadID: String, appendStatusMessage: Bool) throws {
+        persistCurrentThreadMessages()
+        if let currentThread {
+            threadSessionMemories[currentThread.id] = sessionMemory
+        }
+
+        let switched = try threadStore.switchCurrentThread(projectURL: projectURL, threadID: threadID)
+        threadIndex = try threadStore.loadOrCreateIndex(projectURL: projectURL)
+        currentThread = switched
+        sessionMemory = threadSessionMemories[switched.id] ?? nil
+
+        let persisted = threadStore.loadMessages(projectURL: projectURL, threadID: switched.id)
+        messages = persisted.compactMap { persistedMessage in
+            let normalizedRole = persistedMessage.role.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard let role = Message.Role(rawValue: normalizedRole) else {
+                return nil
+            }
+            let text = persistedMessage.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else {
+                return nil
+            }
+            return Message(role: role, text: text, createdAt: persistedMessage.createdAt)
+        }
+
+        if appendStatusMessage {
+            _ = appendMessage(role: .system, text: "已切换到线程「\(switched.title)」。")
+        }
+        appendProviderStatusIfNeeded()
+
+        tableView.reloadData()
+        scrollToBottomIfNeeded()
+        refreshNavigationItems()
+    }
+
+    private func buildThreadContext() -> CodexProjectChatService.ThreadContext? {
+        guard let currentThread else {
+            return nil
+        }
+        let memoryFilePath = threadStore.currentMemoryFilePath(for: currentThread)
+        let memoryContent = threadStore.loadThreadMemory(projectURL: projectURL, thread: currentThread)
+        return CodexProjectChatService.ThreadContext(
+            threadID: currentThread.id,
+            version: currentThread.currentVersion,
+            memoryFilePath: memoryFilePath,
+            memoryContent: memoryContent
+        )
+    }
+
+    private func persistCurrentThreadMessages() {
+        guard let threadID = currentThread?.id else {
+            return
+        }
+        let persisted = messages.compactMap { message -> ProjectChatPersistedMessage? in
+            let text = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else {
+                return nil
+            }
+            return ProjectChatPersistedMessage(
+                role: message.role.rawValue,
+                text: text,
+                createdAt: message.createdAt
+            )
+        }
+        threadStore.saveMessages(projectURL: projectURL, threadID: threadID, messages: persisted)
     }
 
     private func extractChatGPTAccountID(fromJWT token: String) -> String? {
@@ -306,7 +509,7 @@ final class CodexProjectChatViewController: UIViewController {
             return nil
         }
 
-        messages.append(Message(role: role, text: normalizedText))
+        messages.append(Message(role: role, text: normalizedText, createdAt: Date()))
         tableView.reloadData()
         scrollToBottomIfNeeded()
         return messages.count - 1
@@ -378,37 +581,11 @@ final class CodexProjectChatViewController: UIViewController {
         inputTextView.isScrollEnabled = fittingSize.height > inputMaxHeight
     }
 
-    private func sessionMemoryFileURL() -> URL {
-        projectURL.appendingPathComponent(sessionMemoryFileName)
-    }
-
-    private func restoreSessionMemoryIfNeeded() {
-        let fileURL = sessionMemoryFileURL()
-        guard
-            let data = try? Data(contentsOf: fileURL),
-            let persisted = try? persistedDecoder.decode(PersistedSessionMemory.self, from: data)
-        else {
-            return
-        }
-
-        sessionMemory = persisted.memory
-    }
-
-    private func persistSessionMemoryIfNeeded() {
-        guard let sessionMemory else {
-            return
-        }
-        let payload = PersistedSessionMemory(memory: sessionMemory, updatedAt: Date())
-        guard let data = try? persistedEncoder.encode(payload) else {
-            return
-        }
-        try? data.write(to: sessionMemoryFileURL(), options: .atomic)
-    }
-
     private func refreshSendButton() {
         let hasText = !currentInputText().isEmpty
         let hasProvider = providerCredential != nil
-        sendButton.isEnabled = hasText && !isSending && hasProvider
+        let hasThread = currentThread != nil
+        sendButton.isEnabled = hasText && !isSending && hasProvider && hasThread
         inputTextView.isEditable = !isSending
         inputTextView.alpha = isSending ? 0.72 : 1.0
         refreshNavigationItems()
@@ -419,6 +596,7 @@ final class CodexProjectChatViewController: UIViewController {
         if isSending {
             cancelCurrentRequest(showMessage: false)
         }
+        persistCurrentThreadMessages()
         dismiss(animated: true)
     }
 
@@ -438,20 +616,25 @@ final class CodexProjectChatViewController: UIViewController {
             return
         }
         guard let providerCredential else {
-            appendMessage(role: .system, text: LocalError.noAvailableProvider.localizedDescription)
+            _ = appendMessage(role: .system, text: LocalError.noAvailableProvider.localizedDescription)
+            return
+        }
+        guard let currentThread else {
+            _ = appendMessage(role: .system, text: LocalError.noThreadAvailable.localizedDescription)
             return
         }
 
         inputTextView.text = ""
         refreshInputPlaceholder()
         updateInputTextViewHeight()
-        appendMessage(role: .user, text: userInput)
+        _ = appendMessage(role: .user, text: userInput)
         inputTextView.resignFirstResponder()
         let historyTurns = buildHistoryTurns()
         let streamingMessageIndex = appendMessage(role: .assistant, text: "Codex 正在生成...")
         activeStreamingMessageIndex = streamingMessageIndex
         isSending = true
         didCancelCurrentRequest = false
+        persistCurrentThreadMessages()
         refreshSendButton()
 
         sendTask = Task { [weak self] in
@@ -462,15 +645,19 @@ final class CodexProjectChatViewController: UIViewController {
                 didCancelCurrentRequest = false
                 isSending = false
                 refreshSendButton()
+                persistCurrentThreadMessages()
             }
 
             do {
+                let threadContext = buildThreadContext()
                 let result = try await chatService.sendAndApply(
                     userMessage: userInput,
                     history: historyTurns,
                     projectURL: projectURL,
                     credential: providerCredential,
                     memory: sessionMemory,
+                    threadContext: threadContext,
+                    reasoningEffort: selectedReasoningEffort,
                     onStreamedText: nil,
                     onProgress: { [weak self] phaseText in
                         guard let self, let streamingMessageIndex else {
@@ -481,17 +668,38 @@ final class CodexProjectChatViewController: UIViewController {
                 )
 
                 sessionMemory = result.updatedMemory
-                persistSessionMemoryIfNeeded()
+                threadSessionMemories[currentThread.id] = result.updatedMemory
 
                 var assistantText = result.assistantMessage
                 if !result.changedPaths.isEmpty {
                     let changesSummary = result.changedPaths.joined(separator: ", ")
                     assistantText += "\n\n已更新文件：\(changesSummary)"
                 }
+
                 if let streamingMessageIndex {
                     updateMessage(at: streamingMessageIndex, text: assistantText)
                 } else {
-                    appendMessage(role: .assistant, text: assistantText)
+                    _ = appendMessage(role: .assistant, text: assistantText)
+                }
+
+                do {
+                    let applyResult = try threadStore.applyThreadMemoryUpdate(
+                        projectURL: projectURL,
+                        threadID: currentThread.id,
+                        update: result.threadMemoryUpdate,
+                        fallbackUserMessage: userInput,
+                        fallbackAssistantMessage: assistantText
+                    )
+                    self.currentThread = applyResult.updatedThread
+                    if var index = self.threadIndex {
+                        if let threadIndex = index.threads.firstIndex(where: { $0.id == applyResult.updatedThread.id }) {
+                            index.threads[threadIndex] = applyResult.updatedThread
+                            index.currentThreadID = applyResult.updatedThread.id
+                            self.threadIndex = index
+                        }
+                    }
+                } catch {
+                    _ = appendMessage(role: .system, text: "线程记忆更新失败：\(error.localizedDescription)")
                 }
 
                 if !result.changedPaths.isEmpty {
@@ -501,21 +709,21 @@ final class CodexProjectChatViewController: UIViewController {
                 if let streamingMessageIndex {
                     updateMessage(at: streamingMessageIndex, text: "已取消本次请求。")
                 } else {
-                    appendMessage(role: .system, text: "已取消本次请求。")
+                    _ = appendMessage(role: .system, text: "已取消本次请求。")
                 }
             } catch {
                 if didCancelCurrentRequest {
                     if let streamingMessageIndex {
                         updateMessage(at: streamingMessageIndex, text: "已取消本次请求。")
                     } else {
-                        appendMessage(role: .system, text: "已取消本次请求。")
+                        _ = appendMessage(role: .system, text: "已取消本次请求。")
                     }
                     return
                 }
                 if let streamingMessageIndex {
                     removeMessage(at: streamingMessageIndex)
                 }
-                appendMessage(role: .system, text: error.localizedDescription)
+                _ = appendMessage(role: .system, text: error.localizedDescription)
             }
         }
     }
@@ -530,7 +738,7 @@ final class CodexProjectChatViewController: UIViewController {
             if let index = activeStreamingMessageIndex {
                 updateMessage(at: index, text: "已取消本次请求。")
             } else {
-                appendMessage(role: .system, text: "已取消本次请求。")
+                _ = appendMessage(role: .system, text: "已取消本次请求。")
             }
         }
     }

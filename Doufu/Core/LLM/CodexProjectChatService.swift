@@ -41,10 +41,45 @@ final class CodexProjectChatService {
         )
     }
 
+    enum ReasoningEffort: String, CaseIterable {
+        case low
+        case medium
+        case high
+        case xhigh
+
+        var displayName: String {
+            switch self {
+            case .low:
+                return "Low"
+            case .medium:
+                return "Medium"
+            case .high:
+                return "High"
+            case .xhigh:
+                return "XHigh"
+            }
+        }
+    }
+
+    struct ThreadContext {
+        let threadID: String
+        let version: Int
+        let memoryFilePath: String
+        let memoryContent: String
+    }
+
+    struct ThreadMemoryUpdate {
+        let contentMarkdown: String
+        let shouldRollOver: Bool
+        let nextVersionSummary: String?
+        let nextVersionContentMarkdown: String?
+    }
+
     struct ResultPayload {
         let assistantMessage: String
         let changedPaths: [String]
         let updatedMemory: SessionMemory
+        let threadMemoryUpdate: ThreadMemoryUpdate?
     }
 
     enum ServiceError: LocalizedError {
@@ -82,6 +117,8 @@ final class CodexProjectChatService {
         projectURL: URL,
         credential: ProviderCredential,
         memory: SessionMemory? = nil,
+        threadContext: ThreadContext?,
+        reasoningEffort: ReasoningEffort,
         onStreamedText: (@MainActor (String) -> Void)? = nil,
         onProgress: (@MainActor (String) -> Void)? = nil
     ) async throws -> ResultPayload {
@@ -91,6 +128,8 @@ final class CodexProjectChatService {
             projectURL: projectURL,
             credential: credential,
             memory: memory,
+            threadContext: threadContext,
+            reasoningEffort: reasoningEffort,
             onStreamedText: onStreamedText,
             onProgress: onProgress
         )

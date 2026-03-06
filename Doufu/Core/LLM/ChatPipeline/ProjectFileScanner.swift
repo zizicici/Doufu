@@ -16,7 +16,10 @@ final class ProjectFileScanner {
         jsonEncoder.outputFormatting = [.prettyPrinted, .sortedKeys]
     }
 
-    func collectProjectFileCandidates(from projectURL: URL) throws -> [ProjectFileCandidate] {
+    func collectProjectFileCandidates(
+        from projectURL: URL,
+        activeThreadMemoryPath: String? = nil
+    ) throws -> [ProjectFileCandidate] {
         guard let enumerator = FileManager.default.enumerator(
             at: projectURL,
             includingPropertiesForKeys: [.isDirectoryKey],
@@ -35,6 +38,9 @@ final class ProjectFileScanner {
 
             let relativePath = normalizedRelativePath(fileURL: fileURL, rootURL: projectURL)
             guard isSupportedTextFile(relativePath) else {
+                continue
+            }
+            if !shouldIncludeFile(relativePath: relativePath, activeThreadMemoryPath: activeThreadMemoryPath) {
                 continue
             }
 
@@ -79,7 +85,7 @@ final class ProjectFileScanner {
             return []
         }
 
-        let preferredPaths = ["AGENTS.md", "manifest.json", "index.html", "style.css", "script.js"]
+        let preferredPaths = ["AGENTS.md", "DOUFU.MD", "manifest.json", "index.html", "style.css", "script.js"]
         var ordered: [String] = []
         var seen = Set<String>()
         let availablePaths = Set(fileCandidates.map(\.path))
@@ -266,6 +272,51 @@ final class ProjectFileScanner {
         let allowedExtensions: Set<String> = ["html", "css", "js", "json", "txt", "md", "svg"]
         let ext = URL(fileURLWithPath: relativePath).pathExtension.lowercased()
         return allowedExtensions.contains(ext)
+    }
+
+    private func shouldIncludeFile(
+        relativePath: String,
+        activeThreadMemoryPath: String?
+    ) -> Bool {
+        let normalizedPath = relativePath
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\\", with: "/")
+        if normalizedPath.isEmpty {
+            return false
+        }
+
+        if isThreadMemoryFilePath(normalizedPath) {
+            guard
+                let activeThreadMemoryPath,
+                !activeThreadMemoryPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            else {
+                return false
+            }
+            let normalizedActivePath = activeThreadMemoryPath
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: "\\", with: "/")
+            return normalizedPath == normalizedActivePath
+        }
+
+        return true
+    }
+
+    private func isThreadMemoryFilePath(_ relativePath: String) -> Bool {
+        guard relativePath.hasPrefix("thread_memory_"), relativePath.hasSuffix(".md") else {
+            return false
+        }
+        let fileName = URL(fileURLWithPath: relativePath).lastPathComponent
+        guard fileName.hasPrefix("thread_memory_"), fileName.hasSuffix(".md") else {
+            return false
+        }
+        let trimmed = fileName
+            .dropFirst("thread_memory_".count)
+            .dropLast(".md".count)
+        guard let separatorIndex = trimmed.lastIndex(of: "_") else {
+            return false
+        }
+        let versionPart = trimmed[trimmed.index(after: separatorIndex)...]
+        return Int(versionPart) != nil
     }
 
     private func makePreview(from content: String, maxCharacters: Int) -> String {

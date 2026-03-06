@@ -88,6 +88,8 @@ struct DynamicCodingKey: CodingKey {
 
 struct ResponsesReasoning: Encodable {
     enum Effort: String, Encodable {
+        case low
+        case medium
         case high
         case xhigh
     }
@@ -185,6 +187,30 @@ struct TaskPlanPayload: Decodable {
     }
 }
 
+enum ExecutionRouteMode: String {
+    case singlePass = "single_pass"
+    case multiTask = "multi_task"
+}
+
+struct ExecutionRoutePayload: Decodable {
+    let mode: ExecutionRouteMode
+    let reason: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case mode
+        case reason
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let rawMode = (try container.decodeIfPresent(String.self, forKey: .mode) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        mode = ExecutionRouteMode(rawValue: rawMode) ?? .multiTask
+        reason = try container.decodeIfPresent(String.self, forKey: .reason)
+    }
+}
+
 struct MemoryPromptPayload: Encodable {
     let objective: String
     let constraints: [String]
@@ -211,17 +237,41 @@ struct PatchMemoryUpdate: Decodable {
     }
 }
 
+struct PatchThreadMemoryUpdate: Decodable {
+    let contentMarkdown: String?
+    let shouldRollOver: Bool
+    let nextVersionSummary: String?
+    let nextVersionContentMarkdown: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case contentMarkdown = "content_markdown"
+        case shouldRollOver = "should_rollover"
+        case nextVersionSummary = "next_version_summary"
+        case nextVersionContentMarkdown = "next_version_content_markdown"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        contentMarkdown = try container.decodeIfPresent(String.self, forKey: .contentMarkdown)
+        shouldRollOver = try container.decodeIfPresent(Bool.self, forKey: .shouldRollOver) ?? false
+        nextVersionSummary = try container.decodeIfPresent(String.self, forKey: .nextVersionSummary)
+        nextVersionContentMarkdown = try container.decodeIfPresent(String.self, forKey: .nextVersionContentMarkdown)
+    }
+}
+
 struct PatchPayload: Decodable {
     let assistantMessage: String
     let changes: [PatchChange]
     let searchReplaceChanges: [SearchReplaceFileChange]
     let memoryUpdate: PatchMemoryUpdate?
+    let threadMemoryUpdate: PatchThreadMemoryUpdate?
 
     private enum CodingKeys: String, CodingKey {
         case assistantMessage = "assistant_message"
         case changes
         case searchReplaceChanges = "search_replace_changes"
         case memoryUpdate = "memory_update"
+        case threadMemoryUpdate = "thread_memory_update"
     }
 
     init(from decoder: Decoder) throws {
@@ -230,6 +280,7 @@ struct PatchPayload: Decodable {
         changes = try container.decodeIfPresent([PatchChange].self, forKey: .changes) ?? []
         searchReplaceChanges = try container.decodeIfPresent([SearchReplaceFileChange].self, forKey: .searchReplaceChanges) ?? []
         memoryUpdate = try container.decodeIfPresent(PatchMemoryUpdate.self, forKey: .memoryUpdate)
+        threadMemoryUpdate = try container.decodeIfPresent(PatchThreadMemoryUpdate.self, forKey: .threadMemoryUpdate)
     }
 }
 

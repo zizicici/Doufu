@@ -54,6 +54,12 @@ final class PromptBuilder {
             "objective": "可选，更新后的目标摘要",
             "constraints": ["可选，约束列表"],
             "todo_items": ["可选，后续待办列表"]
+          },
+          "thread_memory_update": {
+            "content_markdown": "当前 thread_memory 文件应写入的完整 Markdown 内容",
+            "should_rollover": false,
+            "next_version_summary": "可选；若 should_rollover 为 true，需提供上一版本简短摘要",
+            "next_version_content_markdown": "可选；若 should_rollover 为 true，建议提供新版本完整 Markdown"
           }
         }
         规则：
@@ -62,15 +68,24 @@ final class PromptBuilder {
         3) 若仅改大文件中的少量片段，优先使用 search_replace_changes 以减少冗余输出。
         4) 若无需改动，返回 changes: [] 且 search_replace_changes: []。
         5) 修改网页时尽量保证可直接运行（html/css/js 一致）。
+        6) thread_memory_update 必须始终有意义：总结本轮用户意图、已执行改动、未完成事项。
+        7) 若你判断 thread_memory 过长难以维护，可将 should_rollover 设为 true，并提供 next_version_summary。
         """
     }
 
-    func patchUserPrompt(memoryJSON: String, filesJSON: String, userMessage: String) -> String {
+    func patchUserPrompt(
+        memoryJSON: String,
+        filesJSON: String,
+        userMessage: String,
+        threadContext: CodexProjectChatService.ThreadContext?
+    ) -> String {
         """
         设备上下文：
         - Platform: iPhone
         - Orientation: portrait
         - 要求：移动优先、Safe Area 完整适配、降低网页感、提升原生感
+
+        \(threadContextBlock(threadContext))
 
         会话记忆块（JSON）：
         \(memoryJSON)
@@ -100,8 +115,15 @@ final class PromptBuilder {
         """
     }
 
-    func fileSelectionUserPrompt(userMessage: String, memoryJSON: String, fileCatalogJSON: String) -> String {
+    func fileSelectionUserPrompt(
+        userMessage: String,
+        memoryJSON: String,
+        fileCatalogJSON: String,
+        threadContext: CodexProjectChatService.ThreadContext?
+    ) -> String {
         """
+        \(threadContextBlock(threadContext))
+
         用户请求：
         \(userMessage)
 
@@ -135,8 +157,15 @@ final class PromptBuilder {
         """
     }
 
-    func taskPlanUserPrompt(userMessage: String, memoryJSON: String, filePathListJSON: String) -> String {
+    func taskPlanUserPrompt(
+        userMessage: String,
+        memoryJSON: String,
+        filePathListJSON: String,
+        threadContext: CodexProjectChatService.ThreadContext?
+    ) -> String {
         """
+        \(threadContextBlock(threadContext))
+
         用户请求：
         \(userMessage)
 
@@ -145,6 +174,42 @@ final class PromptBuilder {
 
         项目文件路径列表（JSON）：
         \(filePathListJSON)
+        """
+    }
+
+    func executionRouteDeveloperInstruction() -> String {
+        """
+        你是 Doufu App 的执行策略路由助手。你需要在 single_pass 与 multi_task 之间做选择。
+        你必须严格输出 JSON 对象，不要输出 markdown，不要输出代码块，不要输出额外说明。
+        JSON schema:
+        {
+          "mode": "single_pass 或 multi_task",
+          "reason": "可选，简短理由"
+        }
+        规则：
+        1) mode 只能是 single_pass 或 multi_task。
+        2) 请求简单、改动集中且低风险时可选 single_pass。
+        3) 请求复杂、跨多文件或需分阶段稳定推进时优先 multi_task。
+        """
+    }
+
+    func executionRouteUserPrompt(
+        userMessage: String,
+        memoryJSON: String,
+        fileCatalogJSON: String,
+        threadContext: CodexProjectChatService.ThreadContext?
+    ) -> String {
+        """
+        \(threadContextBlock(threadContext))
+
+        用户请求：
+        \(userMessage)
+
+        会话记忆块（JSON）：
+        \(memoryJSON)
+
+        文件清单（JSON）：
+        \(fileCatalogJSON)
         """
     }
 
@@ -207,9 +272,20 @@ final class PromptBuilder {
                             ])
                         ]),
                         "additionalProperties": .bool(false)
+                    ]),
+                    "thread_memory_update": .object([
+                        "type": .string("object"),
+                        "properties": .object([
+                            "content_markdown": .object(["type": .string("string")]),
+                            "should_rollover": .object(["type": .string("boolean")]),
+                            "next_version_summary": .object(["type": .string("string")]),
+                            "next_version_content_markdown": .object(["type": .string("string")])
+                        ]),
+                        "required": .array([.string("content_markdown"), .string("should_rollover")]),
+                        "additionalProperties": .bool(false)
                     ])
                 ]),
-                "required": .array([.string("assistant_message"), .string("changes")]),
+                "required": .array([.string("assistant_message"), .string("changes"), .string("thread_memory_update")]),
                 "additionalProperties": .bool(false)
             ]),
             strict: true
@@ -262,5 +338,50 @@ final class PromptBuilder {
             ]),
             strict: true
         )
+    }
+
+    func executionRouteResponseTextFormat() -> ResponsesTextFormat {
+        ResponsesTextFormat(
+            type: "json_schema",
+            name: "doufu_execution_route",
+            schema: .object([
+                "type": .string("object"),
+                "properties": .object([
+                    "mode": .object([
+                        "type": .string("string"),
+                        "enum": .array([.string("single_pass"), .string("multi_task")])
+                    ]),
+                    "reason": .object(["type": .string("string")])
+                ]),
+                "required": .array([.string("mode")]),
+                "additionalProperties": .bool(false)
+            ]),
+            strict: true
+        )
+    }
+
+    private func threadContextBlock(_ threadContext: CodexProjectChatService.ThreadContext?) -> String {
+        guard let threadContext else {
+            return "线程上下文：未提供。"
+        }
+
+        let memoryMarkdown = truncatedThreadMemory(threadContext.memoryContent)
+        return """
+        当前线程：
+        - thread_id: \(threadContext.threadID)
+        - memory_file: \(threadContext.memoryFilePath)
+        - memory_version: \(threadContext.version)
+
+        当前线程记忆（Markdown）：
+        \(memoryMarkdown)
+        """
+    }
+
+    private func truncatedThreadMemory(_ rawText: String) -> String {
+        let normalized = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalized.count > configuration.maxThreadMemoryCharactersInPrompt else {
+            return normalized
+        }
+        return String(normalized.prefix(configuration.maxThreadMemoryCharactersInPrompt)) + "\n...(truncated)"
     }
 }

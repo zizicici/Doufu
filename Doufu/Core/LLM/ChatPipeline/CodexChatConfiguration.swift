@@ -38,10 +38,13 @@ struct CodexChatConfiguration {
     let singlePassFileThreshold = 8
     let singlePassContextFileLimit = 8
 
+    let lowReasoningTimeoutSeconds: TimeInterval = 240
+    let mediumReasoningTimeoutSeconds: TimeInterval = 320
     let highReasoningTimeoutSeconds: TimeInterval = 400
     let xhighReasoningTimeoutSeconds: TimeInterval = 600
     let streamCompletionGraceSeconds: TimeInterval = 10
 
+    let maxThreadMemoryCharactersInPrompt = 16_000
     let maxDebugTextCharacters = 1_600
 
     static let `default` = CodexChatConfiguration()
