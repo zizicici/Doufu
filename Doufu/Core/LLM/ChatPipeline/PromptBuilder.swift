@@ -68,6 +68,10 @@ final class PromptBuilder {
         5) 修改网页时尽量保证可直接运行（html/css/js 一致）。
         6) memory_update 必须始终有意义：总结本轮用户意图、已执行改动、未完成事项。
         7) 若你判断 thread_memory 过长难以维护，可将 thread_should_rollover 设为 true，并提供 thread_next_version_summary。
+        8) 所有 JSON 字符串必须是合法 JSON 转义：
+           - 换行写成 \\n
+           - 双引号写成 \\\"
+           - 反斜杠写成 \\\\
         """
     }
 
@@ -182,13 +186,29 @@ final class PromptBuilder {
         JSON schema:
         {
           "mode": "direct_answer 或 single_pass 或 multi_task",
-          "reason": "可选，简短理由"
+          "reason": "可选，简短理由",
+          "assistant_message": "当 mode=direct_answer 时，给用户的最终直接回答",
+          "memory_update": {
+            "objective": "可选，更新后的目标摘要",
+            "constraints": ["可选，约束列表"],
+            "todo_items": ["可选，后续待办列表"],
+            "thread_content_markdown": "当前 thread_memory 文件应写入的完整 Markdown 内容",
+            "thread_should_rollover": false,
+            "thread_next_version_summary": "可选；若 thread_should_rollover 为 true，需提供上一版本简短摘要",
+            "thread_next_version_content_markdown": "可选；若 thread_should_rollover 为 true，建议提供新版本完整 Markdown"
+          }
         }
         规则：
         1) mode 只能是 direct_answer / single_pass / multi_task。
         2) 若用户主要在提问、讨论方案、解释概念或排查思路，且不要求立即改文件，优先 direct_answer。
         3) 若用户明确要求修改代码，且改动集中且低风险时可选 single_pass。
         4) 若用户明确要求修改代码，且请求复杂、跨多文件或需分阶段稳定推进时优先 multi_task。
+        5) 当 mode=direct_answer 时，assistant_message 必须是可以直接展示给用户的最终回答，不需要再走后续步骤。
+        6) 当 mode=direct_answer 时，memory_update 必须包含 thread_content_markdown 与 thread_should_rollover。
+        7) 所有 JSON 字符串必须是合法 JSON 转义：
+           - 换行写成 \\n
+           - 双引号写成 \\\"
+           - 反斜杠写成 \\\\
         """
     }
 
@@ -229,6 +249,10 @@ final class PromptBuilder {
         1) 直接回答用户问题，不要输出文件修改建议列表。
         2) assistant_message 要简洁、可执行、可理解。
         3) memory_update 必须包含 thread_content_markdown 与 thread_should_rollover。
+        4) 所有 JSON 字符串必须是合法 JSON 转义：
+           - 换行写成 \\n
+           - 双引号写成 \\\"
+           - 反斜杠写成 \\\\
         """
     }
 
@@ -378,7 +402,9 @@ final class PromptBuilder {
                         "type": .string("string"),
                         "enum": .array([.string("direct_answer"), .string("single_pass"), .string("multi_task")])
                     ]),
-                    "reason": .object(["type": .string("string")])
+                    "reason": .object(["type": .string("string")]),
+                    "assistant_message": .object(["type": .string("string")]),
+                    "memory_update": memoryUpdateSchema()
                 ]),
                 "required": .array([.string("mode")]),
                 "additionalProperties": .bool(false)

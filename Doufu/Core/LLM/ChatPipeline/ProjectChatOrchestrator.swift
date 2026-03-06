@@ -8,6 +8,28 @@
 import Foundation
 
 final class ProjectChatOrchestrator {
+    private final class UsageAccumulator {
+        private(set) var inputTokens: Int64 = 0
+        private(set) var outputTokens: Int64 = 0
+
+        func record(inputTokens: Int?, outputTokens: Int?) {
+            let normalizedInput = max(0, inputTokens ?? 0)
+            let normalizedOutput = max(0, outputTokens ?? 0)
+            self.inputTokens += Int64(normalizedInput)
+            self.outputTokens += Int64(normalizedOutput)
+        }
+
+        var usage: ProjectChatService.RequestTokenUsage? {
+            guard inputTokens > 0 || outputTokens > 0 else {
+                return nil
+            }
+            return ProjectChatService.RequestTokenUsage(
+                inputTokens: inputTokens,
+                outputTokens: outputTokens
+            )
+        }
+    }
+
     private let configuration: ProjectChatConfiguration
     private let scanner: ProjectFileScanner
     private let memoryManager: SessionMemoryManager
@@ -39,7 +61,7 @@ final class ProjectChatOrchestrator {
         credential: ProjectChatService.ProviderCredential,
         memory: ProjectChatService.SessionMemory? = nil,
         threadContext: ProjectChatService.ThreadContext?,
-        reasoningEffort: ProjectChatService.ReasoningEffort,
+        executionOptions: ProjectChatService.ModelExecutionOptions,
         onStreamedText: (@MainActor (String) -> Void)? = nil,
         onProgress: (@MainActor (String) -> Void)? = nil
     ) async throws -> ProjectChatService.ResultPayload {
@@ -51,11 +73,13 @@ final class ProjectChatOrchestrator {
         let normalizedHistory = memoryManager.normalizedHistoryTurns(history, excludingLatestUserMessage: trimmedMessage)
         let requestMemory = memoryManager.buildRequestMemory(base: memory, latestUserMessage: trimmedMessage)
         let historyItems = memoryManager.buildHistoryInputMessages(from: normalizedHistory)
-        let requestReasoningEffort = mapReasoningEffort(reasoningEffort)
-
+        let requestReasoningEffort = mapReasoningEffort(executionOptions.reasoningEffort)
+        let projectUsageIdentifier = projectURL.standardizedFileURL.path
+        let usageAccumulator = UsageAccumulator()
         if let onProgress {
-            await onProgress("正在决定执行策略...")
+            await onProgress("正在思考...")
         }
+
         let executionRoute = try await resolveExecutionRouteOrFallback(
             userMessage: trimmedMessage,
             historyItems: historyItems,
@@ -63,33 +87,40 @@ final class ProjectChatOrchestrator {
             threadContext: threadContext,
             credential: credential,
             modelID: modelID,
-            reasoningEffort: requestReasoningEffort
+            reasoningEffort: requestReasoningEffort,
+            projectUsageIdentifier: projectUsageIdentifier,
+            executionOptions: executionOptions,
+            usageAccumulator: usageAccumulator
         )
-        if let onProgress {
-            let routeText: String
-            switch executionRoute {
-            case .directAnswer:
-                routeText = "直接回答路径"
-            case .singlePass:
-                routeText = "单次快速路径"
-            case .multiTask:
-                routeText = "多任务路径"
-            }
-            await onProgress("执行策略：\(routeText)")
+        if executionRoute.mode == .directAnswer {
+            let directAnswerText = normalizedTaskItem(
+                executionRoute.assistantMessage,
+                maxCharacters: configuration.maxTaskGoalCharacters * 3
+            ) ?? normalizedTaskItem(
+                executionRoute.reason,
+                maxCharacters: configuration.maxTaskGoalCharacters * 2
+            ) ?? "我已理解。请继续告诉我你的目标。"
+
+            let updatedMemory = memoryManager.buildRolledMemory(
+                current: requestMemory,
+                userMessage: trimmedMessage,
+                assistantMessage: directAnswerText,
+                changedPaths: [],
+                modelMemoryUpdate: executionRoute.memoryUpdate
+            )
+
+            return ProjectChatService.ResultPayload(
+                assistantMessage: directAnswerText,
+                changedPaths: [],
+                updatedMemory: updatedMemory,
+                threadMemoryUpdate: normalizedThreadMemoryUpdate(memoryUpdate: executionRoute.memoryUpdate),
+                requestTokenUsage: usageAccumulator.usage
+            )
         }
 
-        if executionRoute == .directAnswer {
-            return try await sendDirectAnswer(
-                userMessage: trimmedMessage,
-                historyItems: historyItems,
-                requestMemory: requestMemory,
-                threadContext: threadContext,
-                credential: credential,
-                modelID: modelID,
-                reasoningEffort: requestReasoningEffort,
-                onStreamedText: onStreamedText,
-                onProgress: onProgress
-            )
+        if let onProgress {
+            let routeText = executionRoute.mode == .singlePass ? "单次快速路径" : "多任务路径"
+            await onProgress("执行策略：\(routeText)")
         }
 
         if let onProgress {
@@ -100,8 +131,8 @@ final class ProjectChatOrchestrator {
             activeThreadMemoryPath: threadContext?.memoryFilePath
         )
 
-        if executionRoute == .singlePass {
-            return try await sendAndApplySinglePass(
+        if executionRoute.mode == .singlePass {
+            let result = try await sendAndApplySinglePass(
                 userMessage: trimmedMessage,
                 historyItems: historyItems,
                 fileCandidates: fileCandidates,
@@ -111,8 +142,18 @@ final class ProjectChatOrchestrator {
                 requestMemory: requestMemory,
                 threadContext: threadContext,
                 reasoningEffort: requestReasoningEffort,
+                projectUsageIdentifier: projectUsageIdentifier,
+                executionOptions: executionOptions,
                 onStreamedText: onStreamedText,
-                onProgress: onProgress
+                onProgress: onProgress,
+                usageAccumulator: usageAccumulator
+            )
+            return ProjectChatService.ResultPayload(
+                assistantMessage: result.assistantMessage,
+                changedPaths: result.changedPaths,
+                updatedMemory: result.updatedMemory,
+                threadMemoryUpdate: result.threadMemoryUpdate,
+                requestTokenUsage: usageAccumulator.usage
             )
         }
 
@@ -128,7 +169,10 @@ final class ProjectChatOrchestrator {
             threadContext: threadContext,
             credential: credential,
             modelID: modelID,
-            reasoningEffort: requestReasoningEffort
+            reasoningEffort: requestReasoningEffort,
+            projectUsageIdentifier: projectUsageIdentifier,
+            executionOptions: executionOptions,
+            usageAccumulator: usageAccumulator
         )
         if let onProgress {
             let taskLines = taskPlan.tasks.enumerated().map { index, task in
@@ -166,7 +210,10 @@ final class ProjectChatOrchestrator {
                     threadContext: threadContext,
                     credential: credential,
                     modelID: modelID,
-                    reasoningEffort: requestReasoningEffort
+                    reasoningEffort: requestReasoningEffort,
+                    projectUsageIdentifier: projectUsageIdentifier,
+                    executionOptions: executionOptions,
+                    usageAccumulator: usageAccumulator
                 )
 
                 let snapshots = scanner.buildContextSnapshots(
@@ -189,7 +236,10 @@ final class ProjectChatOrchestrator {
                     credential: credential,
                     modelID: modelID,
                     reasoningEffort: requestReasoningEffort,
-                    onStreamedText: onStreamedText
+                    projectUsageIdentifier: projectUsageIdentifier,
+                    executionOptions: executionOptions,
+                    onStreamedText: onStreamedText,
+                    usageAccumulator: usageAccumulator
                 )
                 let patch = try parsePatchPayload(from: responseText)
                 if let normalizedThreadMemoryUpdate = normalizedThreadMemoryUpdate(from: patch) {
@@ -254,7 +304,8 @@ final class ProjectChatOrchestrator {
                         assistantMessage: partialSummary,
                         changedPaths: allChangedPaths,
                         updatedMemory: currentMemory,
-                        threadMemoryUpdate: latestThreadMemoryUpdate
+                        threadMemoryUpdate: latestThreadMemoryUpdate,
+                        requestTokenUsage: usageAccumulator.usage
                     )
                 }
                 throw error
@@ -270,7 +321,8 @@ final class ProjectChatOrchestrator {
             assistantMessage: finalMessage,
             changedPaths: allChangedPaths,
             updatedMemory: currentMemory,
-            threadMemoryUpdate: latestThreadMemoryUpdate
+            threadMemoryUpdate: latestThreadMemoryUpdate,
+            requestTokenUsage: usageAccumulator.usage
         )
     }
 
@@ -284,8 +336,11 @@ final class ProjectChatOrchestrator {
         requestMemory: ProjectChatService.SessionMemory,
         threadContext: ProjectChatService.ThreadContext?,
         reasoningEffort: ResponsesReasoning.Effort,
+        projectUsageIdentifier: String,
+        executionOptions: ProjectChatService.ModelExecutionOptions,
         onStreamedText: (@MainActor (String) -> Void)?,
-        onProgress: (@MainActor (String) -> Void)?
+        onProgress: (@MainActor (String) -> Void)?,
+        usageAccumulator: UsageAccumulator
     ) async throws -> ProjectChatService.ResultPayload {
         if let onProgress {
             await onProgress("单次快速路径：正在生成改动...")
@@ -308,7 +363,10 @@ final class ProjectChatOrchestrator {
             credential: credential,
             modelID: modelID,
             reasoningEffort: reasoningEffort,
-            onStreamedText: onStreamedText
+            projectUsageIdentifier: projectUsageIdentifier,
+            executionOptions: executionOptions,
+            onStreamedText: onStreamedText,
+            usageAccumulator: usageAccumulator
         )
         let patch = try parsePatchPayload(from: responseText)
 
@@ -341,56 +399,8 @@ final class ProjectChatOrchestrator {
             assistantMessage: normalizedMessage,
             changedPaths: changedPaths,
             updatedMemory: updatedMemory,
-            threadMemoryUpdate: normalizedThreadMemoryUpdate(from: patch)
-        )
-    }
-
-    private func sendDirectAnswer(
-        userMessage: String,
-        historyItems: [ResponseInputMessage],
-        requestMemory: ProjectChatService.SessionMemory,
-        threadContext: ProjectChatService.ThreadContext?,
-        credential: ProjectChatService.ProviderCredential,
-        modelID: String,
-        reasoningEffort: ResponsesReasoning.Effort,
-        onStreamedText: (@MainActor (String) -> Void)?,
-        onProgress: (@MainActor (String) -> Void)?
-    ) async throws -> ProjectChatService.ResultPayload {
-        if let onProgress {
-            await onProgress("直接回答路径：正在生成回复...")
-        }
-
-        let responseText = try await requestDirectAnswerResponse(
-            userMessage: userMessage,
-            historyItems: historyItems,
-            memory: requestMemory,
-            threadContext: threadContext,
-            credential: credential,
-            modelID: modelID,
-            reasoningEffort: reasoningEffort,
-            onStreamedText: onStreamedText
-        )
-        let answerPayload = try parseDirectAnswerPayload(from: responseText)
-        let normalizedMessage = normalizedTaskItem(answerPayload.assistantMessage, maxCharacters: configuration.maxTaskGoalCharacters * 3)
-            ?? "我已理解。请继续告诉我你的目标。"
-
-        let updatedMemory = memoryManager.buildRolledMemory(
-            current: requestMemory,
-            userMessage: userMessage,
-            assistantMessage: normalizedMessage,
-            changedPaths: [],
-            modelMemoryUpdate: answerPayload.memoryUpdate
-        )
-
-        if let onProgress {
-            await onProgress("直接回答路径已完成：未修改项目文件。")
-        }
-
-        return ProjectChatService.ResultPayload(
-            assistantMessage: normalizedMessage,
-            changedPaths: [],
-            updatedMemory: updatedMemory,
-            threadMemoryUpdate: normalizedThreadMemoryUpdate(memoryUpdate: answerPayload.memoryUpdate)
+            threadMemoryUpdate: normalizedThreadMemoryUpdate(from: patch),
+            requestTokenUsage: nil
         )
     }
 
@@ -401,8 +411,11 @@ final class ProjectChatOrchestrator {
         threadContext: ProjectChatService.ThreadContext?,
         credential: ProjectChatService.ProviderCredential,
         modelID: String,
-        reasoningEffort: ResponsesReasoning.Effort
-    ) async throws -> ExecutionRouteMode {
+        reasoningEffort: ResponsesReasoning.Effort,
+        projectUsageIdentifier: String,
+        executionOptions: ProjectChatService.ModelExecutionOptions,
+        usageAccumulator: UsageAccumulator
+    ) async throws -> ExecutionRoutePayload {
         let developerInstruction = promptBuilder.executionRouteDeveloperInstruction()
         let memoryJSON = memoryManager.encodeMemoryToJSONString(memory)
         let userPrompt = promptBuilder.executionRouteUserPrompt(
@@ -414,50 +427,22 @@ final class ProjectChatOrchestrator {
         var inputItems = historyItems
         inputItems.append(ResponseInputMessage(role: "user", text: userPrompt))
         let responseText = try await streamingClient.requestModelResponseStreaming(
-            requestLabel: "route_execution_mode",
+            requestLabel: "dispatch_or_answer",
             model: modelID,
             developerInstruction: developerInstruction,
             inputItems: inputItems,
             credential: credential,
+            projectUsageIdentifier: projectUsageIdentifier,
             initialReasoningEffort: reasoningEffort,
+            executionOptions: executionOptions,
             responseFormat: promptBuilder.executionRouteResponseTextFormat(),
-            onStreamedText: nil
+            onStreamedText: nil,
+            onUsage: { inputTokens, outputTokens in
+                usageAccumulator.record(inputTokens: inputTokens, outputTokens: outputTokens)
+            }
         )
         let payload = try parseExecutionRoutePayload(from: responseText)
-        return payload.mode
-    }
-
-    private func requestDirectAnswerResponse(
-        userMessage: String,
-        historyItems: [ResponseInputMessage],
-        memory: ProjectChatService.SessionMemory,
-        threadContext: ProjectChatService.ThreadContext?,
-        credential: ProjectChatService.ProviderCredential,
-        modelID: String,
-        reasoningEffort: ResponsesReasoning.Effort,
-        onStreamedText: (@MainActor (String) -> Void)?
-    ) async throws -> String {
-        let developerInstruction = promptBuilder.directAnswerDeveloperInstruction()
-        let memoryJSON = memoryManager.encodeMemoryToJSONString(memory)
-        let userPrompt = promptBuilder.directAnswerUserPrompt(
-            userMessage: userMessage,
-            memoryJSON: memoryJSON,
-            threadContext: threadContext
-        )
-
-        var inputItems = historyItems
-        inputItems.append(ResponseInputMessage(role: "user", text: userPrompt))
-
-        return try await streamingClient.requestModelResponseStreaming(
-            requestLabel: "direct_answer",
-            model: modelID,
-            developerInstruction: developerInstruction,
-            inputItems: inputItems,
-            credential: credential,
-            initialReasoningEffort: reasoningEffort,
-            responseFormat: promptBuilder.directAnswerResponseTextFormat(),
-            onStreamedText: onStreamedText
-        )
+        return payload
     }
 
     private func requestPatchResponseStreaming(
@@ -469,7 +454,10 @@ final class ProjectChatOrchestrator {
         credential: ProjectChatService.ProviderCredential,
         modelID: String,
         reasoningEffort: ResponsesReasoning.Effort,
-        onStreamedText: (@MainActor (String) -> Void)?
+        projectUsageIdentifier: String,
+        executionOptions: ProjectChatService.ModelExecutionOptions,
+        onStreamedText: (@MainActor (String) -> Void)?,
+        usageAccumulator: UsageAccumulator
     ) async throws -> String {
         let developerInstruction = promptBuilder.patchDeveloperInstruction()
         let memoryJSON = memoryManager.encodeMemoryToJSONString(memory)
@@ -489,9 +477,14 @@ final class ProjectChatOrchestrator {
             developerInstruction: developerInstruction,
             inputItems: inputItems,
             credential: credential,
+            projectUsageIdentifier: projectUsageIdentifier,
             initialReasoningEffort: reasoningEffort,
+            executionOptions: executionOptions,
             responseFormat: promptBuilder.patchResponseTextFormat(),
-            onStreamedText: onStreamedText
+            onStreamedText: onStreamedText,
+            onUsage: { inputTokens, outputTokens in
+                usageAccumulator.record(inputTokens: inputTokens, outputTokens: outputTokens)
+            }
         )
     }
 
@@ -503,7 +496,10 @@ final class ProjectChatOrchestrator {
         threadContext: ProjectChatService.ThreadContext?,
         credential: ProjectChatService.ProviderCredential,
         modelID: String,
-        reasoningEffort: ResponsesReasoning.Effort
+        reasoningEffort: ResponsesReasoning.Effort,
+        projectUsageIdentifier: String,
+        executionOptions: ProjectChatService.ModelExecutionOptions,
+        usageAccumulator: UsageAccumulator
     ) async throws -> [String] {
         let fileCatalogJSON = try scanner.encodeFileCatalogToJSONString(fileCandidates)
         let developerInstruction = promptBuilder.fileSelectionDeveloperInstruction()
@@ -524,9 +520,14 @@ final class ProjectChatOrchestrator {
             developerInstruction: developerInstruction,
             inputItems: inputItems,
             credential: credential,
+            projectUsageIdentifier: projectUsageIdentifier,
             initialReasoningEffort: reasoningEffort,
+            executionOptions: executionOptions,
             responseFormat: promptBuilder.fileSelectionResponseTextFormat(),
-            onStreamedText: nil
+            onStreamedText: nil,
+            onUsage: { inputTokens, outputTokens in
+                usageAccumulator.record(inputTokens: inputTokens, outputTokens: outputTokens)
+            }
         )
         let payload = try parseFileSelectionPayload(from: responseText)
         return scanner.sanitizeSelectedPaths(payload.selectedPaths, fileCandidates: fileCandidates)
@@ -540,7 +541,10 @@ final class ProjectChatOrchestrator {
         threadContext: ProjectChatService.ThreadContext?,
         credential: ProjectChatService.ProviderCredential,
         modelID: String,
-        reasoningEffort: ResponsesReasoning.Effort
+        reasoningEffort: ResponsesReasoning.Effort,
+        projectUsageIdentifier: String,
+        executionOptions: ProjectChatService.ModelExecutionOptions,
+        usageAccumulator: UsageAccumulator
     ) async throws -> TaskPlan {
         let filePathListJSON = try scanner.encodeFilePathListToJSONString(fileCandidates)
         let developerInstruction = promptBuilder.taskPlanDeveloperInstruction()
@@ -561,9 +565,14 @@ final class ProjectChatOrchestrator {
             developerInstruction: developerInstruction,
             inputItems: inputItems,
             credential: credential,
+            projectUsageIdentifier: projectUsageIdentifier,
             initialReasoningEffort: reasoningEffort,
+            executionOptions: executionOptions,
             responseFormat: promptBuilder.taskPlanResponseTextFormat(),
-            onStreamedText: nil
+            onStreamedText: nil,
+            onUsage: { inputTokens, outputTokens in
+                usageAccumulator.record(inputTokens: inputTokens, outputTokens: outputTokens)
+            }
         )
 
         let payload = try parseTaskPlanPayload(from: responseText)
@@ -582,8 +591,11 @@ final class ProjectChatOrchestrator {
         threadContext: ProjectChatService.ThreadContext?,
         credential: ProjectChatService.ProviderCredential,
         modelID: String,
-        reasoningEffort: ResponsesReasoning.Effort
-    ) async throws -> ExecutionRouteMode {
+        reasoningEffort: ResponsesReasoning.Effort,
+        projectUsageIdentifier: String,
+        executionOptions: ProjectChatService.ModelExecutionOptions,
+        usageAccumulator: UsageAccumulator
+    ) async throws -> ExecutionRoutePayload {
         do {
             return try await requestExecutionRoute(
                 userMessage: userMessage,
@@ -592,13 +604,21 @@ final class ProjectChatOrchestrator {
                 threadContext: threadContext,
                 credential: credential,
                 modelID: modelID,
-                reasoningEffort: reasoningEffort
+                reasoningEffort: reasoningEffort,
+                projectUsageIdentifier: projectUsageIdentifier,
+                executionOptions: executionOptions,
+                usageAccumulator: usageAccumulator
             )
         } catch is CancellationError {
             throw CancellationError()
         } catch {
             debugLog("[DoufuCodexChat Debug] execution route failed, fallback to multi_task. error=\(error.localizedDescription)")
-            return .multiTask
+            return ExecutionRoutePayload(
+                mode: .multiTask,
+                reason: nil,
+                assistantMessage: nil,
+                memoryUpdate: nil
+            )
         }
     }
 
@@ -610,7 +630,10 @@ final class ProjectChatOrchestrator {
         threadContext: ProjectChatService.ThreadContext?,
         credential: ProjectChatService.ProviderCredential,
         modelID: String,
-        reasoningEffort: ResponsesReasoning.Effort
+        reasoningEffort: ResponsesReasoning.Effort,
+        projectUsageIdentifier: String,
+        executionOptions: ProjectChatService.ModelExecutionOptions,
+        usageAccumulator: UsageAccumulator
     ) async throws -> TaskPlan {
         do {
             return try await requestTaskPlan(
@@ -621,7 +644,10 @@ final class ProjectChatOrchestrator {
                 threadContext: threadContext,
                 credential: credential,
                 modelID: modelID,
-                reasoningEffort: reasoningEffort
+                reasoningEffort: reasoningEffort,
+                projectUsageIdentifier: projectUsageIdentifier,
+                executionOptions: executionOptions,
+                usageAccumulator: usageAccumulator
             )
         } catch is CancellationError {
             throw CancellationError()
@@ -669,7 +695,10 @@ final class ProjectChatOrchestrator {
         threadContext: ProjectChatService.ThreadContext?,
         credential: ProjectChatService.ProviderCredential,
         modelID: String,
-        reasoningEffort: ResponsesReasoning.Effort
+        reasoningEffort: ResponsesReasoning.Effort,
+        projectUsageIdentifier: String,
+        executionOptions: ProjectChatService.ModelExecutionOptions,
+        usageAccumulator: UsageAccumulator
     ) async throws -> [String] {
         do {
             let selected = try await requestSelectedPaths(
@@ -680,7 +709,10 @@ final class ProjectChatOrchestrator {
                 threadContext: threadContext,
                 credential: credential,
                 modelID: modelID,
-                reasoningEffort: reasoningEffort
+                reasoningEffort: reasoningEffort,
+                projectUsageIdentifier: projectUsageIdentifier,
+                executionOptions: executionOptions,
+                usageAccumulator: usageAccumulator
             )
             if !selected.isEmpty {
                 return selected
@@ -695,93 +727,35 @@ final class ProjectChatOrchestrator {
     }
 
     private func parsePatchPayload(from responseText: String) throws -> PatchPayload {
-        let trimmed = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            throw ProjectChatService.ServiceError.invalidPatchJSON
-        }
-
-        let jsonString = extractJSONObject(from: trimmed) ?? trimmed
-        guard let data = jsonString.data(using: .utf8) else {
-            throw ProjectChatService.ServiceError.invalidPatchJSON
-        }
-
-        do {
-            return try jsonDecoder.decode(PatchPayload.self, from: data)
-        } catch {
-            throw ProjectChatService.ServiceError.invalidPatchJSON
-        }
-    }
-
-    private func parseDirectAnswerPayload(from responseText: String) throws -> DirectAnswerPayload {
-        let trimmed = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            throw ProjectChatService.ServiceError.invalidResponse
-        }
-
-        let jsonString = extractJSONObject(from: trimmed) ?? trimmed
-        guard let data = jsonString.data(using: .utf8) else {
-            throw ProjectChatService.ServiceError.invalidResponse
-        }
-
-        do {
-            return try jsonDecoder.decode(DirectAnswerPayload.self, from: data)
-        } catch {
-            throw ProjectChatService.ServiceError.invalidResponse
-        }
+        try decodePayload(
+            from: responseText,
+            as: PatchPayload.self,
+            invalidError: .invalidPatchJSON
+        )
     }
 
     private func parseExecutionRoutePayload(from responseText: String) throws -> ExecutionRoutePayload {
-        let trimmed = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            throw ProjectChatService.ServiceError.invalidResponse
-        }
-
-        let jsonString = extractJSONObject(from: trimmed) ?? trimmed
-        guard let data = jsonString.data(using: .utf8) else {
-            throw ProjectChatService.ServiceError.invalidResponse
-        }
-
-        do {
-            return try jsonDecoder.decode(ExecutionRoutePayload.self, from: data)
-        } catch {
-            throw ProjectChatService.ServiceError.invalidResponse
-        }
+        try decodePayload(
+            from: responseText,
+            as: ExecutionRoutePayload.self,
+            invalidError: .invalidResponse
+        )
     }
 
     private func parseFileSelectionPayload(from responseText: String) throws -> FileSelectionPayload {
-        let trimmed = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            throw ProjectChatService.ServiceError.invalidResponse
-        }
-
-        let jsonString = extractJSONObject(from: trimmed) ?? trimmed
-        guard let data = jsonString.data(using: .utf8) else {
-            throw ProjectChatService.ServiceError.invalidResponse
-        }
-
-        do {
-            return try jsonDecoder.decode(FileSelectionPayload.self, from: data)
-        } catch {
-            throw ProjectChatService.ServiceError.invalidResponse
-        }
+        try decodePayload(
+            from: responseText,
+            as: FileSelectionPayload.self,
+            invalidError: .invalidResponse
+        )
     }
 
     private func parseTaskPlanPayload(from responseText: String) throws -> TaskPlanPayload {
-        let trimmed = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            throw ProjectChatService.ServiceError.invalidResponse
-        }
-
-        let jsonString = extractJSONObject(from: trimmed) ?? trimmed
-        guard let data = jsonString.data(using: .utf8) else {
-            throw ProjectChatService.ServiceError.invalidResponse
-        }
-
-        do {
-            return try jsonDecoder.decode(TaskPlanPayload.self, from: data)
-        } catch {
-            throw ProjectChatService.ServiceError.invalidResponse
-        }
+        try decodePayload(
+            from: responseText,
+            as: TaskPlanPayload.self,
+            invalidError: .invalidResponse
+        )
     }
 
     private func normalizedThreadMemoryUpdate(from patch: PatchPayload) -> ProjectChatService.ThreadMemoryUpdate? {
@@ -844,6 +818,118 @@ final class ProjectChatOrchestrator {
             return nil
         }
         return String(rawText[firstBrace ... lastBrace])
+    }
+
+    private func decodePayload<T: Decodable>(
+        from responseText: String,
+        as type: T.Type,
+        invalidError: ProjectChatService.ServiceError
+    ) throws -> T {
+        let trimmed = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw invalidError
+        }
+
+        var candidates: [String] = []
+
+        let strippedFence = stripMarkdownCodeFenceIfNeeded(from: trimmed)
+        let extractedFromStripped = extractJSONObject(from: strippedFence) ?? strippedFence
+        candidates.append(extractedFromStripped)
+
+        if strippedFence != trimmed {
+            let extractedFromOriginal = extractJSONObject(from: trimmed) ?? trimmed
+            if extractedFromOriginal != extractedFromStripped {
+                candidates.append(extractedFromOriginal)
+            }
+        }
+
+        var normalizedCandidates: [String] = []
+        normalizedCandidates.reserveCapacity(candidates.count * 2)
+        for candidate in candidates {
+            normalizedCandidates.append(candidate)
+            let escapedMultiline = escapeBareNewlinesInsideJSONStringLiterals(candidate)
+            if escapedMultiline != candidate {
+                normalizedCandidates.append(escapedMultiline)
+            }
+        }
+
+        var lastError: Error?
+        for candidate in normalizedCandidates {
+            guard let data = candidate.data(using: .utf8) else {
+                continue
+            }
+            do {
+                return try jsonDecoder.decode(T.self, from: data)
+            } catch {
+                lastError = error
+                continue
+            }
+        }
+
+        if let lastError {
+            debugLog("[DoufuCodexChat Debug] decode payload failed type=\(String(describing: T.self)) error=\(lastError.localizedDescription)")
+        }
+        throw invalidError
+    }
+
+    private func stripMarkdownCodeFenceIfNeeded(from text: String) -> String {
+        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalized.hasPrefix("```"), normalized.hasSuffix("```") else {
+            return normalized
+        }
+
+        var lines = normalized.components(separatedBy: .newlines)
+        guard let firstLine = lines.first, firstLine.hasPrefix("```") else {
+            return normalized
+        }
+        guard let lastLine = lines.last, lastLine.trimmingCharacters(in: .whitespacesAndNewlines) == "```" else {
+            return normalized
+        }
+
+        lines.removeFirst()
+        lines.removeLast()
+        return lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func escapeBareNewlinesInsideJSONStringLiterals(_ text: String) -> String {
+        var result = String()
+        result.reserveCapacity(text.count + 64)
+
+        var isInsideString = false
+        var escapeNext = false
+
+        for character in text {
+            if isInsideString {
+                if escapeNext {
+                    result.append(character)
+                    escapeNext = false
+                    continue
+                }
+
+                switch character {
+                case "\\":
+                    result.append(character)
+                    escapeNext = true
+                case "\"":
+                    result.append(character)
+                    isInsideString = false
+                case "\n":
+                    result.append("\\n")
+                case "\r":
+                    continue
+                default:
+                    result.append(character)
+                }
+            } else {
+                result.append(character)
+                if character == "\"" {
+                    isInsideString = true
+                    escapeNext = false
+                }
+            }
+        }
+
+        return result
     }
 
     private func mapReasoningEffort(_ effort: ProjectChatService.ReasoningEffort) -> ResponsesReasoning.Effort {

@@ -229,10 +229,26 @@ enum ExecutionRouteMode: String {
 struct ExecutionRoutePayload: Decodable {
     let mode: ExecutionRouteMode
     let reason: String?
+    let assistantMessage: String?
+    let memoryUpdate: PatchMemoryUpdate?
 
     private enum CodingKeys: String, CodingKey {
         case mode
         case reason
+        case assistantMessage = "assistant_message"
+        case memoryUpdate = "memory_update"
+    }
+
+    init(
+        mode: ExecutionRouteMode,
+        reason: String?,
+        assistantMessage: String?,
+        memoryUpdate: PatchMemoryUpdate?
+    ) {
+        self.mode = mode
+        self.reason = reason
+        self.assistantMessage = assistantMessage
+        self.memoryUpdate = memoryUpdate
     }
 
     init(from decoder: Decoder) throws {
@@ -242,6 +258,8 @@ struct ExecutionRoutePayload: Decodable {
             .lowercased()
         mode = ExecutionRouteMode(rawValue: rawMode) ?? .multiTask
         reason = try container.decodeIfPresent(String.self, forKey: .reason)
+        assistantMessage = try container.decodeIfPresent(String.self, forKey: .assistantMessage)
+        memoryUpdate = try container.decodeIfPresent(PatchMemoryUpdate.self, forKey: .memoryUpdate)
     }
 }
 

@@ -64,6 +64,18 @@ final class ProjectChatService {
         }
     }
 
+    struct ModelExecutionOptions {
+        let reasoningEffort: ReasoningEffort
+        let anthropicThinkingEnabled: Bool
+        let geminiThinkingEnabled: Bool
+
+        static let `default` = ModelExecutionOptions(
+            reasoningEffort: .high,
+            anthropicThinkingEnabled: true,
+            geminiThinkingEnabled: true
+        )
+    }
+
     struct ThreadContext {
         let threadID: String
         let version: Int
@@ -78,11 +90,21 @@ final class ProjectChatService {
         let nextVersionContentMarkdown: String?
     }
 
+    struct RequestTokenUsage: Codable, Equatable, Hashable {
+        let inputTokens: Int64
+        let outputTokens: Int64
+
+        var totalTokens: Int64 {
+            inputTokens + outputTokens
+        }
+    }
+
     struct ResultPayload {
         let assistantMessage: String
         let changedPaths: [String]
         let updatedMemory: SessionMemory
         let threadMemoryUpdate: ThreadMemoryUpdate?
+        let requestTokenUsage: RequestTokenUsage?
     }
 
     enum ServiceError: LocalizedError {
@@ -121,7 +143,7 @@ final class ProjectChatService {
         credential: ProviderCredential,
         memory: SessionMemory? = nil,
         threadContext: ThreadContext?,
-        reasoningEffort: ReasoningEffort,
+        executionOptions: ModelExecutionOptions,
         onStreamedText: (@MainActor (String) -> Void)? = nil,
         onProgress: (@MainActor (String) -> Void)? = nil
     ) async throws -> ResultPayload {
@@ -132,7 +154,7 @@ final class ProjectChatService {
             credential: credential,
             memory: memory,
             threadContext: threadContext,
-            reasoningEffort: reasoningEffort,
+            executionOptions: executionOptions,
             onStreamedText: onStreamedText,
             onProgress: onProgress
         )

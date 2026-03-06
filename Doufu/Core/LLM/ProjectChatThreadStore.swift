@@ -27,6 +27,8 @@ struct ProjectChatPersistedMessage: Codable {
     let startedAt: Date?
     let finishedAt: Date?
     let isProgress: Bool
+    let inputTokens: Int64?
+    let outputTokens: Int64?
 
     init(
         role: String,
@@ -34,7 +36,9 @@ struct ProjectChatPersistedMessage: Codable {
         createdAt: Date,
         startedAt: Date? = nil,
         finishedAt: Date? = nil,
-        isProgress: Bool = false
+        isProgress: Bool = false,
+        inputTokens: Int64? = nil,
+        outputTokens: Int64? = nil
     ) {
         self.role = role
         self.text = text
@@ -42,6 +46,8 @@ struct ProjectChatPersistedMessage: Codable {
         self.startedAt = startedAt
         self.finishedAt = finishedAt
         self.isProgress = isProgress
+        self.inputTokens = inputTokens
+        self.outputTokens = outputTokens
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -51,6 +57,8 @@ struct ProjectChatPersistedMessage: Codable {
         case startedAt
         case finishedAt
         case isProgress
+        case inputTokens
+        case outputTokens
     }
 
     init(from decoder: Decoder) throws {
@@ -61,6 +69,8 @@ struct ProjectChatPersistedMessage: Codable {
         startedAt = try container.decodeIfPresent(Date.self, forKey: .startedAt)
         finishedAt = try container.decodeIfPresent(Date.self, forKey: .finishedAt)
         isProgress = try container.decodeIfPresent(Bool.self, forKey: .isProgress) ?? false
+        inputTokens = try container.decodeIfPresent(Int64.self, forKey: .inputTokens)
+        outputTokens = try container.decodeIfPresent(Int64.self, forKey: .outputTokens)
     }
 }
 

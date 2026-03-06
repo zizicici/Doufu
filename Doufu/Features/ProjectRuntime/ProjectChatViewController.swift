@@ -40,6 +40,7 @@ final class ProjectChatViewController: UIViewController {
         let startedAt: Date
         var finishedAt: Date?
         let isProgress: Bool
+        let requestTokenUsage: ProjectChatService.RequestTokenUsage?
     }
 
     private let projectName: String
@@ -49,7 +50,9 @@ final class ProjectChatViewController: UIViewController {
     private let threadStore = ProjectChatThreadStore.shared
 
     private var messages: [Message] = []
+    private var availableProviderCredentials: [ProjectChatService.ProviderCredential] = []
     private var providerCredential: ProjectChatService.ProviderCredential?
+    private var selectedProviderID: String?
     private var sessionMemory: ProjectChatService.SessionMemory?
     private var threadSessionMemories: [String: ProjectChatService.SessionMemory] = [:]
     private var isSending = false
@@ -63,7 +66,10 @@ final class ProjectChatViewController: UIViewController {
     private var threadIndex: ProjectChatThreadIndex?
     private var currentThread: ProjectChatThreadRecord?
     private var selectedModelID: String?
+    private var selectedModelIDByProviderID: [String: String] = [:]
     private var selectedReasoningEffortsByModelID: [String: ProjectChatService.ReasoningEffort] = [:]
+    private var selectedAnthropicThinkingEnabledByModelID: [String: Bool] = [:]
+    private var selectedGeminiThinkingEnabledByModelID: [String: Bool] = [:]
     private let inputMinHeight: CGFloat = 38
     private let inputMaxHeight: CGFloat = 120
     private var inputHeightConstraint: NSLayoutConstraint?
@@ -77,8 +83,15 @@ final class ProjectChatViewController: UIViewController {
     private lazy var modelBarButtonItem = UIBarButtonItem(
         title: "Model",
         style: .plain,
-        target: nil,
-        action: nil
+        target: self,
+        action: #selector(didTapModelSettings)
+    )
+
+    private lazy var usageBarButtonItem = UIBarButtonItem(
+        image: UIImage(systemName: "chart.bar.xaxis"),
+        style: .plain,
+        target: self,
+        action: #selector(didTapProjectUsage)
     )
 
     private lazy var threadBarButtonItem = UIBarButtonItem(
@@ -187,7 +200,7 @@ final class ProjectChatViewController: UIViewController {
     }
 
     private func configureNavigation() {
-        navigationItem.rightBarButtonItems = [closeBarButtonItem, modelBarButtonItem]
+        navigationItem.rightBarButtonItems = [closeBarButtonItem, modelBarButtonItem, usageBarButtonItem]
         refreshNavigationItems()
     }
 
@@ -197,8 +210,9 @@ final class ProjectChatViewController: UIViewController {
         threadBarButtonItem.isEnabled = !isSending
         navigationItem.leftBarButtonItem = threadBarButtonItem
         modelBarButtonItem.title = currentModelMenuButtonTitle()
-        modelBarButtonItem.menu = isSending ? nil : buildModelMenu()
+        modelBarButtonItem.menu = nil
         modelBarButtonItem.isEnabled = !isSending && providerCredential != nil
+        usageBarButtonItem.isEnabled = !isSending
     }
 
     private func configureLayout() {
@@ -277,16 +291,38 @@ final class ProjectChatViewController: UIViewController {
 
     private func configureProvider() {
         do {
-            let credential = try resolveProviderCredential()
+            if
+                let currentProviderID = providerCredential?.providerID,
+                let currentModelID = selectedModelID?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !currentModelID.isEmpty
+            {
+                selectedModelIDByProviderID[currentProviderID] = currentModelID
+            }
+
+            availableProviderCredentials = try resolveProviderCredentials()
+            let preferredProviderID = selectedProviderID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let credential = availableProviderCredentials.first(where: { $0.providerID == preferredProviderID })
+                ?? availableProviderCredentials.first
+            guard let credential else {
+                throw LocalError.noAvailableProvider
+            }
+
             providerCredential = credential
-            let normalizedSelectedModel = selectedModelID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if normalizedSelectedModel.isEmpty {
+            selectedProviderID = credential.providerID
+            let providerSelectedModel = selectedModelIDByProviderID[credential.providerID]?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if providerSelectedModel.isEmpty {
                 selectedModelID = credential.modelID
+                selectedModelIDByProviderID[credential.providerID] = credential.modelID
+            } else {
+                selectedModelID = providerSelectedModel
             }
             appendProviderStatusIfNeeded()
             refreshNavigationItems()
         } catch {
+            availableProviderCredentials = []
             providerCredential = nil
+            selectedProviderID = nil
             appendMessage(role: .system, text: error.localizedDescription)
             refreshNavigationItems()
         }
@@ -309,7 +345,8 @@ final class ProjectChatViewController: UIViewController {
         persistCurrentThreadMessages()
     }
 
-    private func resolveProviderCredential() throws -> ProjectChatService.ProviderCredential {
+    private func resolveProviderCredentials() throws -> [ProjectChatService.ProviderCredential] {
+        var output: [ProjectChatService.ProviderCredential] = []
         let providers = providerStore.loadProviders()
         for provider in providers {
             guard let baseURL = URL(string: provider.effectiveBaseURLString) else {
@@ -323,7 +360,7 @@ final class ProjectChatViewController: UIViewController {
 
             let chatGPTAccountID = provider.chatGPTAccountID ?? extractChatGPTAccountID(fromJWT: token)
 
-            return ProjectChatService.ProviderCredential(
+            output.append(ProjectChatService.ProviderCredential(
                 providerID: provider.id,
                 providerLabel: provider.label,
                 providerKind: provider.kind,
@@ -332,10 +369,40 @@ final class ProjectChatViewController: UIViewController {
                 baseURL: baseURL,
                 bearerToken: token,
                 chatGPTAccountID: chatGPTAccountID
-            )
+            ))
         }
 
-        throw LocalError.noAvailableProvider
+        if output.isEmpty {
+            throw LocalError.noAvailableProvider
+        }
+
+        return output
+    }
+
+    private func switchProvider(to providerID: String) {
+        guard let credential = availableProviderCredentials.first(where: { $0.providerID == providerID }) else {
+            return
+        }
+        if
+            let currentProviderID = providerCredential?.providerID,
+            let currentModel = selectedModelID?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !currentModel.isEmpty
+        {
+            selectedModelIDByProviderID[currentProviderID] = currentModel
+        }
+
+        providerCredential = credential
+        selectedProviderID = credential.providerID
+
+        let providerModel = selectedModelIDByProviderID[credential.providerID]?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if providerModel.isEmpty {
+            selectedModelID = credential.modelID
+            selectedModelIDByProviderID[credential.providerID] = credential.modelID
+        } else {
+            selectedModelID = providerModel
+        }
+        refreshNavigationItems()
     }
 
     private func buildThreadMenu() -> UIMenu {
@@ -372,6 +439,15 @@ final class ProjectChatViewController: UIViewController {
     }
 
     private func currentModelMenuTitle() -> String {
+        if
+            let providerID = providerCredential?.providerID,
+            let providerModel = selectedModelIDByProviderID[providerID]?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            !providerModel.isEmpty
+        {
+            return providerModel
+        }
+
         let selected = selectedModelID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !selected.isEmpty {
             return selected
@@ -382,11 +458,34 @@ final class ProjectChatViewController: UIViewController {
 
     private func currentModelMenuButtonTitle() -> String {
         let modelTitle = currentModelMenuTitle()
-        guard let providerKind = currentProviderKind() else {
+        guard
+            let credential = providerCredential,
+            let providerKind = currentProviderKind()
+        else {
             return modelTitle
         }
-        let effort = resolvedReasoningEffort(forModelID: modelTitle, providerKind: providerKind)
-        return modelTitle + " · " + effort.displayName
+        let normalizedProviderLabel = credential.providerLabel.trimmingCharacters(in: .whitespacesAndNewlines)
+        let providerTitle = normalizedProviderLabel.isEmpty ? providerKind.displayName : normalizedProviderLabel
+        switch providerKind {
+        case .openAICompatible:
+            guard reasoningProfile(forModelID: modelTitle, providerKind: providerKind) != nil else {
+                return providerTitle + " · " + modelTitle
+            }
+            let effort = resolvedReasoningEffort(forModelID: modelTitle, providerKind: providerKind)
+            return providerTitle + " · " + modelTitle + " · " + effort.displayName
+        case .anthropic:
+            let enabled = resolvedAnthropicThinkingEnabled(forModelID: modelTitle)
+            let status = enabled
+                ? String(localized: "chat.thinking.enabled")
+                : String(localized: "chat.thinking.disabled")
+            return providerTitle + " · " + modelTitle + " · " + status
+        case .googleGemini:
+            let enabled = resolvedGeminiThinkingEnabled(forModelID: modelTitle)
+            let status = enabled
+                ? String(localized: "chat.thinking.enabled")
+                : String(localized: "chat.thinking.disabled")
+            return providerTitle + " · " + modelTitle + " · " + status
+        }
     }
 
     private func currentProviderKind() -> LLMProviderRecord.Kind? {
@@ -403,30 +502,19 @@ final class ProjectChatViewController: UIViewController {
     private func reasoningProfile(
         forModelID modelID: String,
         providerKind: LLMProviderRecord.Kind
-    ) -> (supported: [ProjectChatService.ReasoningEffort], defaultEffort: ProjectChatService.ReasoningEffort) {
+    ) -> (supported: [ProjectChatService.ReasoningEffort], defaultEffort: ProjectChatService.ReasoningEffort)? {
         let normalizedModel = normalizedModelID(modelID)
         switch providerKind {
         case .openAICompatible:
             if normalizedModel.contains("mini") {
-                return ([.low, .medium, .high], .medium)
+                return (supported: [.low, .medium, .high], defaultEffort: .medium)
             }
             if normalizedModel.contains("pro") || normalizedModel.contains("codex") {
-                return ([.medium, .high, .xhigh], .high)
+                return (supported: [.medium, .high, .xhigh], defaultEffort: .high)
             }
-            return ([.low, .medium, .high, .xhigh], .high)
-        case .anthropic:
-            if normalizedModel.contains("haiku") {
-                return ([.low, .medium], .medium)
-            }
-            if normalizedModel.contains("opus") {
-                return ([.medium, .high], .high)
-            }
-            return ([.medium, .high], .high)
-        case .googleGemini:
-            if normalizedModel.contains("flash") {
-                return ([.low, .medium], .medium)
-            }
-            return ([.medium, .high], .high)
+            return (supported: [.low, .medium, .high, .xhigh], defaultEffort: .high)
+        case .anthropic, .googleGemini:
+            return nil
         }
     }
 
@@ -434,7 +522,9 @@ final class ProjectChatViewController: UIViewController {
         forModelID modelID: String,
         providerKind: LLMProviderRecord.Kind
     ) -> ProjectChatService.ReasoningEffort {
-        let profile = reasoningProfile(forModelID: modelID, providerKind: providerKind)
+        guard let profile = reasoningProfile(forModelID: modelID, providerKind: providerKind) else {
+            return .high
+        }
         let key = normalizedModelID(modelID)
         if let selected = selectedReasoningEffortsByModelID[key], profile.supported.contains(selected) {
             return selected
@@ -443,71 +533,246 @@ final class ProjectChatViewController: UIViewController {
         return profile.defaultEffort
     }
 
+    private func resolvedAnthropicThinkingEnabled(forModelID modelID: String) -> Bool {
+        let key = normalizedModelID(modelID)
+        if let selected = selectedAnthropicThinkingEnabledByModelID[key] {
+            return selected
+        }
+        selectedAnthropicThinkingEnabledByModelID[key] = true
+        return true
+    }
+
+    private func resolvedGeminiThinkingEnabled(forModelID modelID: String) -> Bool {
+        let key = normalizedModelID(modelID)
+        if let selected = selectedGeminiThinkingEnabledByModelID[key] {
+            return selected
+        }
+        selectedGeminiThinkingEnabledByModelID[key] = true
+        return true
+    }
+
+    private func providerMenuTitle(for credential: ProjectChatService.ProviderCredential) -> String {
+        let normalizedLabel = credential.providerLabel.trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalizedLabel.isEmpty ? credential.providerKind.displayName : normalizedLabel
+    }
+
+    private func selectedModelID(for credential: ProjectChatService.ProviderCredential) -> String {
+        if
+            let remembered = selectedModelIDByProviderID[credential.providerID]?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            !remembered.isEmpty
+        {
+            return remembered
+        }
+        let fallback = credential.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        return fallback.isEmpty ? credential.providerKind.defaultModelID : fallback
+    }
+
+    private func selectProviderModel(
+        providerCredential: ProjectChatService.ProviderCredential,
+        modelID: String
+    ) {
+        switchProvider(to: providerCredential.providerID)
+        selectedModelID = modelID
+        selectedModelIDByProviderID[providerCredential.providerID] = modelID
+
+        let providerKind = providerStore.loadProvider(id: providerCredential.providerID)?.kind ?? providerCredential.providerKind
+        let normalizedModel = normalizedModelID(modelID)
+        switch providerKind {
+        case .openAICompatible:
+            if let profile = reasoningProfile(forModelID: modelID, providerKind: providerKind) {
+                if let selected = selectedReasoningEffortsByModelID[normalizedModel], profile.supported.contains(selected) {
+                    selectedReasoningEffortsByModelID[normalizedModel] = selected
+                } else {
+                    selectedReasoningEffortsByModelID[normalizedModel] = profile.defaultEffort
+                }
+            } else {
+                selectedReasoningEffortsByModelID.removeValue(forKey: normalizedModel)
+            }
+        case .anthropic:
+            selectedReasoningEffortsByModelID.removeValue(forKey: normalizedModel)
+            if selectedAnthropicThinkingEnabledByModelID[normalizedModel] == nil {
+                selectedAnthropicThinkingEnabledByModelID[normalizedModel] = true
+            }
+        case .googleGemini:
+            selectedReasoningEffortsByModelID.removeValue(forKey: normalizedModel)
+            if selectedGeminiThinkingEnabledByModelID[normalizedModel] == nil {
+                selectedGeminiThinkingEnabledByModelID[normalizedModel] = true
+            }
+        }
+
+        refreshNavigationItems()
+    }
+
+    private func buildModelOptionMenu(
+        providerCredential: ProjectChatService.ProviderCredential,
+        modelID: String
+    ) -> UIMenu? {
+        let providerKind = providerStore.loadProvider(id: providerCredential.providerID)?.kind ?? providerCredential.providerKind
+        switch providerKind {
+        case .openAICompatible:
+            guard let profile = reasoningProfile(forModelID: modelID, providerKind: providerKind) else {
+                return nil
+            }
+            let selectedReasoning = resolvedReasoningEffort(forModelID: modelID, providerKind: providerKind)
+            let reasoningActions = profile.supported.map { effort in
+                UIAction(
+                    title: effort.displayName,
+                    state: effort == selectedReasoning ? .on : .off
+                ) { [weak self] _ in
+                    guard let self else {
+                        return
+                    }
+                    self.selectProviderModel(providerCredential: providerCredential, modelID: modelID)
+                    self.selectedReasoningEffortsByModelID[self.normalizedModelID(modelID)] = effort
+                    self.refreshNavigationItems()
+                }
+            }
+            return UIMenu(
+                title: String(localized: "chat.menu.reasoning"),
+                options: .displayInline,
+                children: reasoningActions
+            )
+        case .anthropic:
+            let key = normalizedModelID(modelID)
+            let currentValue = selectedAnthropicThinkingEnabledByModelID[key] ?? true
+            selectedAnthropicThinkingEnabledByModelID[key] = currentValue
+            let actions = [
+                UIAction(
+                    title: String(localized: "chat.thinking.enabled"),
+                    state: currentValue ? .on : .off
+                ) { [weak self] _ in
+                    guard let self else { return }
+                    self.selectProviderModel(providerCredential: providerCredential, modelID: modelID)
+                    self.selectedAnthropicThinkingEnabledByModelID[key] = true
+                    self.refreshNavigationItems()
+                },
+                UIAction(
+                    title: String(localized: "chat.thinking.disabled"),
+                    state: currentValue ? .off : .on
+                ) { [weak self] _ in
+                    guard let self else { return }
+                    self.selectProviderModel(providerCredential: providerCredential, modelID: modelID)
+                    self.selectedAnthropicThinkingEnabledByModelID[key] = false
+                    self.refreshNavigationItems()
+                }
+            ]
+            return UIMenu(
+                title: String(localized: "chat.menu.thinking"),
+                options: .displayInline,
+                children: actions
+            )
+        case .googleGemini:
+            let key = normalizedModelID(modelID)
+            let currentValue = selectedGeminiThinkingEnabledByModelID[key] ?? true
+            selectedGeminiThinkingEnabledByModelID[key] = currentValue
+            let actions = [
+                UIAction(
+                    title: String(localized: "chat.thinking.enabled"),
+                    state: currentValue ? .on : .off
+                ) { [weak self] _ in
+                    guard let self else { return }
+                    self.selectProviderModel(providerCredential: providerCredential, modelID: modelID)
+                    self.selectedGeminiThinkingEnabledByModelID[key] = true
+                    self.refreshNavigationItems()
+                },
+                UIAction(
+                    title: String(localized: "chat.thinking.disabled"),
+                    state: currentValue ? .off : .on
+                ) { [weak self] _ in
+                    guard let self else { return }
+                    self.selectProviderModel(providerCredential: providerCredential, modelID: modelID)
+                    self.selectedGeminiThinkingEnabledByModelID[key] = false
+                    self.refreshNavigationItems()
+                }
+            ]
+            return UIMenu(
+                title: String(localized: "chat.menu.thinking"),
+                options: .displayInline,
+                children: actions
+            )
+        }
+    }
+
     private func buildModelMenu() -> UIMenu {
         guard let credential = providerCredential else {
             let unavailable = UIAction(title: String(localized: "chat.error.no_provider"), attributes: .disabled) { _ in }
             return UIMenu(title: String(localized: "chat.menu.model"), children: [unavailable])
         }
-
-        let providerKind = providerStore.loadProvider(id: credential.providerID)?.kind ?? credential.providerKind
-        var modelIDs = providerKind.builtInModels
-        let fallbackModel = credential.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !fallbackModel.isEmpty && !modelIDs.contains(where: { $0.caseInsensitiveCompare(fallbackModel) == .orderedSame }) {
-            modelIDs.insert(fallbackModel, at: 0)
-        }
-
-        let selectedModel = currentModelMenuTitle()
-        if !selectedModel.isEmpty, !modelIDs.contains(where: { $0.caseInsensitiveCompare(selectedModel) == .orderedSame }) {
-            modelIDs.insert(selectedModel, at: 0)
-        }
-
-        let actions = modelIDs.map { modelID in
-            UIAction(
-                title: modelID,
-                state: modelID.caseInsensitiveCompare(selectedModel) == .orderedSame ? .on : .off
-            ) { [weak self] _ in
-                self?.selectedModelID = modelID
-                let normalizedModel = self?.normalizedModelID(modelID) ?? modelID.lowercased()
-                if let self {
-                    let profile = self.reasoningProfile(forModelID: modelID, providerKind: providerKind)
-                    if let selected = self.selectedReasoningEffortsByModelID[normalizedModel], profile.supported.contains(selected) {
-                        self.selectedReasoningEffortsByModelID[normalizedModel] = selected
-                    } else {
-                        self.selectedReasoningEffortsByModelID[normalizedModel] = profile.defaultEffort
-                    }
-                }
-                self?.refreshNavigationItems()
+        let providerMenus = availableProviderCredentials.map { provider in
+            let providerKind = providerStore.loadProvider(id: provider.providerID)?.kind ?? provider.providerKind
+            var modelIDs = providerKind.builtInModels
+            let fallbackModel = provider.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !fallbackModel.isEmpty, !modelIDs.contains(where: { $0.caseInsensitiveCompare(fallbackModel) == .orderedSame }) {
+                modelIDs.insert(fallbackModel, at: 0)
             }
-        }
-        let selectedReasoning = resolvedReasoningEffort(forModelID: selectedModel, providerKind: providerKind)
-        let profile = reasoningProfile(forModelID: selectedModel, providerKind: providerKind)
-        let reasoningActions = profile.supported.map { effort in
-            UIAction(
-                title: effort.displayName,
-                state: effort == selectedReasoning ? .on : .off
-            ) { [weak self] _ in
-                guard let self else {
-                    return
-                }
-                let key = self.normalizedModelID(selectedModel)
-                self.selectedReasoningEffortsByModelID[key] = effort
-                self.refreshNavigationItems()
+
+            let selectedModelForProvider = selectedModelID(for: provider)
+            if !selectedModelForProvider.isEmpty, !modelIDs.contains(where: { $0.caseInsensitiveCompare(selectedModelForProvider) == .orderedSame }) {
+                modelIDs.insert(selectedModelForProvider, at: 0)
             }
+
+            let modelSubmenus: [UIMenu] = modelIDs.map { modelID in
+                let isCurrent = provider.providerID == credential.providerID
+                    && modelID.caseInsensitiveCompare(currentModelMenuTitle()) == .orderedSame
+                let selectAction = UIAction(
+                    title: String(localized: "chat.menu.use_model"),
+                    state: isCurrent ? .on : .off
+                ) { [weak self] _ in
+                    self?.selectProviderModel(providerCredential: provider, modelID: modelID)
+                }
+                var children: [UIMenuElement] = [selectAction]
+                if let optionMenu = buildModelOptionMenu(providerCredential: provider, modelID: modelID) {
+                    children.append(optionMenu)
+                }
+                return UIMenu(
+                    title: modelID,
+                    options: .displayInline,
+                    children: children
+                )
+            }
+
+            let useProviderAction = UIAction(
+                title: String(localized: "chat.menu.use_provider"),
+                state: provider.providerID == credential.providerID ? .on : .off
+            ) { [weak self] _ in
+                self?.switchProvider(to: provider.providerID)
+            }
+            return UIMenu(
+                title: providerMenuTitle(for: provider),
+                children: [useProviderAction] + modelSubmenus
+            )
         }
 
-        let modelSection = UIMenu(
-            title: String(localized: "chat.menu.model"),
-            options: .displayInline,
-            children: actions
-        )
-        let reasoningSection = UIMenu(
-            title: String(format: String(localized: "chat.menu.reasoning_for_model_format"), selectedModel),
-            options: .displayInline,
-            children: reasoningActions
-        )
         return UIMenu(
             title: String(localized: "chat.menu.model"),
-            children: [modelSection, reasoningSection]
+            children: providerMenus
+        )
+    }
+
+    private func executionOptions(for credential: ProjectChatService.ProviderCredential) -> ProjectChatService.ModelExecutionOptions {
+        let providerKind = currentProviderKind() ?? credential.providerKind
+        let modelID = credential.modelID
+        let reasoningEffort = resolvedReasoningEffort(forModelID: modelID, providerKind: providerKind)
+        let anthropicThinkingEnabled: Bool
+        let geminiThinkingEnabled: Bool
+
+        switch providerKind {
+        case .openAICompatible:
+            anthropicThinkingEnabled = true
+            geminiThinkingEnabled = true
+        case .anthropic:
+            anthropicThinkingEnabled = resolvedAnthropicThinkingEnabled(forModelID: modelID)
+            geminiThinkingEnabled = true
+        case .googleGemini:
+            anthropicThinkingEnabled = true
+            geminiThinkingEnabled = resolvedGeminiThinkingEnabled(forModelID: modelID)
+        }
+
+        return ProjectChatService.ModelExecutionOptions(
+            reasoningEffort: reasoningEffort,
+            anthropicThinkingEnabled: anthropicThinkingEnabled,
+            geminiThinkingEnabled: geminiThinkingEnabled
         )
     }
 
@@ -579,7 +844,18 @@ final class ProjectChatViewController: UIViewController {
                 createdAt: persistedMessage.createdAt,
                 startedAt: startedAt,
                 finishedAt: finishedAt,
-                isProgress: persistedMessage.isProgress
+                isProgress: persistedMessage.isProgress,
+                requestTokenUsage: {
+                    let input = max(0, persistedMessage.inputTokens ?? 0)
+                    let output = max(0, persistedMessage.outputTokens ?? 0)
+                    guard input > 0 || output > 0 else {
+                        return nil
+                    }
+                    return ProjectChatService.RequestTokenUsage(
+                        inputTokens: input,
+                        outputTokens: output
+                    )
+                }()
             )
         }
 
@@ -625,7 +901,9 @@ final class ProjectChatViewController: UIViewController {
                 createdAt: message.createdAt,
                 startedAt: message.startedAt,
                 finishedAt: message.finishedAt,
-                isProgress: message.isProgress
+                isProgress: message.isProgress,
+                inputTokens: message.requestTokenUsage?.inputTokens,
+                outputTokens: message.requestTokenUsage?.outputTokens
             )
         }
         threadStore.saveMessages(projectURL: projectURL, threadID: threadID, messages: persisted)
@@ -678,7 +956,8 @@ final class ProjectChatViewController: UIViewController {
         text: String,
         isProgress: Bool = false,
         startedAt: Date? = nil,
-        finishedAt: Date? = nil
+        finishedAt: Date? = nil,
+        requestTokenUsage: ProjectChatService.RequestTokenUsage? = nil
     ) -> Int? {
         let normalizedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedText.isEmpty else {
@@ -696,7 +975,8 @@ final class ProjectChatViewController: UIViewController {
                 createdAt: createdAt,
                 startedAt: startedAt,
                 finishedAt: resolvedFinishedAt,
-                isProgress: isProgress
+                isProgress: isProgress,
+                requestTokenUsage: requestTokenUsage
             )
         )
         tableView.reloadData()
@@ -869,6 +1149,97 @@ final class ProjectChatViewController: UIViewController {
     }
 
     @objc
+    private func didTapModelSettings() {
+        guard !isSending else {
+            return
+        }
+
+        do {
+            availableProviderCredentials = try resolveProviderCredentials()
+        } catch {
+            providerCredential = nil
+            selectedProviderID = nil
+            appendMessage(role: .system, text: error.localizedDescription)
+            refreshNavigationItems()
+            return
+        }
+
+        guard let fallbackProvider = availableProviderCredentials.first else {
+            appendMessage(role: .system, text: LocalError.noAvailableProvider.localizedDescription)
+            return
+        }
+
+        let selectedProvider = providerCredential ?? fallbackProvider
+        providerCredential = selectedProvider
+        selectedProviderID = selectedProvider.providerID
+        if
+            let currentModel = selectedModelID?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !currentModel.isEmpty
+        {
+            selectedModelIDByProviderID[selectedProvider.providerID] = currentModel
+        } else {
+            selectedModelIDByProviderID[selectedProvider.providerID] = selectedProvider.modelID
+        }
+
+        let selectionState = ProjectModelConfigurationViewController.SelectionState(
+            selectedProviderID: selectedProvider.providerID,
+            selectedModelIDByProviderID: selectedModelIDByProviderID,
+            selectedReasoningEffortsByModelID: selectedReasoningEffortsByModelID,
+            selectedAnthropicThinkingEnabledByModelID: selectedAnthropicThinkingEnabledByModelID,
+            selectedGeminiThinkingEnabledByModelID: selectedGeminiThinkingEnabledByModelID
+        )
+        let controller = ProjectModelConfigurationViewController(
+            providers: availableProviderCredentials,
+            initialState: selectionState,
+            projectUsageIdentifier: projectURL.standardizedFileURL.path
+        )
+        controller.onSelectionStateChanged = { [weak self] state in
+            self?.applyModelConfigurationSelectionState(state)
+        }
+
+        let navigationController = UINavigationController(rootViewController: controller)
+        navigationController.modalPresentationStyle = .pageSheet
+        if let sheet = navigationController.sheetPresentationController {
+            sheet.detents = [.medium(), .large()]
+            sheet.prefersGrabberVisible = true
+        }
+        present(navigationController, animated: true)
+    }
+
+    @objc
+    private func didTapProjectUsage() {
+        guard !isSending else {
+            return
+        }
+        let controller = ProjectTokenUsageViewController(
+            projectUsageIdentifier: projectURL.standardizedFileURL.path
+        )
+        let navigationController = UINavigationController(rootViewController: controller)
+        navigationController.modalPresentationStyle = .pageSheet
+        if let sheet = navigationController.sheetPresentationController {
+            sheet.detents = [.medium(), .large()]
+            sheet.prefersGrabberVisible = true
+        }
+        present(navigationController, animated: true)
+    }
+
+    private func applyModelConfigurationSelectionState(_ state: ProjectModelConfigurationViewController.SelectionState) {
+        selectedModelIDByProviderID = state.selectedModelIDByProviderID
+        selectedReasoningEffortsByModelID = state.selectedReasoningEffortsByModelID
+        selectedAnthropicThinkingEnabledByModelID = state.selectedAnthropicThinkingEnabledByModelID
+        selectedGeminiThinkingEnabledByModelID = state.selectedGeminiThinkingEnabledByModelID
+        selectedProviderID = state.selectedProviderID
+
+        switchProvider(to: state.selectedProviderID)
+        let selectedModel = state.selectedModelIDByProviderID[state.selectedProviderID]?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !selectedModel.isEmpty {
+            selectedModelID = selectedModel
+        }
+        refreshNavigationItems()
+    }
+
+    @objc
     private func didTapClose() {
         persistCurrentThreadMessages()
         dismiss(animated: true)
@@ -929,15 +1300,7 @@ final class ProjectChatViewController: UIViewController {
 
             do {
                 let threadContext = buildThreadContext()
-                let requestReasoningEffort: ProjectChatService.ReasoningEffort = {
-                    guard let providerKind = self.currentProviderKind() else {
-                        return .high
-                    }
-                    return self.resolvedReasoningEffort(
-                        forModelID: providerCredential.modelID,
-                        providerKind: providerKind
-                    )
-                }()
+                let requestExecutionOptions = self.executionOptions(for: providerCredential)
                 let result = try await chatService.sendAndApply(
                     userMessage: userInput,
                     history: historyTurns,
@@ -945,7 +1308,7 @@ final class ProjectChatViewController: UIViewController {
                     credential: providerCredential,
                     memory: sessionMemory,
                     threadContext: threadContext,
-                    reasoningEffort: requestReasoningEffort,
+                    executionOptions: requestExecutionOptions,
                     onStreamedText: nil,
                     onProgress: { [weak self] phaseText in
                         guard let self else {
@@ -970,7 +1333,8 @@ final class ProjectChatViewController: UIViewController {
                 _ = appendMessage(
                     role: .assistant,
                     text: assistantText,
-                    startedAt: currentRequestStartedAt
+                    startedAt: currentRequestStartedAt,
+                    requestTokenUsage: result.requestTokenUsage
                 )
 
                 do {
@@ -1207,7 +1571,15 @@ private final class ChatMessageCell: UITableViewCell {
         let endAt = message.finishedAt ?? now
         let duration = max(0, endAt.timeIntervalSince(message.startedAt))
         let durationString = formatDuration(duration)
-        return "\(timestamp) · \(durationString)"
+        var parts: [String] = [timestamp]
+        if message.isProgress {
+            parts.append(message.finishedAt == nil ? "执行中" : "已完成")
+        }
+        parts.append(durationString)
+        if let usageText = tokenUsageText(for: message.requestTokenUsage), message.finishedAt != nil {
+            parts.append(usageText)
+        }
+        return parts.joined(separator: " · ")
     }
 
     private func formatDuration(_ duration: TimeInterval) -> String {
@@ -1221,5 +1593,473 @@ private final class ChatMessageCell: UITableViewCell {
         let minutes = Int(duration) / 60
         let seconds = duration - Double(minutes * 60)
         return String(format: String(localized: "chat.duration.minutes_seconds_format"), minutes, seconds)
+    }
+
+    private func tokenUsageText(for usage: ProjectChatService.RequestTokenUsage?) -> String? {
+        guard let usage else {
+            return nil
+        }
+        let inputText = formatTokenCountInK(usage.inputTokens)
+        let outputText = formatTokenCountInK(usage.outputTokens)
+        return "↑\(inputText) ↓\(outputText)"
+    }
+
+    private func formatTokenCountInK(_ value: Int64) -> String {
+        let kiloValue = Double(max(0, value)) / 1000
+        if kiloValue >= 100 {
+            return String(format: "%.0fK", kiloValue)
+        }
+        if kiloValue >= 10 {
+            return String(format: "%.1fK", kiloValue)
+        }
+        return String(format: "%.2fK", kiloValue)
+    }
+}
+
+@MainActor
+final class ProjectModelConfigurationViewController: UITableViewController {
+    struct SelectionState {
+        var selectedProviderID: String
+        var selectedModelIDByProviderID: [String: String]
+        var selectedReasoningEffortsByModelID: [String: ProjectChatService.ReasoningEffort]
+        var selectedAnthropicThinkingEnabledByModelID: [String: Bool]
+        var selectedGeminiThinkingEnabledByModelID: [String: Bool]
+    }
+
+    var onSelectionStateChanged: ((SelectionState) -> Void)?
+
+    private enum Section: Int, CaseIterable {
+        case provider
+        case model
+        case parameter
+    }
+
+    private let providers: [ProjectChatService.ProviderCredential]
+    private var state: SelectionState
+    private let projectUsageIdentifier: String
+    private let usageStore = LLMTokenUsageStore.shared
+    private var usageRecords: [LLMTokenUsageRecord] = []
+    private var usageByProviderID: [String: Int64] = [:]
+    private var usageByProviderModel: [String: Int64] = [:]
+
+    private let numberFormatter: NumberFormatter = {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        return formatter
+    }()
+
+    init(
+        providers: [ProjectChatService.ProviderCredential],
+        initialState: SelectionState,
+        projectUsageIdentifier: String
+    ) {
+        self.providers = providers
+        state = initialState
+        self.projectUsageIdentifier = projectUsageIdentifier
+        super.init(style: .insetGrouped)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        title = String(localized: "chat.menu.model")
+        tableView.register(UITableViewCell.self, forCellReuseIdentifier: "ProjectModelConfigCell")
+        tableView.register(SettingsToggleCell.self, forCellReuseIdentifier: SettingsToggleCell.reuseIdentifier)
+        navigationItem.rightBarButtonItem = UIBarButtonItem(
+            barButtonSystemItem: .done,
+            target: self,
+            action: #selector(didTapDone)
+        )
+        reloadUsageData()
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        reloadUsageData()
+    }
+
+    override func numberOfSections(in tableView: UITableView) -> Int {
+        Section.allCases.count
+    }
+
+    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+        guard let section = Section(rawValue: section) else {
+            return 0
+        }
+        switch section {
+        case .provider:
+            return providers.count
+        case .model:
+            guard let selectedProvider = selectedProviderCredential() else {
+                return 0
+            }
+            return availableModelIDs(for: selectedProvider).count
+        case .parameter:
+            guard let selectedProvider = selectedProviderCredential() else {
+                return 0
+            }
+            let selectedModelID = selectedModelID(for: selectedProvider)
+            switch selectedProvider.providerKind {
+            case .openAICompatible:
+                return reasoningProfile(forModelID: selectedModelID, providerKind: .openAICompatible)?
+                    .supported.count ?? 0
+            case .anthropic, .googleGemini:
+                return 1
+            }
+        }
+    }
+
+    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
+        guard let section = Section(rawValue: section) else {
+            return nil
+        }
+        switch section {
+        case .provider:
+            return String(localized: "chat.menu.provider")
+        case .model:
+            return String(localized: "chat.menu.model")
+        case .parameter:
+            guard let selectedProvider = selectedProviderCredential() else {
+                return nil
+            }
+            switch selectedProvider.providerKind {
+            case .openAICompatible:
+                return String(localized: "chat.menu.reasoning")
+            case .anthropic, .googleGemini:
+                return String(localized: "chat.menu.thinking")
+            }
+        }
+    }
+
+    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        guard let section = Section(rawValue: indexPath.section) else {
+            return UITableViewCell()
+        }
+
+        switch section {
+        case .provider:
+            let cell = tableView.dequeueReusableCell(withIdentifier: "ProjectModelConfigCell", for: indexPath)
+            guard providers.indices.contains(indexPath.row) else {
+                return cell
+            }
+            let provider = providers[indexPath.row]
+            var configuration = cell.defaultContentConfiguration()
+            configuration.text = providerTitle(for: provider)
+            configuration.secondaryText = formattedTokenCount(providerTokenUsage(for: provider.providerID))
+            configuration.secondaryTextProperties.color = .secondaryLabel
+            cell.contentConfiguration = configuration
+            cell.accessoryType = provider.providerID == state.selectedProviderID ? .checkmark : .none
+            return cell
+
+        case .model:
+            let cell = tableView.dequeueReusableCell(withIdentifier: "ProjectModelConfigCell", for: indexPath)
+            guard let selectedProvider = selectedProviderCredential() else {
+                return cell
+            }
+            let modelIDs = availableModelIDs(for: selectedProvider)
+            guard modelIDs.indices.contains(indexPath.row) else {
+                return cell
+            }
+            let modelID = modelIDs[indexPath.row]
+            var configuration = cell.defaultContentConfiguration()
+            configuration.text = modelID
+            configuration.secondaryText = formattedTokenCount(
+                modelTokenUsage(
+                    providerID: selectedProvider.providerID,
+                    modelID: modelID
+                )
+            )
+            configuration.secondaryTextProperties.color = .secondaryLabel
+            cell.contentConfiguration = configuration
+            cell.accessoryType = modelID.caseInsensitiveCompare(selectedModelID(for: selectedProvider)) == .orderedSame
+                ? .checkmark
+                : .none
+            return cell
+
+        case .parameter:
+            guard let selectedProvider = selectedProviderCredential() else {
+                return UITableViewCell()
+            }
+            let selectedModelID = selectedModelID(for: selectedProvider)
+            switch selectedProvider.providerKind {
+            case .openAICompatible:
+                let cell = tableView.dequeueReusableCell(withIdentifier: "ProjectModelConfigCell", for: indexPath)
+                let profile = reasoningProfile(forModelID: selectedModelID, providerKind: .openAICompatible)
+                let efforts = profile?.supported ?? []
+                guard efforts.indices.contains(indexPath.row) else {
+                    return cell
+                }
+                let effort = efforts[indexPath.row]
+                var configuration = cell.defaultContentConfiguration()
+                configuration.text = effort.displayName
+                cell.contentConfiguration = configuration
+                let currentEffort = selectedReasoningEffort(forModelID: selectedModelID, providerKind: .openAICompatible)
+                cell.accessoryType = effort == currentEffort ? .checkmark : .none
+                return cell
+
+            case .anthropic, .googleGemini:
+                guard
+                    let cell = tableView.dequeueReusableCell(
+                        withIdentifier: SettingsToggleCell.reuseIdentifier,
+                        for: indexPath
+                    ) as? SettingsToggleCell
+                else {
+                    return UITableViewCell()
+                }
+                let isOn: Bool
+                switch selectedProvider.providerKind {
+                case .anthropic:
+                    isOn = selectedAnthropicThinkingEnabled(forModelID: selectedModelID)
+                case .googleGemini:
+                    isOn = selectedGeminiThinkingEnabled(forModelID: selectedModelID)
+                case .openAICompatible:
+                    isOn = true
+                }
+                cell.configure(
+                    title: String(localized: "chat.menu.thinking"),
+                    isOn: isOn
+                ) { [weak self] value in
+                    guard let self else { return }
+                    let key = self.normalizedModelID(selectedModelID)
+                    switch selectedProvider.providerKind {
+                    case .anthropic:
+                        self.state.selectedAnthropicThinkingEnabledByModelID[key] = value
+                    case .googleGemini:
+                        self.state.selectedGeminiThinkingEnabledByModelID[key] = value
+                    case .openAICompatible:
+                        break
+                    }
+                    self.notifySelectionChanged()
+                }
+                return cell
+            }
+        }
+    }
+
+    override func tableView(_ tableView: UITableView, willSelectRowAt indexPath: IndexPath) -> IndexPath? {
+        guard let section = Section(rawValue: indexPath.section) else {
+            return nil
+        }
+        switch section {
+        case .provider, .model:
+            return indexPath
+        case .parameter:
+            guard let selectedProvider = selectedProviderCredential() else {
+                return nil
+            }
+            switch selectedProvider.providerKind {
+            case .openAICompatible:
+                return indexPath
+            case .anthropic, .googleGemini:
+                return nil
+            }
+        }
+    }
+
+    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        defer { tableView.deselectRow(at: indexPath, animated: true) }
+        guard let section = Section(rawValue: indexPath.section) else {
+            return
+        }
+        switch section {
+        case .provider:
+            guard providers.indices.contains(indexPath.row) else {
+                return
+            }
+            let selectedProvider = providers[indexPath.row]
+            state.selectedProviderID = selectedProvider.providerID
+            state.selectedModelIDByProviderID[selectedProvider.providerID] = selectedModelID(for: selectedProvider)
+            notifySelectionChanged()
+            tableView.reloadData()
+
+        case .model:
+            guard let selectedProvider = selectedProviderCredential() else {
+                return
+            }
+            let modelIDs = availableModelIDs(for: selectedProvider)
+            guard modelIDs.indices.contains(indexPath.row) else {
+                return
+            }
+            let modelID = modelIDs[indexPath.row]
+            state.selectedModelIDByProviderID[selectedProvider.providerID] = modelID
+            if selectedProvider.providerKind == .openAICompatible {
+                _ = selectedReasoningEffort(forModelID: modelID, providerKind: .openAICompatible)
+            }
+            notifySelectionChanged()
+            tableView.reloadData()
+
+        case .parameter:
+            guard let selectedProvider = selectedProviderCredential() else {
+                return
+            }
+            let selectedModelID = selectedModelID(for: selectedProvider)
+            switch selectedProvider.providerKind {
+            case .openAICompatible:
+                guard
+                    let profile = reasoningProfile(forModelID: selectedModelID, providerKind: .openAICompatible),
+                    profile.supported.indices.contains(indexPath.row)
+                else {
+                    return
+                }
+                let selectedEffort = profile.supported[indexPath.row]
+                state.selectedReasoningEffortsByModelID[normalizedModelID(selectedModelID)] = selectedEffort
+                notifySelectionChanged()
+                tableView.reloadSections(IndexSet(integer: Section.parameter.rawValue), with: .none)
+            case .anthropic, .googleGemini:
+                return
+            }
+        }
+    }
+
+    @objc
+    private func didTapDone() {
+        dismiss(animated: true)
+    }
+
+    private func selectedProviderCredential() -> ProjectChatService.ProviderCredential? {
+        if let credential = providers.first(where: { $0.providerID == state.selectedProviderID }) {
+            return credential
+        }
+        return providers.first
+    }
+
+    private func selectedModelID(for provider: ProjectChatService.ProviderCredential) -> String {
+        let remembered = state.selectedModelIDByProviderID[provider.providerID]?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !remembered.isEmpty {
+            return remembered
+        }
+        let fallback = provider.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        return fallback.isEmpty ? provider.providerKind.defaultModelID : fallback
+    }
+
+    private func availableModelIDs(for provider: ProjectChatService.ProviderCredential) -> [String] {
+        var models = provider.providerKind.builtInModels
+        let selected = selectedModelID(for: provider)
+        if !selected.isEmpty, !models.contains(where: { $0.caseInsensitiveCompare(selected) == .orderedSame }) {
+            models.insert(selected, at: 0)
+        }
+        let fallback = provider.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !fallback.isEmpty, !models.contains(where: { $0.caseInsensitiveCompare(fallback) == .orderedSame }) {
+            models.insert(fallback, at: 0)
+        }
+        return models
+    }
+
+    private func providerTitle(for provider: ProjectChatService.ProviderCredential) -> String {
+        let normalizedLabel = provider.providerLabel.trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalizedLabel.isEmpty ? provider.providerKind.displayName : normalizedLabel
+    }
+
+    private func reasoningProfile(
+        forModelID modelID: String,
+        providerKind: LLMProviderRecord.Kind
+    ) -> (supported: [ProjectChatService.ReasoningEffort], defaultEffort: ProjectChatService.ReasoningEffort)? {
+        guard providerKind == .openAICompatible else {
+            return nil
+        }
+        let normalizedModel = normalizedModelID(modelID)
+        if normalizedModel.contains("mini") {
+            return (supported: [.low, .medium, .high], defaultEffort: .medium)
+        }
+        if normalizedModel.contains("pro") || normalizedModel.contains("codex") {
+            return (supported: [.medium, .high, .xhigh], defaultEffort: .high)
+        }
+        return (supported: [.low, .medium, .high, .xhigh], defaultEffort: .high)
+    }
+
+    private func selectedReasoningEffort(
+        forModelID modelID: String,
+        providerKind: LLMProviderRecord.Kind
+    ) -> ProjectChatService.ReasoningEffort {
+        guard let profile = reasoningProfile(forModelID: modelID, providerKind: providerKind) else {
+            return .high
+        }
+        let key = normalizedModelID(modelID)
+        if let selected = state.selectedReasoningEffortsByModelID[key], profile.supported.contains(selected) {
+            return selected
+        }
+        state.selectedReasoningEffortsByModelID[key] = profile.defaultEffort
+        return profile.defaultEffort
+    }
+
+    private func selectedAnthropicThinkingEnabled(forModelID modelID: String) -> Bool {
+        let key = normalizedModelID(modelID)
+        if let selected = state.selectedAnthropicThinkingEnabledByModelID[key] {
+            return selected
+        }
+        state.selectedAnthropicThinkingEnabledByModelID[key] = true
+        return true
+    }
+
+    private func selectedGeminiThinkingEnabled(forModelID modelID: String) -> Bool {
+        let key = normalizedModelID(modelID)
+        if let selected = state.selectedGeminiThinkingEnabledByModelID[key] {
+            return selected
+        }
+        state.selectedGeminiThinkingEnabledByModelID[key] = true
+        return true
+    }
+
+    private func normalizedModelID(_ modelID: String) -> String {
+        modelID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private func reloadUsageData() {
+        usageRecords = usageStore.loadRecords(projectIdentifier: projectUsageIdentifier)
+        usageByProviderID = Dictionary(
+            grouping: usageRecords,
+            by: { $0.providerID }
+        ).mapValues { records in
+            records.reduce(Int64(0)) { $0 + $1.totalTokens }
+        }
+        usageByProviderModel = Dictionary(
+            uniqueKeysWithValues: usageRecords.map { record in
+                (providerModelUsageKey(providerID: record.providerID, modelID: record.model), record.totalTokens)
+            }
+        )
+        tableView.reloadData()
+    }
+
+    private func providerModelUsageKey(providerID: String, modelID: String) -> String {
+        providerID.lowercased() + "|" + normalizedModelID(modelID)
+    }
+
+    private func providerTokenUsage(for providerID: String) -> Int64 {
+        usageByProviderID[providerID] ?? 0
+    }
+
+    private func modelTokenUsage(providerID: String, modelID: String) -> Int64 {
+        usageByProviderModel[providerModelUsageKey(providerID: providerID, modelID: modelID)] ?? 0
+    }
+
+    private func formattedTokenCount(_ value: Int64) -> String {
+        let number = NSNumber(value: value)
+        let formatted = numberFormatter.string(from: number) ?? "\(value)"
+        return String(format: String(localized: "providers.usage.tokens_format"), formatted)
+    }
+
+    private func notifySelectionChanged() {
+        onSelectionStateChanged?(state)
+    }
+}
+
+@MainActor
+final class ProjectTokenUsageViewController: TokenUsageDashboardViewController {
+    init(projectUsageIdentifier: String) {
+        super.init(
+            titleText: String(localized: "chat.project_usage.title"),
+            projectIdentifier: projectUsageIdentifier,
+            includeDoneButton: true
+        )
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
     }
 }
