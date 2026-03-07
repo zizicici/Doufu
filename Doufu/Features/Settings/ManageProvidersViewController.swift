@@ -126,6 +126,8 @@ final class ManageProvidersViewController: UITableViewController {
             let controller = ProviderAPIKeyFormViewController(provider: provider)
             navigationController?.pushViewController(controller, animated: true)
         case .oauth:
+            // Anthropic OAuth providers use the API Key form because Anthropic's
+            // "OAuth" flow is just pasting a key from the console (no real OAuth callback).
             if provider.kind == .anthropic {
                 let controller = ProviderAPIKeyFormViewController(provider: provider)
                 navigationController?.pushViewController(controller, animated: true)

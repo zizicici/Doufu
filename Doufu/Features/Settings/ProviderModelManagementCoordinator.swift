@@ -41,15 +41,13 @@ final class ProviderModelManagementCoordinator {
         isRefreshingModels = true
         controller.tableView.reloadSections(IndexSet(integer: manageSectionIndex), with: .none)
         modelRefreshTask?.cancel()
-        modelRefreshTask = Task { [weak self, weak controller] in
+        modelRefreshTask = Task { @MainActor [weak self, weak controller] in
             guard let self else {
                 return
             }
             defer {
-                Task { @MainActor [weak self, weak controller] in
-                    self?.isRefreshingModels = false
-                    controller?.tableView.reloadData()
-                }
+                self.isRefreshingModels = false
+                controller?.tableView.reloadData()
             }
 
             let token = (try? self.store.loadBearerToken(for: provider))?
@@ -62,18 +60,16 @@ final class ProviderModelManagementCoordinator {
                 let models = try await self.modelDiscoveryService.fetchModels(for: provider, bearerToken: token)
                 _ = try self.store.replaceOfficialModels(providerID: provider.id, models: models)
             } catch {
-                await MainActor.run { [weak controller] in
-                    guard let controller else {
-                        return
-                    }
-                    let alert = UIAlertController(
-                        title: "Refresh Failed",
-                        message: error.localizedDescription,
-                        preferredStyle: .alert
-                    )
-                    alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
-                    controller.present(alert, animated: true)
+                guard let controller else {
+                    return
                 }
+                let alert = UIAlertController(
+                    title: String(localized: "provider_model.alert.refresh_failed.title"),
+                    message: error.localizedDescription,
+                    preferredStyle: .alert
+                )
+                alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
+                controller.present(alert, animated: true)
             }
         }
     }
@@ -121,7 +117,7 @@ final class ProviderModelManagementCoordinator {
                     return
                 }
                 let alert = UIAlertController(
-                    title: "Save Failed",
+                    title: String(localized: "provider_model.alert.save_failed.title"),
                     message: error.localizedDescription,
                     preferredStyle: .alert
                 )

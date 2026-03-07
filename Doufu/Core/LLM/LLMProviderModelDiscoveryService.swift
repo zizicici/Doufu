@@ -173,6 +173,7 @@ final class LLMProviderModelDiscoveryService {
                 normalizedID = model.name
             }
             let supportsThinking = model.thinking ?? LLMProviderModelCapabilities.defaults(for: provider.kind, modelID: normalizedID).thinkingSupported
+            // See comment in LLMProviderModelCapabilities.defaults for Gemini thinking heuristics.
             let canDisableThinking = supportsThinking && !normalizedID.lowercased().contains("gemini-2.5-pro")
             return LLMProviderModelRecord(
                 id: officialRecordID(for: normalizedID),
@@ -234,11 +235,15 @@ final class LLMProviderModelDiscoveryService {
 
     private func validate(response: URLResponse, data: Data) throws {
         guard let httpResponse = response as? HTTPURLResponse else {
-            throw ProjectChatService.ServiceError.networkFailed("请求失败：无效响应。")
+            throw ProjectChatService.ServiceError.networkFailed(
+                String(localized: "model_discovery.error.invalid_response")
+            )
         }
         guard (200 ... 299).contains(httpResponse.statusCode) else {
-            let message = parseErrorMessage(from: data) ?? HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
-            throw ProjectChatService.ServiceError.networkFailed("请求失败：\(message)")
+            let detail = parseErrorMessage(from: data) ?? HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
+            throw ProjectChatService.ServiceError.networkFailed(
+                String(format: String(localized: "model_discovery.error.request_failed_format"), detail)
+            )
         }
     }
 

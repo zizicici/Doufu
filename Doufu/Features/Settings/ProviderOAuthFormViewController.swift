@@ -145,9 +145,9 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
         case .manual:
             return String(localized: "providers.oauth_form.section.manual")
         case .storedModels:
-            return isEditingProvider ? "Stored Models" : nil
+            return isEditingProvider ? String(localized: "provider_model.section.stored_models") : nil
         case .manageModels:
-            return isEditingProvider ? "Manage Models" : nil
+            return isEditingProvider ? String(localized: "provider_model.section.manage_models") : nil
         case .addProvider:
             return nil
         }
@@ -265,7 +265,7 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
                 cell.selectionStyle = .none
                 cell.accessoryType = .none
                 var configuration = UIListContentConfiguration.cell()
-                configuration.text = "No models stored."
+                configuration.text = String(localized: "provider_model.stored_models.empty")
                 configuration.textProperties.color = .secondaryLabel
                 configuration.textProperties.alignment = .center
                 cell.contentConfiguration = configuration
@@ -278,12 +278,14 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
             let selectedRecordID = latestEditingProvider()?.effectiveModelRecordID.lowercased()
             var configuration = cell.defaultContentConfiguration()
             configuration.text = model.effectiveDisplayName
-            let sourceLabel: String = model.source == .official ? "Official" : "Custom"
+            let sourceLabel = model.source == .official
+                ? String(localized: "provider_model.source.official")
+                : String(localized: "provider_model.source.custom")
             configuration.secondaryText = sourceLabel + " · " + model.modelID
             configuration.secondaryTextProperties.color = .secondaryLabel
             cell.contentConfiguration = configuration
-            cell.accessoryType = model.normalizedID == selectedRecordID ? .checkmark : .none
             cell.selectionStyle = .none
+            cell.accessoryType = model.normalizedID == selectedRecordID ? .checkmark : .none
             return cell
 
         case .manageModels:
@@ -294,12 +296,14 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
             var configuration = cell.defaultContentConfiguration()
             switch row {
             case .refreshOfficialModels:
-                configuration.text = modelManagement.isRefreshingModels ? "Refreshing Official Models..." : "Refresh Official Models"
-                configuration.secondaryText = "Pull the latest model list from the provider API."
+                configuration.text = modelManagement.isRefreshingModels
+                    ? String(localized: "provider_model.action.refreshing_models")
+                    : String(localized: "provider_model.action.refresh_models")
+                configuration.secondaryText = String(localized: "provider_model.action.refresh_models.subtitle")
                 cell.accessoryType = .none
             case .addCustomModel:
-                configuration.text = "Add Custom Model"
-                configuration.secondaryText = "Register a model that is not returned by the provider API."
+                configuration.text = String(localized: "provider_model.action.add_custom_model")
+                configuration.secondaryText = String(localized: "provider_model.action.add_custom_model.subtitle")
                 cell.accessoryType = .disclosureIndicator
             }
             configuration.secondaryTextProperties.color = .secondaryLabel

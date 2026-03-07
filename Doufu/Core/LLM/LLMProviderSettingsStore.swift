@@ -43,6 +43,9 @@ struct LLMProviderModelCapabilities: Codable, Equatable, Hashable {
                 structuredOutputSupported: true
             )
         case .googleGemini:
+            // Currently only Gemini 2.5 series supports thinking.
+            // Gemini 2.5 Pro does not allow disabling thinking; other 2.5 models do.
+            // Update these heuristics when new Gemini models with thinking are released.
             let supportsThinking = normalizedModelID.contains("2.5")
             let canDisableThinking = supportsThinking && !normalizedModelID.contains("2.5-pro")
             return LLMProviderModelCapabilities(
@@ -152,18 +155,7 @@ struct LLMProviderRecord: Codable, Equatable, Hashable {
         }
 
         var defaultModelID: String {
-            let firstBuiltIn = builtInModels.first?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if !firstBuiltIn.isEmpty {
-                return firstBuiltIn
-            }
-            switch self {
-            case .openAICompatible:
-                return "gpt-5.3-codex"
-            case .anthropic:
-                return "claude-sonnet-4-5"
-            case .googleGemini:
-                return "gemini-2.5-pro"
-            }
+            builtInModels.first ?? ""
         }
     }
 
@@ -248,6 +240,31 @@ struct LLMProviderRecord: Codable, Equatable, Hashable {
         let normalized = recordID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return availableModels.first { $0.normalizedID == normalized }
     }
+
+    func copying(
+        authMode: AuthMode? = nil,
+        updatedAt: Date? = nil,
+        label: String? = nil,
+        baseURLString: String? = nil,
+        autoAppendV1: Bool? = nil,
+        chatGPTAccountID: String?? = nil,
+        modelID: String?? = nil,
+        models: [LLMProviderModelRecord]? = nil
+    ) -> LLMProviderRecord {
+        LLMProviderRecord(
+            id: self.id,
+            kind: self.kind,
+            authMode: authMode ?? self.authMode,
+            createdAt: self.createdAt,
+            updatedAt: updatedAt ?? self.updatedAt,
+            label: label ?? self.label,
+            baseURLString: baseURLString ?? self.baseURLString,
+            autoAppendV1: autoAppendV1 ?? self.autoAppendV1,
+            chatGPTAccountID: chatGPTAccountID ?? self.chatGPTAccountID,
+            modelID: modelID ?? self.modelID,
+            models: models ?? self.models
+        )
+    }
 }
 
 enum LLMProviderSettingsStoreError: LocalizedError {
@@ -256,6 +273,7 @@ enum LLMProviderSettingsStoreError: LocalizedError {
     case invalidBaseURL
     case emptyModelID
     case encodeFailed
+    case providerNotFound
     case keychainFailed(status: OSStatus)
 
     var errorDescription: String? {
@@ -267,9 +285,11 @@ enum LLMProviderSettingsStoreError: LocalizedError {
         case .invalidBaseURL:
             return String(localized: "provider_store.error.invalid_base_url")
         case .emptyModelID:
-            return "Model ID cannot be empty."
+            return String(localized: "provider_store.error.empty_model_id")
         case .encodeFailed:
             return String(localized: "provider_store.error.encode_failed")
+        case .providerNotFound:
+            return String(localized: "provider_store.error.provider_not_found")
         case .keychainFailed:
             return String(localized: "provider_store.error.keychain_failed")
         }
@@ -477,23 +497,19 @@ final class LLMProviderSettingsStore {
 
         var providers = loadProviders()
         guard let index = providers.firstIndex(where: { $0.id == providerID }) else {
-            throw LLMProviderSettingsStoreError.encodeFailed
+            throw LLMProviderSettingsStoreError.providerNotFound
         }
         let existingProvider = providers[index]
         let normalizedBaseURL = try normalizeBaseURL(baseURLString, kind: existingProvider.kind)
         let normalizedModelID = normalizeModelID(modelID, kind: existingProvider.kind)
-        let updatedProvider = LLMProviderRecord(
-            id: existingProvider.id,
-            kind: existingProvider.kind,
+        let updatedProvider = existingProvider.copying(
             authMode: .apiKey,
-            createdAt: existingProvider.createdAt,
             updatedAt: Date(),
             label: normalizedLabel,
             baseURLString: normalizedBaseURL,
             autoAppendV1: autoAppendV1,
-            chatGPTAccountID: nil,
-            modelID: normalizedModelID,
-            models: existingProvider.models
+            chatGPTAccountID: .some(nil),
+            modelID: .some(normalizedModelID)
         )
         providers[index] = updatedProvider
         try saveProviders(providers)
@@ -547,23 +563,19 @@ final class LLMProviderSettingsStore {
 
         var providers = loadProviders()
         guard let index = providers.firstIndex(where: { $0.id == providerID }) else {
-            throw LLMProviderSettingsStoreError.encodeFailed
+            throw LLMProviderSettingsStoreError.providerNotFound
         }
         let existingProvider = providers[index]
         let normalizedBaseURL = try normalizeBaseURL(baseURLString, kind: existingProvider.kind)
         let normalizedModelID = normalizeModelID(modelID, kind: existingProvider.kind)
-        let updatedProvider = LLMProviderRecord(
-            id: existingProvider.id,
-            kind: existingProvider.kind,
+        let updatedProvider = existingProvider.copying(
             authMode: .oauth,
-            createdAt: existingProvider.createdAt,
             updatedAt: Date(),
             label: normalizedLabel,
             baseURLString: normalizedBaseURL,
             autoAppendV1: autoAppendV1,
-            chatGPTAccountID: chatGPTAccountID?.trimmingCharacters(in: .whitespacesAndNewlines),
-            modelID: normalizedModelID,
-            models: existingProvider.models
+            chatGPTAccountID: .some(chatGPTAccountID?.trimmingCharacters(in: .whitespacesAndNewlines)),
+            modelID: .some(normalizedModelID)
         )
         providers[index] = updatedProvider
         try saveProviders(providers)
@@ -581,7 +593,7 @@ final class LLMProviderSettingsStore {
     ) throws -> LLMProviderRecord {
         var providers = loadProviders()
         guard let index = providers.firstIndex(where: { $0.id == providerID }) else {
-            throw LLMProviderSettingsStoreError.encodeFailed
+            throw LLMProviderSettingsStoreError.providerNotFound
         }
 
         let existingProvider = providers[index]
@@ -595,17 +607,8 @@ final class LLMProviderSettingsStore {
                 capabilities: $0.capabilities
             )
         }
-        let updatedProvider = LLMProviderRecord(
-            id: existingProvider.id,
-            kind: existingProvider.kind,
-            authMode: existingProvider.authMode,
-            createdAt: existingProvider.createdAt,
+        let updatedProvider = existingProvider.copying(
             updatedAt: Date(),
-            label: existingProvider.label,
-            baseURLString: existingProvider.baseURLString,
-            autoAppendV1: existingProvider.autoAppendV1,
-            chatGPTAccountID: existingProvider.chatGPTAccountID,
-            modelID: existingProvider.modelID,
             models: mergeModels(customModels + officialModels)
         )
         providers[index] = updatedProvider
@@ -629,7 +632,7 @@ final class LLMProviderSettingsStore {
 
         var providers = loadProviders()
         guard let index = providers.firstIndex(where: { $0.id == providerID }) else {
-            throw LLMProviderSettingsStoreError.encodeFailed
+            throw LLMProviderSettingsStoreError.providerNotFound
         }
 
         let existingProvider = providers[index]
@@ -667,17 +670,9 @@ final class LLMProviderSettingsStore {
             }
             return model.normalizedID != normalizedRecordID.lowercased()
         }
-        let updatedProvider = LLMProviderRecord(
-            id: existingProvider.id,
-            kind: existingProvider.kind,
-            authMode: existingProvider.authMode,
-            createdAt: existingProvider.createdAt,
+        let updatedProvider = existingProvider.copying(
             updatedAt: Date(),
-            label: existingProvider.label,
-            baseURLString: existingProvider.baseURLString,
-            autoAppendV1: existingProvider.autoAppendV1,
-            chatGPTAccountID: existingProvider.chatGPTAccountID,
-            modelID: shouldSelect ? recordID : existingProvider.modelID,
+            modelID: .some(shouldSelect ? recordID : existingProvider.modelID),
             models: mergeModels(remainingModels + [customModel])
         )
         providers[index] = updatedProvider
@@ -697,21 +692,12 @@ final class LLMProviderSettingsStore {
 
         var providers = loadProviders()
         guard let index = providers.firstIndex(where: { $0.id == providerID }) else {
-            throw LLMProviderSettingsStoreError.encodeFailed
+            throw LLMProviderSettingsStoreError.providerNotFound
         }
         let existingProvider = providers[index]
-        let updatedProvider = LLMProviderRecord(
-            id: existingProvider.id,
-            kind: existingProvider.kind,
-            authMode: existingProvider.authMode,
-            createdAt: existingProvider.createdAt,
+        let updatedProvider = existingProvider.copying(
             updatedAt: Date(),
-            label: existingProvider.label,
-            baseURLString: existingProvider.baseURLString,
-            autoAppendV1: existingProvider.autoAppendV1,
-            chatGPTAccountID: existingProvider.chatGPTAccountID,
-            modelID: normalizedModelID,
-            models: existingProvider.models
+            modelID: .some(normalizedModelID)
         )
         providers[index] = updatedProvider
         try saveProviders(providers)
