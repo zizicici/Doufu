@@ -1,5 +1,5 @@
 //
-//  OpenAIAPIKeyProviderFormViewController.swift
+//  ProviderAPIKeyFormViewController.swift
 //  Doufu
 //
 //  Created by Codex on 2026/03/04.
@@ -7,13 +7,14 @@
 
 import UIKit
 
-final class OpenAIAPIKeyProviderFormViewController: UITableViewController {
+final class ProviderAPIKeyFormViewController: UITableViewController {
 
     private enum Section: Int, CaseIterable {
         case label
         case apiKey
         case customAPI
-        case model
+        case storedModels
+        case manageModels
         case addProvider
     }
 
@@ -23,6 +24,7 @@ final class OpenAIAPIKeyProviderFormViewController: UITableViewController {
     }
 
     private let store = LLMProviderSettingsStore.shared
+    private let modelManagement = ProviderModelManagementCoordinator()
     private let editingProvider: LLMProviderRecord?
     private let providerKind: LLMProviderRecord.Kind
 
@@ -30,8 +32,6 @@ final class OpenAIAPIKeyProviderFormViewController: UITableViewController {
     private var apiKeyText = ""
     private var customBaseURLText = ""
     private var shouldAutoAppendV1 = true
-    private var modelIDText = ""
-
     private var isEditingProvider: Bool {
         editingProvider != nil
     }
@@ -46,12 +46,8 @@ final class OpenAIAPIKeyProviderFormViewController: UITableViewController {
         let trimmedLabel = labelText.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedAPIKey = apiKeyText.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedBaseURL = customBaseURLText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedModelID = modelIDText.trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard !trimmedLabel.isEmpty, !trimmedAPIKey.isEmpty else {
-            return false
-        }
-        guard !trimmedModelID.isEmpty else {
             return false
         }
         return isValidOptionalBaseURL(trimmedBaseURL)
@@ -61,7 +57,6 @@ final class OpenAIAPIKeyProviderFormViewController: UITableViewController {
         editingProvider = nil
         self.providerKind = providerKind
         shouldAutoAppendV1 = providerKind.defaultAutoAppendV1
-        modelIDText = providerKind.defaultModelID
         super.init(style: .insetGrouped)
     }
 
@@ -71,7 +66,6 @@ final class OpenAIAPIKeyProviderFormViewController: UITableViewController {
         labelText = provider.label
         customBaseURLText = provider.baseURLString
         shouldAutoAppendV1 = provider.autoAppendV1
-        modelIDText = provider.effectiveModelID
         super.init(style: .insetGrouped)
     }
 
@@ -94,6 +88,19 @@ final class OpenAIAPIKeyProviderFormViewController: UITableViewController {
         tableView.register(SettingsSecureInputCell.self, forCellReuseIdentifier: SettingsSecureInputCell.reuseIdentifier)
         tableView.register(SettingsToggleCell.self, forCellReuseIdentifier: SettingsToggleCell.reuseIdentifier)
         tableView.register(SettingsCenteredButtonCell.self, forCellReuseIdentifier: SettingsCenteredButtonCell.reuseIdentifier)
+        tableView.register(UITableViewCell.self, forCellReuseIdentifier: "ProviderCell")
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        if isEditingProvider {
+            tableView.reloadData()
+        }
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        modelManagement.cancelRefreshIfNeeded(whenViewRemoved: view.window == nil)
     }
 
     override func numberOfSections(in tableView: UITableView) -> Int {
@@ -106,10 +113,17 @@ final class OpenAIAPIKeyProviderFormViewController: UITableViewController {
         }
 
         switch section {
-        case .label, .apiKey, .model, .addProvider:
+        case .label, .apiKey, .addProvider:
             return 1
         case .customAPI:
             return CustomAPIRow.allCases.count
+        case .storedModels:
+            guard isEditingProvider else {
+                return 0
+            }
+            return max(storedModels().count, 1)
+        case .manageModels:
+            return isEditingProvider ? ProviderModelManageRow.allCases.count : 0
         }
     }
 
@@ -125,8 +139,10 @@ final class OpenAIAPIKeyProviderFormViewController: UITableViewController {
             return String(localized: "providers.form.section.api_key")
         case .customAPI:
             return String(localized: "providers.api_key_form.section.custom_api")
-        case .model:
-            return "Model"
+        case .storedModels:
+            return isEditingProvider ? "Stored Models" : nil
+        case .manageModels:
+            return isEditingProvider ? "Manage Models" : nil
         case .addProvider:
             return nil
         }
@@ -140,8 +156,6 @@ final class OpenAIAPIKeyProviderFormViewController: UITableViewController {
         switch section {
         case .customAPI:
             return "Default: \(providerKind.defaultBaseURLString)"
-        case .model:
-            return "Built-in: \(providerKind.builtInModels.joined(separator: ", "))"
         default:
             return nil
         }
@@ -236,24 +250,52 @@ final class OpenAIAPIKeyProviderFormViewController: UITableViewController {
                 return cell
             }
 
-        case .model:
-            guard
-                let cell = tableView.dequeueReusableCell(
-                    withIdentifier: SettingsTextInputCell.reuseIdentifier,
-                    for: indexPath
-                ) as? SettingsTextInputCell
-            else {
-                return UITableViewCell()
+        case .storedModels:
+            let cell = tableView.dequeueReusableCell(withIdentifier: "ProviderCell", for: indexPath)
+            let models = storedModels()
+            if models.isEmpty {
+                cell.selectionStyle = .none
+                cell.accessoryType = .none
+                var configuration = UIListContentConfiguration.cell()
+                configuration.text = "No models stored."
+                configuration.textProperties.color = .secondaryLabel
+                configuration.textProperties.alignment = .center
+                cell.contentConfiguration = configuration
+                return cell
             }
-            cell.configure(
-                title: nil,
-                text: modelIDText,
-                placeholder: providerKind.defaultModelID,
-                autocapitalizationType: .none
-            ) { [weak self] text in
-                self?.modelIDText = text
-                self?.refreshAddProviderCell()
+            guard models.indices.contains(indexPath.row) else {
+                return cell
             }
+            let model = models[indexPath.row]
+            let selectedRecordID = latestEditingProvider()?.effectiveModelRecordID.lowercased()
+            var configuration = cell.defaultContentConfiguration()
+            configuration.text = model.effectiveDisplayName
+            let sourceLabel: String = model.source == .official ? "Official" : "Custom"
+            configuration.secondaryText = sourceLabel + " · " + model.modelID
+            configuration.secondaryTextProperties.color = .secondaryLabel
+            cell.contentConfiguration = configuration
+            cell.accessoryType = model.normalizedID == selectedRecordID ? .checkmark : .none
+            cell.selectionStyle = .none
+            return cell
+
+        case .manageModels:
+            let cell = tableView.dequeueReusableCell(withIdentifier: "ProviderCell", for: indexPath)
+            guard let row = ProviderModelManageRow(rawValue: indexPath.row) else {
+                return cell
+            }
+            var configuration = cell.defaultContentConfiguration()
+            switch row {
+            case .refreshOfficialModels:
+                configuration.text = modelManagement.isRefreshingModels ? "Refreshing Official Models..." : "Refresh Official Models"
+                configuration.secondaryText = "Pull the latest model list from the provider API."
+                cell.accessoryType = .none
+            case .addCustomModel:
+                configuration.text = "Add Custom Model"
+                configuration.secondaryText = "Register a model that is not returned by the provider API."
+                cell.accessoryType = .disclosureIndicator
+            }
+            configuration.secondaryTextProperties.color = .secondaryLabel
+            cell.contentConfiguration = configuration
             return cell
 
         case .addProvider:
@@ -271,19 +313,58 @@ final class OpenAIAPIKeyProviderFormViewController: UITableViewController {
     }
 
     override func tableView(_ tableView: UITableView, willSelectRowAt indexPath: IndexPath) -> IndexPath? {
-        guard Section(rawValue: indexPath.section) == .addProvider else {
+        guard let section = Section(rawValue: indexPath.section) else {
             return nil
         }
-        return canSubmitProvider ? indexPath : nil
+        switch section {
+        case .addProvider:
+            return canSubmitProvider ? indexPath : nil
+        case .manageModels:
+            return modelManagement.isRefreshingModels ? nil : indexPath
+        case .label, .apiKey, .customAPI, .storedModels:
+            return nil
+        }
     }
 
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         defer { tableView.deselectRow(at: indexPath, animated: true) }
 
-        guard Section(rawValue: indexPath.section) == .addProvider, canSubmitProvider else {
+        guard let section = Section(rawValue: indexPath.section) else {
             return
         }
-        submitProvider()
+        switch section {
+        case .addProvider:
+            guard canSubmitProvider else {
+                return
+            }
+            submitProvider()
+        case .manageModels:
+            guard let row = ProviderModelManageRow(rawValue: indexPath.row) else {
+                return
+            }
+            switch row {
+            case .refreshOfficialModels:
+                guard let provider = latestEditingProvider() else {
+                    return
+                }
+                modelManagement.refreshOfficialModels(
+                    for: provider,
+                    manageSectionIndex: Section.manageModels.rawValue,
+                    in: self
+                )
+            case .addCustomModel:
+                guard let provider = latestEditingProvider() else {
+                    return
+                }
+                modelManagement.presentModelEditor(
+                    for: provider,
+                    existingModel: nil,
+                    from: self
+                )
+            }
+        case .label, .apiKey, .customAPI, .storedModels:
+            break
+        }
     }
 
     private func submitProvider() {
@@ -297,7 +378,7 @@ final class OpenAIAPIKeyProviderFormViewController: UITableViewController {
                     apiKey: apiKeyText,
                     baseURLString: customBaseURLText,
                     autoAppendV1: shouldAutoAppendV1,
-                    modelID: modelIDText
+                    modelID: latestEditingProvider()?.modelID
                 )
                 popToManageProviders()
             } else {
@@ -307,7 +388,7 @@ final class OpenAIAPIKeyProviderFormViewController: UITableViewController {
                     apiKey: apiKeyText,
                     baseURLString: customBaseURLText,
                     autoAppendV1: shouldAutoAppendV1,
-                    modelID: modelIDText
+                    modelID: nil
                 )
                 showAddedAlert(providerLabel: provider.label)
             }
@@ -381,5 +462,16 @@ final class OpenAIAPIKeyProviderFormViewController: UITableViewController {
             return
         }
         navigationController.popViewController(animated: true)
+    }
+
+    private func latestEditingProvider() -> LLMProviderRecord? {
+        guard let editingProvider else {
+            return nil
+        }
+        return store.loadProvider(id: editingProvider.id) ?? editingProvider
+    }
+
+    private func storedModels() -> [LLMProviderModelRecord] {
+        modelManagement.storedModels(for: latestEditingProvider())
     }
 }

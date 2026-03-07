@@ -8,6 +8,79 @@
 import Foundation
 import Security
 
+struct LLMProviderModelCapabilities: Codable, Equatable, Hashable {
+    var reasoningEfforts: [ProjectChatService.ReasoningEffort]
+    var thinkingSupported: Bool
+    var thinkingCanDisable: Bool
+    var structuredOutputSupported: Bool
+
+    static func defaults(
+        for providerKind: LLMProviderRecord.Kind,
+        modelID: String
+    ) -> LLMProviderModelCapabilities {
+        let normalizedModelID = modelID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        switch providerKind {
+        case .openAICompatible:
+            let efforts: [ProjectChatService.ReasoningEffort]
+            if normalizedModelID.contains("mini") {
+                efforts = [.low, .medium, .high]
+            } else if normalizedModelID.contains("pro") || normalizedModelID.contains("codex") {
+                efforts = [.medium, .high, .xhigh]
+            } else {
+                efforts = [.low, .medium, .high, .xhigh]
+            }
+            return LLMProviderModelCapabilities(
+                reasoningEfforts: efforts,
+                thinkingSupported: false,
+                thinkingCanDisable: false,
+                structuredOutputSupported: true
+            )
+        case .anthropic:
+            return LLMProviderModelCapabilities(
+                reasoningEfforts: [],
+                thinkingSupported: true,
+                thinkingCanDisable: true,
+                structuredOutputSupported: true
+            )
+        case .googleGemini:
+            let supportsThinking = normalizedModelID.contains("2.5")
+            let canDisableThinking = supportsThinking && !normalizedModelID.contains("2.5-pro")
+            return LLMProviderModelCapabilities(
+                reasoningEfforts: [],
+                thinkingSupported: supportsThinking,
+                thinkingCanDisable: canDisableThinking,
+                structuredOutputSupported: true
+            )
+        }
+    }
+}
+
+struct LLMProviderModelRecord: Codable, Equatable, Hashable {
+    enum Source: String, Codable {
+        case official
+        case custom
+    }
+
+    let id: String
+    let modelID: String
+    let displayName: String
+    let source: Source
+    let capabilities: LLMProviderModelCapabilities
+
+    var effectiveDisplayName: String {
+        let normalized = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalized.isEmpty ? modelID : normalized
+    }
+
+    var normalizedID: String {
+        id.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    var normalizedModelID: String {
+        modelID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+}
+
 struct LLMProviderRecord: Codable, Equatable, Hashable {
     enum Kind: String, Codable {
         case openAICompatible = "openai_compatible"
@@ -30,9 +103,9 @@ struct LLMProviderRecord: Codable, Equatable, Hashable {
             case .openAICompatible:
                 return String(localized: "providers.kind.openai_compatible.subtitle")
             case .anthropic:
-                return "Claude API / Claude OAuth token"
+                return "Claude API"
             case .googleGemini:
-                return "Gemini API / Google Cloud Code Assist OAuth"
+                return "Gemini API / Google OAuth"
             }
         }
 
@@ -118,6 +191,7 @@ struct LLMProviderRecord: Codable, Equatable, Hashable {
     let autoAppendV1: Bool
     let chatGPTAccountID: String?
     let modelID: String?
+    let models: [LLMProviderModelRecord]
 
     var effectiveBaseURLString: String {
         guard autoAppendV1 else {
@@ -132,8 +206,47 @@ struct LLMProviderRecord: Codable, Equatable, Hashable {
     }
 
     var effectiveModelID: String {
-        let normalized = modelID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return normalized.isEmpty ? kind.defaultModelID : normalized
+        let selectedRecordID = modelID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !selectedRecordID.isEmpty,
+           let record = availableModels.first(where: { $0.normalizedID == selectedRecordID.lowercased() }) {
+            return record.modelID
+        }
+        if let firstModelID = availableModels.first?.modelID.trimmingCharacters(in: .whitespacesAndNewlines), !firstModelID.isEmpty {
+            return firstModelID
+        }
+        return ""
+    }
+
+    var effectiveModelRecordID: String {
+        let selectedRecordID = modelID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !selectedRecordID.isEmpty {
+            return selectedRecordID
+        }
+        return availableModels.first?.id ?? ""
+    }
+
+    var availableModels: [LLMProviderModelRecord] {
+        let orderedModels = models
+
+        var seenModelIDs: Set<String> = []
+        var deduplicated: [LLMProviderModelRecord] = []
+        for model in orderedModels {
+            let normalizedID = model.normalizedID
+            guard !normalizedID.isEmpty else {
+                continue
+            }
+            guard !seenModelIDs.contains(normalizedID) else {
+                continue
+            }
+            seenModelIDs.insert(normalizedID)
+            deduplicated.append(model)
+        }
+        return deduplicated
+    }
+
+    func modelRecord(for recordID: String) -> LLMProviderModelRecord? {
+        let normalized = recordID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return availableModels.first { $0.normalizedID == normalized }
     }
 }
 
@@ -141,6 +254,7 @@ enum LLMProviderSettingsStoreError: LocalizedError {
     case emptyLabel
     case emptyAPIKey
     case invalidBaseURL
+    case emptyModelID
     case encodeFailed
     case keychainFailed(status: OSStatus)
 
@@ -152,6 +266,8 @@ enum LLMProviderSettingsStoreError: LocalizedError {
             return String(localized: "provider_store.error.empty_api_key")
         case .invalidBaseURL:
             return String(localized: "provider_store.error.invalid_base_url")
+        case .emptyModelID:
+            return "Model ID cannot be empty."
         case .encodeFailed:
             return String(localized: "provider_store.error.encode_failed")
         case .keychainFailed:
@@ -167,7 +283,7 @@ final class LLMProviderSettingsStore {
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
 
-    private let providersKey = "llm.providers.records.v1"
+    private let providersKey = "llm.providers.records.v2"
     private let keychainService = Bundle.main.bundleIdentifier ?? "com.zizicici.doufu"
 
     init(defaults: UserDefaults = .standard) {
@@ -187,6 +303,14 @@ final class LLMProviderSettingsStore {
 
     func loadProvider(id: String) -> LLMProviderRecord? {
         loadProviders().first { $0.id == id }
+    }
+
+    func availableModels(forProviderID providerID: String) -> [LLMProviderModelRecord] {
+        loadProvider(id: providerID)?.availableModels ?? []
+    }
+
+    func modelRecord(providerID: String, modelID: String) -> LLMProviderModelRecord? {
+        loadProvider(id: providerID)?.modelRecord(for: modelID)
     }
 
     @discardableResult
@@ -239,7 +363,8 @@ final class LLMProviderSettingsStore {
             baseURLString: normalizedBaseURL,
             autoAppendV1: autoAppendV1,
             chatGPTAccountID: nil,
-            modelID: normalizedModelID
+            modelID: normalizedModelID,
+            models: []
         )
 
         var allProviders = loadProviders()
@@ -297,7 +422,8 @@ final class LLMProviderSettingsStore {
             baseURLString: normalizedBaseURL,
             autoAppendV1: autoAppendV1,
             chatGPTAccountID: chatGPTAccountID?.trimmingCharacters(in: .whitespacesAndNewlines),
-            modelID: normalizedModelID
+            modelID: normalizedModelID,
+            models: []
         )
 
         var allProviders = loadProviders()
@@ -366,7 +492,8 @@ final class LLMProviderSettingsStore {
             baseURLString: normalizedBaseURL,
             autoAppendV1: autoAppendV1,
             chatGPTAccountID: nil,
-            modelID: normalizedModelID
+            modelID: normalizedModelID,
+            models: existingProvider.models
         )
         providers[index] = updatedProvider
         try saveProviders(providers)
@@ -435,7 +562,8 @@ final class LLMProviderSettingsStore {
             baseURLString: normalizedBaseURL,
             autoAppendV1: autoAppendV1,
             chatGPTAccountID: chatGPTAccountID?.trimmingCharacters(in: .whitespacesAndNewlines),
-            modelID: normalizedModelID
+            modelID: normalizedModelID,
+            models: existingProvider.models
         )
         providers[index] = updatedProvider
         try saveProviders(providers)
@@ -443,6 +571,150 @@ final class LLMProviderSettingsStore {
         if existingProvider.authMode == .apiKey {
             try deleteAPIKey(providerID: providerID)
         }
+        return updatedProvider
+    }
+
+    @discardableResult
+    func replaceOfficialModels(
+        providerID: String,
+        models: [LLMProviderModelRecord]
+    ) throws -> LLMProviderRecord {
+        var providers = loadProviders()
+        guard let index = providers.firstIndex(where: { $0.id == providerID }) else {
+            throw LLMProviderSettingsStoreError.encodeFailed
+        }
+
+        let existingProvider = providers[index]
+        let customModels = existingProvider.models.filter { $0.source == .custom }
+        let officialModels = models.map {
+            LLMProviderModelRecord(
+                id: $0.id,
+                modelID: $0.modelID,
+                displayName: $0.displayName,
+                source: .official,
+                capabilities: $0.capabilities
+            )
+        }
+        let updatedProvider = LLMProviderRecord(
+            id: existingProvider.id,
+            kind: existingProvider.kind,
+            authMode: existingProvider.authMode,
+            createdAt: existingProvider.createdAt,
+            updatedAt: Date(),
+            label: existingProvider.label,
+            baseURLString: existingProvider.baseURLString,
+            autoAppendV1: existingProvider.autoAppendV1,
+            chatGPTAccountID: existingProvider.chatGPTAccountID,
+            modelID: existingProvider.modelID,
+            models: mergeModels(customModels + officialModels)
+        )
+        providers[index] = updatedProvider
+        try saveProviders(providers)
+        return updatedProvider
+    }
+
+    @discardableResult
+    func saveCustomModel(
+        providerID: String,
+        modelID: String,
+        displayName: String?,
+        capabilities: LLMProviderModelCapabilities,
+        shouldSelect: Bool,
+        existingRecordID: String? = nil
+    ) throws -> LLMProviderRecord {
+        let normalizedModelID = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedModelID.isEmpty else {
+            throw LLMProviderSettingsStoreError.emptyModelID
+        }
+
+        var providers = loadProviders()
+        guard let index = providers.firstIndex(where: { $0.id == providerID }) else {
+            throw LLMProviderSettingsStoreError.encodeFailed
+        }
+
+        let existingProvider = providers[index]
+        let normalizedRecordID = existingRecordID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let recordID = normalizedRecordID.isEmpty ? UUID().uuidString : normalizedRecordID
+        let trimmedDisplayName = displayName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let autoDisplayName: String = {
+            guard trimmedDisplayName.isEmpty else {
+                return trimmedDisplayName
+            }
+            let duplicateCount = existingProvider.models.filter { model in
+                guard model.source == .custom else {
+                    return false
+                }
+                if !normalizedRecordID.isEmpty, model.normalizedID == normalizedRecordID.lowercased() {
+                    return false
+                }
+                return model.normalizedModelID == normalizedModelID.lowercased()
+            }.count
+            guard duplicateCount > 0 else {
+                return normalizedModelID
+            }
+            return normalizedModelID + " #\(duplicateCount + 1)"
+        }()
+        let customModel = LLMProviderModelRecord(
+            id: recordID,
+            modelID: normalizedModelID,
+            displayName: autoDisplayName,
+            source: .custom,
+            capabilities: capabilities
+        )
+        let remainingModels = existingProvider.models.filter { model in
+            guard !normalizedRecordID.isEmpty else {
+                return true
+            }
+            return model.normalizedID != normalizedRecordID.lowercased()
+        }
+        let updatedProvider = LLMProviderRecord(
+            id: existingProvider.id,
+            kind: existingProvider.kind,
+            authMode: existingProvider.authMode,
+            createdAt: existingProvider.createdAt,
+            updatedAt: Date(),
+            label: existingProvider.label,
+            baseURLString: existingProvider.baseURLString,
+            autoAppendV1: existingProvider.autoAppendV1,
+            chatGPTAccountID: existingProvider.chatGPTAccountID,
+            modelID: shouldSelect ? recordID : existingProvider.modelID,
+            models: mergeModels(remainingModels + [customModel])
+        )
+        providers[index] = updatedProvider
+        try saveProviders(providers)
+        return updatedProvider
+    }
+
+    @discardableResult
+    func updateSelectedModelID(
+        providerID: String,
+        modelID: String
+    ) throws -> LLMProviderRecord {
+        let normalizedModelID = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedModelID.isEmpty else {
+            throw LLMProviderSettingsStoreError.emptyModelID
+        }
+
+        var providers = loadProviders()
+        guard let index = providers.firstIndex(where: { $0.id == providerID }) else {
+            throw LLMProviderSettingsStoreError.encodeFailed
+        }
+        let existingProvider = providers[index]
+        let updatedProvider = LLMProviderRecord(
+            id: existingProvider.id,
+            kind: existingProvider.kind,
+            authMode: existingProvider.authMode,
+            createdAt: existingProvider.createdAt,
+            updatedAt: Date(),
+            label: existingProvider.label,
+            baseURLString: existingProvider.baseURLString,
+            autoAppendV1: existingProvider.autoAppendV1,
+            chatGPTAccountID: existingProvider.chatGPTAccountID,
+            modelID: normalizedModelID,
+            models: existingProvider.models
+        )
+        providers[index] = updatedProvider
+        try saveProviders(providers)
         return updatedProvider
     }
 
@@ -542,7 +814,24 @@ final class LLMProviderSettingsStore {
 
     private func normalizeModelID(_ rawValue: String?, kind: LLMProviderRecord.Kind) -> String {
         let candidate = (rawValue ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        return candidate.isEmpty ? kind.defaultModelID : candidate
+        return candidate
+    }
+
+    private func mergeModels(_ models: [LLMProviderModelRecord]) -> [LLMProviderModelRecord] {
+        var seenModelIDs: Set<String> = []
+        var merged: [LLMProviderModelRecord] = []
+        for model in models {
+            let normalizedID = model.normalizedID
+            guard !normalizedID.isEmpty else {
+                continue
+            }
+            guard !seenModelIDs.contains(normalizedID) else {
+                continue
+            }
+            seenModelIDs.insert(normalizedID)
+            merged.append(model)
+        }
+        return merged
     }
 
     private func saveProviders(_ providers: [LLMProviderRecord]) throws {

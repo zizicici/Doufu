@@ -123,14 +123,14 @@ final class ManageProvidersViewController: UITableViewController {
         let provider = providers[indexPath.row]
         switch provider.authMode {
         case .apiKey:
-            let controller = OpenAIAPIKeyProviderFormViewController(provider: provider)
+            let controller = ProviderAPIKeyFormViewController(provider: provider)
             navigationController?.pushViewController(controller, animated: true)
         case .oauth:
             if provider.kind == .anthropic {
-                let controller = OpenAIAPIKeyProviderFormViewController(provider: provider)
+                let controller = ProviderAPIKeyFormViewController(provider: provider)
                 navigationController?.pushViewController(controller, animated: true)
             } else {
-                let controller = OpenAIOAuthProviderFormViewController(provider: provider)
+                let controller = ProviderOAuthFormViewController(provider: provider)
                 navigationController?.pushViewController(controller, animated: true)
             }
         }

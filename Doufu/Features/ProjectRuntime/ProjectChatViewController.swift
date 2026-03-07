@@ -47,6 +47,7 @@ final class ProjectChatViewController: UIViewController {
     private let projectURL: URL
     private let chatService = ProjectChatService()
     private let providerStore = LLMProviderSettingsStore.shared
+    private let modelDiscoveryService = LLMProviderModelDiscoveryService()
     private let threadStore = ProjectChatThreadStore.shared
 
     private var messages: [Message] = []
@@ -70,6 +71,7 @@ final class ProjectChatViewController: UIViewController {
     private var selectedReasoningEffortsByModelID: [String: ProjectChatService.ReasoningEffort] = [:]
     private var selectedAnthropicThinkingEnabledByModelID: [String: Bool] = [:]
     private var selectedGeminiThinkingEnabledByModelID: [String: Bool] = [:]
+    private var modelRefreshTask: Task<Void, Never>?
     private let inputMinHeight: CGFloat = 38
     private let inputMaxHeight: CGFloat = 120
     private var inputHeightConstraint: NSLayoutConstraint?
@@ -196,6 +198,7 @@ final class ProjectChatViewController: UIViewController {
         super.viewDidDisappear(animated)
         if view.window == nil {
             stopProgressUIUpdateTimer()
+            modelRefreshTask?.cancel()
         }
         persistCurrentThreadMessages()
     }
@@ -316,13 +319,19 @@ final class ProjectChatViewController: UIViewController {
             let providerSelectedModel = selectedModelIDByProviderID[credential.providerID]?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             if providerSelectedModel.isEmpty {
-                selectedModelID = credential.modelID
-                selectedModelIDByProviderID[credential.providerID] = credential.modelID
+                let resolvedModel = resolvedModelID(for: credential)
+                selectedModelID = resolvedModel.isEmpty ? nil : resolvedModel
+                if resolvedModel.isEmpty {
+                    selectedModelIDByProviderID.removeValue(forKey: credential.providerID)
+                } else {
+                    selectedModelIDByProviderID[credential.providerID] = resolvedModel
+                }
             } else {
                 selectedModelID = providerSelectedModel
             }
             appendProviderStatusIfNeeded()
             refreshNavigationItems()
+            refreshOfficialModels()
         } catch {
             availableProviderCredentials = []
             providerCredential = nil
@@ -347,6 +356,94 @@ final class ProjectChatViewController: UIViewController {
             )
         )
         persistCurrentThreadMessages()
+    }
+
+    private func refreshOfficialModels() {
+        let providers = providerStore.loadProviders()
+        modelRefreshTask?.cancel()
+        modelRefreshTask = Task { [weak self] in
+            guard let self else {
+                return
+            }
+            for provider in providers {
+                if Task.isCancelled {
+                    return
+                }
+                let token = (try? self.providerStore.loadBearerToken(for: provider))?
+                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                guard !token.isEmpty else {
+                    continue
+                }
+
+                do {
+                    let models = try await self.modelDiscoveryService.fetchModels(for: provider, bearerToken: token)
+                    _ = try self.providerStore.replaceOfficialModels(providerID: provider.id, models: models)
+                    if self.providerCredential?.providerID == provider.id {
+                        self.refreshNavigationItems()
+                    }
+                } catch {
+                    print("[Doufu ModelDiscovery] failed to refresh models for provider=\(provider.id) error=\(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    private func availableModelRecords(for credential: ProjectChatService.ProviderCredential) -> [LLMProviderModelRecord] {
+        if let provider = providerStore.loadProvider(id: credential.providerID) {
+            return provider.availableModels
+        }
+        let fallbackModelID = credential.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !fallbackModelID.isEmpty else {
+            return []
+        }
+        return [
+            LLMProviderModelRecord(
+                id: fallbackModelID,
+                modelID: fallbackModelID,
+                displayName: fallbackModelID,
+                source: .custom,
+                capabilities: .defaults(for: credential.providerKind, modelID: fallbackModelID)
+            )
+        ]
+    }
+
+    private func modelCapabilities(
+        providerID: String,
+        providerKind: LLMProviderRecord.Kind,
+        modelID: String
+    ) -> LLMProviderModelCapabilities {
+        if let record = providerStore.modelRecord(providerID: providerID, modelID: modelID) {
+            return record.capabilities
+        }
+        let normalized = normalizedModelID(modelID)
+        if let record = providerStore.availableModels(forProviderID: providerID).first(where: { $0.normalizedModelID == normalized }) {
+            return record.capabilities
+        }
+        return .defaults(for: providerKind, modelID: modelID)
+    }
+
+    private func reasoningProfile(
+        forModelID modelID: String,
+        providerID: String,
+        providerKind: LLMProviderRecord.Kind
+    ) -> (supported: [ProjectChatService.ReasoningEffort], defaultEffort: ProjectChatService.ReasoningEffort)? {
+        guard providerKind == .openAICompatible else {
+            return nil
+        }
+
+        let capabilities = modelCapabilities(providerID: providerID, providerKind: providerKind, modelID: modelID)
+        let supported = capabilities.reasoningEfforts
+        guard !supported.isEmpty else {
+            return nil
+        }
+
+        let defaultEffort: ProjectChatService.ReasoningEffort
+        if supported.contains(.high) {
+            defaultEffort = .high
+        } else {
+            defaultEffort = supported.first ?? .medium
+        }
+        return (supported: supported, defaultEffort: defaultEffort)
     }
 
     private func resolveProviderCredentials() throws -> [ProjectChatService.ProviderCredential] {
@@ -383,6 +480,52 @@ final class ProjectChatViewController: UIViewController {
         return output
     }
 
+    private func resolvedModelID(for credential: ProjectChatService.ProviderCredential) -> String {
+        if
+            let remembered = selectedModelIDByProviderID[credential.providerID]?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            !remembered.isEmpty
+        {
+            return remembered
+        }
+
+        if
+            providerCredential?.providerID == credential.providerID,
+            let currentSelection = selectedModelID?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !currentSelection.isEmpty
+        {
+            return currentSelection
+        }
+
+        if let providerRecord = providerStore.loadProvider(id: credential.providerID) {
+            let providerSelection = providerRecord.effectiveModelRecordID.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !providerSelection.isEmpty {
+                return providerSelection
+            }
+        }
+
+        return availableModelRecords(for: credential).first?.id ?? ""
+    }
+
+    private func resolvedModelRecord(for credential: ProjectChatService.ProviderCredential) -> LLMProviderModelRecord? {
+        let selectedRecordID = resolvedModelID(for: credential)
+        if let selectedRecord = availableModelRecords(for: credential).first(where: { $0.normalizedID == selectedRecordID.lowercased() }) {
+            return selectedRecord
+        }
+        let fallbackModelID = credential.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !fallbackModelID.isEmpty else {
+            return nil
+        }
+        return availableModelRecords(for: credential).first(where: { $0.normalizedModelID == fallbackModelID.lowercased() })
+    }
+
+    private func resolvedRequestModelID(for credential: ProjectChatService.ProviderCredential) -> String {
+        if let record = resolvedModelRecord(for: credential) {
+            return record.modelID
+        }
+        return credential.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private func switchProvider(to providerID: String) {
         guard let credential = availableProviderCredentials.first(where: { $0.providerID == providerID }) else {
             return
@@ -398,13 +541,13 @@ final class ProjectChatViewController: UIViewController {
         providerCredential = credential
         selectedProviderID = credential.providerID
 
-        let providerModel = selectedModelIDByProviderID[credential.providerID]?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let providerModel = resolvedModelID(for: credential)
         if providerModel.isEmpty {
-            selectedModelID = credential.modelID
-            selectedModelIDByProviderID[credential.providerID] = credential.modelID
+            selectedModelID = nil
+            selectedModelIDByProviderID.removeValue(forKey: credential.providerID)
         } else {
             selectedModelID = providerModel
+            selectedModelIDByProviderID[credential.providerID] = providerModel
         }
         refreshNavigationItems()
     }
@@ -466,48 +609,50 @@ final class ProjectChatViewController: UIViewController {
     }
 
     private func currentModelMenuTitle() -> String {
-        if
-            let providerID = providerCredential?.providerID,
-            let providerModel = selectedModelIDByProviderID[providerID]?
-                .trimmingCharacters(in: .whitespacesAndNewlines),
-            !providerModel.isEmpty
-        {
-            return providerModel
+        guard let credential = providerCredential else {
+            return String(localized: "chat.menu.model")
         }
-
-        let selected = selectedModelID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !selected.isEmpty {
-            return selected
-        }
-        let fallback = providerCredential?.modelID.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return fallback.isEmpty ? String(localized: "chat.menu.model") : fallback
+        let selectedModel = resolvedModelRecord(for: credential)
+        return selectedModel?.effectiveDisplayName ?? String(localized: "chat.menu.model")
     }
 
     private func currentModelMenuButtonTitle() -> String {
-        let modelTitle = currentModelMenuTitle()
-        guard
-            let credential = providerCredential,
-            let providerKind = currentProviderKind()
-        else {
-            return modelTitle
+        guard let credential = providerCredential, let providerKind = currentProviderKind() else {
+            return currentModelMenuTitle()
         }
         let normalizedProviderLabel = credential.providerLabel.trimmingCharacters(in: .whitespacesAndNewlines)
         let providerTitle = normalizedProviderLabel.isEmpty ? providerKind.displayName : normalizedProviderLabel
+        guard let selectedModel = resolvedModelRecord(for: credential) else {
+            return providerTitle + " · " + String(localized: "chat.menu.model")
+        }
+        let modelTitle = selectedModel.effectiveDisplayName
+        let capabilities = selectedModel.capabilities
+        let selectionKey = selectedModel.id
         switch providerKind {
         case .openAICompatible:
-            guard reasoningProfile(forModelID: modelTitle, providerKind: providerKind) != nil else {
+            guard reasoningProfile(forModelID: selectionKey, providerID: credential.providerID, providerKind: providerKind) != nil else {
                 return providerTitle + " · " + modelTitle
             }
-            let effort = resolvedReasoningEffort(forModelID: modelTitle, providerKind: providerKind)
+            let effort = resolvedReasoningEffort(
+                forModelID: selectionKey,
+                providerID: credential.providerID,
+                providerKind: providerKind
+            )
             return providerTitle + " · " + modelTitle + " · " + effort.displayName
         case .anthropic:
-            let enabled = resolvedAnthropicThinkingEnabled(forModelID: modelTitle)
+            guard capabilities.thinkingSupported else {
+                return providerTitle + " · " + modelTitle
+            }
+            let enabled = resolvedAnthropicThinkingEnabled(providerCredential: credential, modelID: selectionKey)
             let status = enabled
                 ? String(localized: "chat.thinking.enabled")
                 : String(localized: "chat.thinking.disabled")
             return providerTitle + " · " + modelTitle + " · " + status
         case .googleGemini:
-            let enabled = resolvedGeminiThinkingEnabled(forModelID: modelTitle)
+            guard capabilities.thinkingSupported else {
+                return providerTitle + " · " + modelTitle
+            }
+            let enabled = resolvedGeminiThinkingEnabled(providerCredential: credential, modelID: selectionKey)
             let status = enabled
                 ? String(localized: "chat.thinking.enabled")
                 : String(localized: "chat.thinking.disabled")
@@ -526,30 +671,12 @@ final class ProjectChatViewController: UIViewController {
         modelID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
-    private func reasoningProfile(
-        forModelID modelID: String,
-        providerKind: LLMProviderRecord.Kind
-    ) -> (supported: [ProjectChatService.ReasoningEffort], defaultEffort: ProjectChatService.ReasoningEffort)? {
-        let normalizedModel = normalizedModelID(modelID)
-        switch providerKind {
-        case .openAICompatible:
-            if normalizedModel.contains("mini") {
-                return (supported: [.low, .medium, .high], defaultEffort: .medium)
-            }
-            if normalizedModel.contains("pro") || normalizedModel.contains("codex") {
-                return (supported: [.medium, .high, .xhigh], defaultEffort: .high)
-            }
-            return (supported: [.low, .medium, .high, .xhigh], defaultEffort: .high)
-        case .anthropic, .googleGemini:
-            return nil
-        }
-    }
-
     private func resolvedReasoningEffort(
         forModelID modelID: String,
+        providerID: String,
         providerKind: LLMProviderRecord.Kind
     ) -> ProjectChatService.ReasoningEffort {
-        guard let profile = reasoningProfile(forModelID: modelID, providerKind: providerKind) else {
+        guard let profile = reasoningProfile(forModelID: modelID, providerID: providerID, providerKind: providerKind) else {
             return .high
         }
         let key = normalizedModelID(modelID)
@@ -560,8 +687,24 @@ final class ProjectChatViewController: UIViewController {
         return profile.defaultEffort
     }
 
-    private func resolvedAnthropicThinkingEnabled(forModelID modelID: String) -> Bool {
+    private func resolvedAnthropicThinkingEnabled(
+        providerCredential: ProjectChatService.ProviderCredential,
+        modelID: String
+    ) -> Bool {
         let key = normalizedModelID(modelID)
+        let capabilities = modelCapabilities(
+            providerID: providerCredential.providerID,
+            providerKind: providerCredential.providerKind,
+            modelID: modelID
+        )
+        guard capabilities.thinkingSupported else {
+            selectedAnthropicThinkingEnabledByModelID[key] = false
+            return false
+        }
+        guard capabilities.thinkingCanDisable else {
+            selectedAnthropicThinkingEnabledByModelID[key] = true
+            return true
+        }
         if let selected = selectedAnthropicThinkingEnabledByModelID[key] {
             return selected
         }
@@ -569,9 +712,21 @@ final class ProjectChatViewController: UIViewController {
         return true
     }
 
-    private func resolvedGeminiThinkingEnabled(forModelID modelID: String) -> Bool {
+    private func resolvedGeminiThinkingEnabled(
+        providerCredential: ProjectChatService.ProviderCredential,
+        modelID: String
+    ) -> Bool {
         let key = normalizedModelID(modelID)
-        guard geminiModelSupportsThinkingToggle(modelID) else {
+        let capabilities = modelCapabilities(
+            providerID: providerCredential.providerID,
+            providerKind: providerCredential.providerKind,
+            modelID: modelID
+        )
+        guard capabilities.thinkingSupported else {
+            selectedGeminiThinkingEnabledByModelID[key] = false
+            return false
+        }
+        guard capabilities.thinkingCanDisable else {
             selectedGeminiThinkingEnabledByModelID[key] = true
             return true
         }
@@ -582,26 +737,13 @@ final class ProjectChatViewController: UIViewController {
         return true
     }
 
-    private func geminiModelSupportsThinkingToggle(_ modelID: String) -> Bool {
-        let normalized = normalizedModelID(modelID)
-        return !normalized.contains("gemini-2.5-pro")
-    }
-
     private func providerMenuTitle(for credential: ProjectChatService.ProviderCredential) -> String {
         let normalizedLabel = credential.providerLabel.trimmingCharacters(in: .whitespacesAndNewlines)
         return normalizedLabel.isEmpty ? credential.providerKind.displayName : normalizedLabel
     }
 
     private func selectedModelID(for credential: ProjectChatService.ProviderCredential) -> String {
-        if
-            let remembered = selectedModelIDByProviderID[credential.providerID]?
-                .trimmingCharacters(in: .whitespacesAndNewlines),
-            !remembered.isEmpty
-        {
-            return remembered
-        }
-        let fallback = credential.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
-        return fallback.isEmpty ? credential.providerKind.defaultModelID : fallback
+        resolvedRequestModelID(for: credential)
     }
 
     private func selectProviderModel(
@@ -611,12 +753,17 @@ final class ProjectChatViewController: UIViewController {
         switchProvider(to: providerCredential.providerID)
         selectedModelID = modelID
         selectedModelIDByProviderID[providerCredential.providerID] = modelID
+        _ = try? providerStore.updateSelectedModelID(providerID: providerCredential.providerID, modelID: modelID)
 
         let providerKind = providerStore.loadProvider(id: providerCredential.providerID)?.kind ?? providerCredential.providerKind
         let normalizedModel = normalizedModelID(modelID)
         switch providerKind {
         case .openAICompatible:
-            if let profile = reasoningProfile(forModelID: modelID, providerKind: providerKind) {
+            if let profile = reasoningProfile(
+                forModelID: modelID,
+                providerID: providerCredential.providerID,
+                providerKind: providerKind
+            ) {
                 if let selected = selectedReasoningEffortsByModelID[normalizedModel], profile.supported.contains(selected) {
                     selectedReasoningEffortsByModelID[normalizedModel] = selected
                 } else {
@@ -627,12 +774,28 @@ final class ProjectChatViewController: UIViewController {
             }
         case .anthropic:
             selectedReasoningEffortsByModelID.removeValue(forKey: normalizedModel)
-            if selectedAnthropicThinkingEnabledByModelID[normalizedModel] == nil {
+            let capabilities = modelCapabilities(
+                providerID: providerCredential.providerID,
+                providerKind: providerKind,
+                modelID: modelID
+            )
+            if !capabilities.thinkingSupported {
+                selectedAnthropicThinkingEnabledByModelID[normalizedModel] = false
+            } else if !capabilities.thinkingCanDisable {
+                selectedAnthropicThinkingEnabledByModelID[normalizedModel] = true
+            } else if selectedAnthropicThinkingEnabledByModelID[normalizedModel] == nil {
                 selectedAnthropicThinkingEnabledByModelID[normalizedModel] = true
             }
         case .googleGemini:
             selectedReasoningEffortsByModelID.removeValue(forKey: normalizedModel)
-            if !geminiModelSupportsThinkingToggle(modelID) {
+            let capabilities = modelCapabilities(
+                providerID: providerCredential.providerID,
+                providerKind: providerKind,
+                modelID: modelID
+            )
+            if !capabilities.thinkingSupported {
+                selectedGeminiThinkingEnabledByModelID[normalizedModel] = false
+            } else if !capabilities.thinkingCanDisable {
                 selectedGeminiThinkingEnabledByModelID[normalizedModel] = true
             } else if selectedGeminiThinkingEnabledByModelID[normalizedModel] == nil {
                 selectedGeminiThinkingEnabledByModelID[normalizedModel] = true
@@ -647,12 +810,25 @@ final class ProjectChatViewController: UIViewController {
         modelID: String
     ) -> UIMenu? {
         let providerKind = providerStore.loadProvider(id: providerCredential.providerID)?.kind ?? providerCredential.providerKind
+        let capabilities = modelCapabilities(
+            providerID: providerCredential.providerID,
+            providerKind: providerKind,
+            modelID: modelID
+        )
         switch providerKind {
         case .openAICompatible:
-            guard let profile = reasoningProfile(forModelID: modelID, providerKind: providerKind) else {
+            guard let profile = reasoningProfile(
+                forModelID: modelID,
+                providerID: providerCredential.providerID,
+                providerKind: providerKind
+            ) else {
                 return nil
             }
-            let selectedReasoning = resolvedReasoningEffort(forModelID: modelID, providerKind: providerKind)
+            let selectedReasoning = resolvedReasoningEffort(
+                forModelID: modelID,
+                providerID: providerCredential.providerID,
+                providerKind: providerKind
+            )
             let reasoningActions = profile.supported.map { effort in
                 UIAction(
                     title: effort.displayName,
@@ -672,7 +848,14 @@ final class ProjectChatViewController: UIViewController {
                 children: reasoningActions
             )
         case .anthropic:
+            guard capabilities.thinkingSupported else {
+                return nil
+            }
             let key = normalizedModelID(modelID)
+            guard capabilities.thinkingCanDisable else {
+                selectedAnthropicThinkingEnabledByModelID[key] = true
+                return nil
+            }
             let currentValue = selectedAnthropicThinkingEnabledByModelID[key] ?? true
             selectedAnthropicThinkingEnabledByModelID[key] = currentValue
             let actions = [
@@ -701,8 +884,11 @@ final class ProjectChatViewController: UIViewController {
                 children: actions
             )
         case .googleGemini:
+            guard capabilities.thinkingSupported else {
+                return nil
+            }
             let key = normalizedModelID(modelID)
-            guard geminiModelSupportsThinkingToggle(modelID) else {
+            guard capabilities.thinkingCanDisable else {
                 selectedGeminiThinkingEnabledByModelID[key] = true
                 return nil
             }
@@ -742,21 +928,11 @@ final class ProjectChatViewController: UIViewController {
             return UIMenu(title: String(localized: "chat.menu.model"), children: [unavailable])
         }
         let providerMenus = availableProviderCredentials.map { provider in
-            let providerKind = providerStore.loadProvider(id: provider.providerID)?.kind ?? provider.providerKind
-            var modelIDs = providerKind.builtInModels
-            let fallbackModel = provider.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !fallbackModel.isEmpty, !modelIDs.contains(where: { $0.caseInsensitiveCompare(fallbackModel) == .orderedSame }) {
-                modelIDs.insert(fallbackModel, at: 0)
-            }
-
-            let selectedModelForProvider = selectedModelID(for: provider)
-            if !selectedModelForProvider.isEmpty, !modelIDs.contains(where: { $0.caseInsensitiveCompare(selectedModelForProvider) == .orderedSame }) {
-                modelIDs.insert(selectedModelForProvider, at: 0)
-            }
-
-            let modelSubmenus: [UIMenu] = modelIDs.map { modelID in
+            let modelRecords = availableModelRecords(for: provider)
+            let modelSubmenus: [UIMenu] = modelRecords.map { model in
+                let modelID = model.id
                 let isCurrent = provider.providerID == credential.providerID
-                    && modelID.caseInsensitiveCompare(currentModelMenuTitle()) == .orderedSame
+                    && modelID.caseInsensitiveCompare(resolvedModelID(for: provider)) == .orderedSame
                 let selectAction = UIAction(
                     title: String(localized: "chat.menu.use_model"),
                     state: isCurrent ? .on : .off
@@ -768,7 +944,7 @@ final class ProjectChatViewController: UIViewController {
                     children.append(optionMenu)
                 }
                 return UIMenu(
-                    title: modelID,
+                    title: model.effectiveDisplayName,
                     options: .displayInline,
                     children: children
                 )
@@ -780,9 +956,18 @@ final class ProjectChatViewController: UIViewController {
             ) { [weak self] _ in
                 self?.switchProvider(to: provider.providerID)
             }
+            let providerChildren: [UIMenuElement]
+            if modelSubmenus.isEmpty {
+                providerChildren = [
+                    useProviderAction,
+                    UIAction(title: "No models available", attributes: .disabled) { _ in }
+                ]
+            } else {
+                providerChildren = [useProviderAction] + modelSubmenus
+            }
             return UIMenu(
                 title: providerMenuTitle(for: provider),
-                children: [useProviderAction] + modelSubmenus
+                children: providerChildren
             )
         }
 
@@ -794,8 +979,12 @@ final class ProjectChatViewController: UIViewController {
 
     private func executionOptions(for credential: ProjectChatService.ProviderCredential) -> ProjectChatService.ModelExecutionOptions {
         let providerKind = currentProviderKind() ?? credential.providerKind
-        let modelID = credential.modelID
-        let reasoningEffort = resolvedReasoningEffort(forModelID: modelID, providerKind: providerKind)
+        let selectionModelID = resolvedModelID(for: credential)
+        let reasoningEffort = resolvedReasoningEffort(
+            forModelID: selectionModelID,
+            providerID: credential.providerID,
+            providerKind: providerKind
+        )
         let anthropicThinkingEnabled: Bool
         let geminiThinkingEnabled: Bool
 
@@ -804,11 +993,11 @@ final class ProjectChatViewController: UIViewController {
             anthropicThinkingEnabled = true
             geminiThinkingEnabled = true
         case .anthropic:
-            anthropicThinkingEnabled = resolvedAnthropicThinkingEnabled(forModelID: modelID)
+            anthropicThinkingEnabled = resolvedAnthropicThinkingEnabled(providerCredential: credential, modelID: selectionModelID)
             geminiThinkingEnabled = true
         case .googleGemini:
             anthropicThinkingEnabled = true
-            geminiThinkingEnabled = resolvedGeminiThinkingEnabled(forModelID: modelID)
+            geminiThinkingEnabled = resolvedGeminiThinkingEnabled(providerCredential: credential, modelID: selectionModelID)
         }
 
         return ProjectChatService.ModelExecutionOptions(
@@ -1174,7 +1363,7 @@ final class ProjectChatViewController: UIViewController {
     }
 
     private func runtimeCredential(from base: ProjectChatService.ProviderCredential) -> ProjectChatService.ProviderCredential {
-        let normalizedSelectedModel = selectedModelID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let normalizedSelectedModel = selectedModelID(for: base)
         guard !normalizedSelectedModel.isEmpty else {
             return base
         }
@@ -1188,6 +1377,73 @@ final class ProjectChatViewController: UIViewController {
             bearerToken: base.bearerToken,
             chatGPTAccountID: base.chatGPTAccountID
         )
+    }
+
+    private func ensureModelSelectionForSend(
+        providerCredential: ProjectChatService.ProviderCredential
+    ) -> Bool {
+        let resolvedModel = resolvedModelID(for: providerCredential)
+        if !resolvedModel.isEmpty {
+            selectedModelID = resolvedModel
+            selectedModelIDByProviderID[providerCredential.providerID] = resolvedModel
+            return true
+        }
+
+        presentManualModelPrompt(for: providerCredential)
+        return false
+    }
+
+    private func presentManualModelPrompt(for providerCredential: ProjectChatService.ProviderCredential) {
+        let alert = UIAlertController(
+            title: "Enter Model ID",
+            message: "No official or custom models are available for this provider yet. Enter a model ID to continue.",
+            preferredStyle: .alert
+        )
+        alert.addTextField { [weak self] textField in
+            textField.placeholder = self?.providerStore.loadProvider(id: providerCredential.providerID)?.kind.defaultModelID
+            textField.autocapitalizationType = .none
+            textField.autocorrectionType = .no
+            textField.clearButtonMode = .whileEditing
+        }
+        alert.addAction(UIAlertAction(title: String(localized: "common.action.cancel"), style: .cancel))
+        alert.addAction(UIAlertAction(title: "Save and Continue", style: .default, handler: { [weak self, weak alert] _ in
+            guard let self, let textField = alert?.textFields?.first else {
+                return
+            }
+            let modelID = textField.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !modelID.isEmpty else {
+                self.showModelEntryError()
+                return
+            }
+
+            do {
+                let updatedProvider = try self.providerStore.saveCustomModel(
+                    providerID: providerCredential.providerID,
+                    modelID: modelID,
+                    displayName: nil,
+                    capabilities: .defaults(for: providerCredential.providerKind, modelID: modelID),
+                    shouldSelect: true
+                )
+                self.selectedModelID = updatedProvider.effectiveModelRecordID
+                self.selectedModelIDByProviderID[providerCredential.providerID] = updatedProvider.effectiveModelRecordID
+                self.providerCredential = self.runtimeCredential(from: providerCredential)
+                self.refreshNavigationItems()
+                self.didTapSend()
+            } catch {
+                self.showErrorAlert(title: "Save Failed", message: error.localizedDescription)
+            }
+        }))
+        present(alert, animated: true)
+    }
+
+    private func showModelEntryError() {
+        showErrorAlert(title: "Model Required", message: "Enter a model ID to continue.")
+    }
+
+    private func showErrorAlert(title: String, message: String) {
+        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
+        present(alert, animated: true)
     }
 
     @objc
@@ -1220,7 +1476,12 @@ final class ProjectChatViewController: UIViewController {
         {
             selectedModelIDByProviderID[selectedProvider.providerID] = currentModel
         } else {
-            selectedModelIDByProviderID[selectedProvider.providerID] = selectedProvider.modelID
+            let resolvedModel = resolvedModelID(for: selectedProvider)
+            if resolvedModel.isEmpty {
+                selectedModelIDByProviderID.removeValue(forKey: selectedProvider.providerID)
+            } else {
+                selectedModelIDByProviderID[selectedProvider.providerID] = resolvedModel
+            }
         }
 
         let selectionState = ProjectModelConfigurationViewController.SelectionState(
@@ -1277,6 +1538,8 @@ final class ProjectChatViewController: UIViewController {
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !selectedModel.isEmpty {
             selectedModelID = selectedModel
+        } else {
+            selectedModelID = nil
         }
         refreshNavigationItems()
     }
@@ -1334,6 +1597,9 @@ final class ProjectChatViewController: UIViewController {
         }
         guard let currentThread else {
             _ = appendMessage(role: .system, text: LocalError.noThreadAvailable.localizedDescription)
+            return
+        }
+        guard ensureModelSelectionForSend(providerCredential: baseProviderCredential) else {
             return
         }
         let providerCredential = runtimeCredential(from: baseProviderCredential)
@@ -1706,15 +1972,25 @@ final class ProjectModelConfigurationViewController: UITableViewController {
         case provider
         case model
         case parameter
+        case manage
+    }
+
+    private enum ManageRow: Int, CaseIterable {
+        case refreshOfficialModels
+        case addCustomModel
     }
 
     private let providers: [ProjectChatService.ProviderCredential]
     private var state: SelectionState
     private let projectUsageIdentifier: String
     private let usageStore = LLMTokenUsageStore.shared
+    private let providerStore = LLMProviderSettingsStore.shared
+    private let modelDiscoveryService = LLMProviderModelDiscoveryService()
     private var usageRecords: [LLMTokenUsageRecord] = []
     private var usageByProviderID: [String: Int64] = [:]
     private var usageByProviderModel: [String: Int64] = [:]
+    private var isRefreshingModels = false
+    private var modelRefreshTask: Task<Void, Never>?
 
     private let numberFormatter: NumberFormatter = {
         let formatter = NumberFormatter()
@@ -1751,6 +2027,13 @@ final class ProjectModelConfigurationViewController: UITableViewController {
         reloadUsageData()
     }
 
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        if view.window == nil {
+            modelRefreshTask?.cancel()
+        }
+    }
+
     override func numberOfSections(in tableView: UITableView) -> Int {
         Section.allCases.count
     }
@@ -1766,19 +2049,27 @@ final class ProjectModelConfigurationViewController: UITableViewController {
             guard let selectedProvider = selectedProviderCredential() else {
                 return 0
             }
-            return availableModelIDs(for: selectedProvider).count
+            return availableModels(for: selectedProvider).count
         case .parameter:
             guard let selectedProvider = selectedProviderCredential() else {
                 return 0
             }
-            let selectedModelID = selectedModelID(for: selectedProvider)
+            let selectedModelRecordID = selectedModelRecordID(for: selectedProvider)
+            guard !selectedModelRecordID.isEmpty else {
+                return 0
+            }
             switch selectedProvider.providerKind {
             case .openAICompatible:
-                return reasoningProfile(forModelID: selectedModelID, providerKind: .openAICompatible)?
+                return reasoningProfile(for: selectedProvider, modelID: selectedModelRecordID)?
                     .supported.count ?? 0
             case .anthropic, .googleGemini:
-                return 1
+                return modelCapabilities(for: selectedProvider, modelID: selectedModelRecordID).thinkingSupported ? 1 : 0
             }
+        case .manage:
+            guard selectedProviderCredential() != nil else {
+                return 0
+            }
+            return ManageRow.allCases.count
         }
     }
 
@@ -1801,6 +2092,8 @@ final class ProjectModelConfigurationViewController: UITableViewController {
             case .anthropic, .googleGemini:
                 return String(localized: "chat.menu.thinking")
             }
+        case .manage:
+            return "Manage Models"
         }
     }
 
@@ -1829,22 +2122,31 @@ final class ProjectModelConfigurationViewController: UITableViewController {
             guard let selectedProvider = selectedProviderCredential() else {
                 return cell
             }
-            let modelIDs = availableModelIDs(for: selectedProvider)
-            guard modelIDs.indices.contains(indexPath.row) else {
+            let models = availableModels(for: selectedProvider)
+            guard models.indices.contains(indexPath.row) else {
                 return cell
             }
-            let modelID = modelIDs[indexPath.row]
+            let model = models[indexPath.row]
+            let modelID = model.modelID
             var configuration = cell.defaultContentConfiguration()
-            configuration.text = modelID
-            configuration.secondaryText = usedTokenCountText(
+            configuration.text = model.effectiveDisplayName
+            let usageText = usedTokenCountText(
                 modelTokenUsage(
                     providerID: selectedProvider.providerID,
                     modelID: modelID
                 )
             )
+            let sourceText: String
+            switch model.source {
+            case .official:
+                sourceText = "Official"
+            case .custom:
+                sourceText = "Custom"
+            }
+            configuration.secondaryText = sourceText + " · " + usageText
             configuration.secondaryTextProperties.color = .secondaryLabel
             cell.contentConfiguration = configuration
-            cell.accessoryType = modelID.caseInsensitiveCompare(selectedModelID(for: selectedProvider)) == .orderedSame
+            cell.accessoryType = model.id.caseInsensitiveCompare(selectedModelRecordID(for: selectedProvider)) == .orderedSame
                 ? .checkmark
                 : .none
             return cell
@@ -1853,11 +2155,14 @@ final class ProjectModelConfigurationViewController: UITableViewController {
             guard let selectedProvider = selectedProviderCredential() else {
                 return UITableViewCell()
             }
-            let selectedModelID = selectedModelID(for: selectedProvider)
+            let selectedModelRecordID = selectedModelRecordID(for: selectedProvider)
+            guard !selectedModelRecordID.isEmpty else {
+                return UITableViewCell()
+            }
             switch selectedProvider.providerKind {
             case .openAICompatible:
                 let cell = tableView.dequeueReusableCell(withIdentifier: "ProjectModelConfigCell", for: indexPath)
-                let profile = reasoningProfile(forModelID: selectedModelID, providerKind: .openAICompatible)
+                let profile = reasoningProfile(for: selectedProvider, modelID: selectedModelRecordID)
                 let efforts = profile?.supported ?? []
                 guard efforts.indices.contains(indexPath.row) else {
                     return cell
@@ -1866,7 +2171,7 @@ final class ProjectModelConfigurationViewController: UITableViewController {
                 var configuration = cell.defaultContentConfiguration()
                 configuration.text = effort.displayName
                 cell.contentConfiguration = configuration
-                let currentEffort = selectedReasoningEffort(forModelID: selectedModelID, providerKind: .openAICompatible)
+                let currentEffort = selectedReasoningEffort(for: selectedProvider, modelID: selectedModelRecordID)
                 cell.accessoryType = effort == currentEffort ? .checkmark : .none
                 return cell
 
@@ -1879,21 +2184,24 @@ final class ProjectModelConfigurationViewController: UITableViewController {
                 else {
                     return UITableViewCell()
                 }
+                let capabilities = modelCapabilities(for: selectedProvider, modelID: selectedModelRecordID)
                 let isOn: Bool
                 switch selectedProvider.providerKind {
                 case .anthropic:
-                    isOn = selectedAnthropicThinkingEnabled(forModelID: selectedModelID)
+                    isOn = selectedAnthropicThinkingEnabled(for: selectedProvider, modelID: selectedModelRecordID)
                 case .googleGemini:
-                    isOn = selectedGeminiThinkingEnabled(forModelID: selectedModelID)
+                    isOn = selectedGeminiThinkingEnabled(for: selectedProvider, modelID: selectedModelRecordID)
                 case .openAICompatible:
                     isOn = true
                 }
                 cell.configure(
-                    title: String(localized: "chat.menu.thinking"),
+                    title: capabilities.thinkingCanDisable
+                        ? String(localized: "chat.menu.thinking")
+                        : "Thinking (required)",
                     isOn: isOn
                 ) { [weak self] value in
                     guard let self else { return }
-                    let key = self.normalizedModelID(selectedModelID)
+                    let key = self.normalizedModelID(selectedModelRecordID)
                     switch selectedProvider.providerKind {
                     case .anthropic:
                         self.state.selectedAnthropicThinkingEnabledByModelID[key] = value
@@ -1904,8 +2212,29 @@ final class ProjectModelConfigurationViewController: UITableViewController {
                     }
                     self.notifySelectionChanged()
                 }
+                cell.isUserInteractionEnabled = capabilities.thinkingCanDisable
+                cell.contentView.alpha = capabilities.thinkingCanDisable ? 1.0 : 0.72
                 return cell
             }
+        case .manage:
+            let cell = tableView.dequeueReusableCell(withIdentifier: "ProjectModelConfigCell", for: indexPath)
+            guard let row = ManageRow(rawValue: indexPath.row) else {
+                return cell
+            }
+            var configuration = cell.defaultContentConfiguration()
+            switch row {
+            case .refreshOfficialModels:
+                configuration.text = isRefreshingModels ? "Refreshing Official Models..." : "Refresh Official Models"
+                configuration.secondaryText = "Pull the latest model list from the provider API."
+                cell.accessoryType = .none
+            case .addCustomModel:
+                configuration.text = "Add Custom Model"
+                configuration.secondaryText = "Register a model that is not returned by the provider API."
+                cell.accessoryType = .disclosureIndicator
+            }
+            configuration.secondaryTextProperties.color = .secondaryLabel
+            cell.contentConfiguration = configuration
+            return cell
         }
     }
 
@@ -1926,6 +2255,8 @@ final class ProjectModelConfigurationViewController: UITableViewController {
             case .anthropic, .googleGemini:
                 return nil
             }
+        case .manage:
+            return indexPath
         }
     }
 
@@ -1941,7 +2272,12 @@ final class ProjectModelConfigurationViewController: UITableViewController {
             }
             let selectedProvider = providers[indexPath.row]
             state.selectedProviderID = selectedProvider.providerID
-            state.selectedModelIDByProviderID[selectedProvider.providerID] = selectedModelID(for: selectedProvider)
+            let selectedModelRecordID = selectedModelRecordID(for: selectedProvider)
+            if selectedModelRecordID.isEmpty {
+                state.selectedModelIDByProviderID.removeValue(forKey: selectedProvider.providerID)
+            } else {
+                state.selectedModelIDByProviderID[selectedProvider.providerID] = selectedModelRecordID
+            }
             notifySelectionChanged()
             tableView.reloadData()
 
@@ -1949,14 +2285,15 @@ final class ProjectModelConfigurationViewController: UITableViewController {
             guard let selectedProvider = selectedProviderCredential() else {
                 return
             }
-            let modelIDs = availableModelIDs(for: selectedProvider)
-            guard modelIDs.indices.contains(indexPath.row) else {
+            let models = availableModels(for: selectedProvider)
+            guard models.indices.contains(indexPath.row) else {
                 return
             }
-            let modelID = modelIDs[indexPath.row]
+            let modelID = models[indexPath.row].id
             state.selectedModelIDByProviderID[selectedProvider.providerID] = modelID
+            _ = try? providerStore.updateSelectedModelID(providerID: selectedProvider.providerID, modelID: modelID)
             if selectedProvider.providerKind == .openAICompatible {
-                _ = selectedReasoningEffort(forModelID: modelID, providerKind: .openAICompatible)
+                _ = selectedReasoningEffort(for: selectedProvider, modelID: modelID)
             }
             notifySelectionChanged()
             tableView.reloadData()
@@ -1965,21 +2302,34 @@ final class ProjectModelConfigurationViewController: UITableViewController {
             guard let selectedProvider = selectedProviderCredential() else {
                 return
             }
-            let selectedModelID = selectedModelID(for: selectedProvider)
+            let selectedModelRecordID = selectedModelRecordID(for: selectedProvider)
             switch selectedProvider.providerKind {
             case .openAICompatible:
                 guard
-                    let profile = reasoningProfile(forModelID: selectedModelID, providerKind: .openAICompatible),
+                    let profile = reasoningProfile(for: selectedProvider, modelID: selectedModelRecordID),
                     profile.supported.indices.contains(indexPath.row)
                 else {
                     return
                 }
                 let selectedEffort = profile.supported[indexPath.row]
-                state.selectedReasoningEffortsByModelID[normalizedModelID(selectedModelID)] = selectedEffort
+                state.selectedReasoningEffortsByModelID[normalizedModelID(selectedModelRecordID)] = selectedEffort
                 notifySelectionChanged()
                 tableView.reloadSections(IndexSet(integer: Section.parameter.rawValue), with: .none)
             case .anthropic, .googleGemini:
                 return
+            }
+        case .manage:
+            guard
+                let selectedProvider = selectedProviderCredential(),
+                let row = ManageRow(rawValue: indexPath.row)
+            else {
+                return
+            }
+            switch row {
+            case .refreshOfficialModels:
+                refreshOfficialModels(for: selectedProvider)
+            case .addCustomModel:
+                presentModelEditor(provider: selectedProvider, existingModel: nil)
             }
         }
     }
@@ -1991,27 +2341,32 @@ final class ProjectModelConfigurationViewController: UITableViewController {
         return providers.first
     }
 
-    private func selectedModelID(for provider: ProjectChatService.ProviderCredential) -> String {
+    private func selectedModelRecordID(for provider: ProjectChatService.ProviderCredential) -> String {
         let remembered = state.selectedModelIDByProviderID[provider.providerID]?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !remembered.isEmpty {
             return remembered
         }
-        let fallback = provider.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
-        return fallback.isEmpty ? provider.providerKind.defaultModelID : fallback
+        if let providerRecord = providerStore.loadProvider(id: provider.providerID) {
+            let selection = providerRecord.effectiveModelRecordID.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !selection.isEmpty {
+                return selection
+            }
+        }
+        return availableModels(for: provider).first?.id ?? ""
     }
 
-    private func availableModelIDs(for provider: ProjectChatService.ProviderCredential) -> [String] {
-        var models = provider.providerKind.builtInModels
-        let selected = selectedModelID(for: provider)
-        if !selected.isEmpty, !models.contains(where: { $0.caseInsensitiveCompare(selected) == .orderedSame }) {
-            models.insert(selected, at: 0)
+    private func selectedModelID(for provider: ProjectChatService.ProviderCredential) -> String {
+        let selectedRecordID = selectedModelRecordID(for: provider)
+        if let model = availableModels(for: provider).first(where: { $0.normalizedID == selectedRecordID.lowercased() }) {
+            return model.modelID
         }
         let fallback = provider.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !fallback.isEmpty, !models.contains(where: { $0.caseInsensitiveCompare(fallback) == .orderedSame }) {
-            models.insert(fallback, at: 0)
-        }
-        return models
+        return fallback
+    }
+
+    private func availableModels(for provider: ProjectChatService.ProviderCredential) -> [LLMProviderModelRecord] {
+        providerStore.availableModels(forProviderID: provider.providerID)
     }
 
     private func providerTitle(for provider: ProjectChatService.ProviderCredential) -> String {
@@ -2019,28 +2374,42 @@ final class ProjectModelConfigurationViewController: UITableViewController {
         return normalizedLabel.isEmpty ? provider.providerKind.displayName : normalizedLabel
     }
 
+    private func modelCapabilities(
+        for provider: ProjectChatService.ProviderCredential,
+        modelID: String
+    ) -> LLMProviderModelCapabilities {
+        if let record = providerStore.modelRecord(providerID: provider.providerID, modelID: modelID) {
+            return record.capabilities
+        }
+        let normalized = normalizedModelID(modelID)
+        if let record = availableModels(for: provider).first(where: { $0.normalizedModelID == normalized }) {
+            return record.capabilities
+        }
+        return .defaults(for: provider.providerKind, modelID: modelID)
+    }
+
     private func reasoningProfile(
-        forModelID modelID: String,
-        providerKind: LLMProviderRecord.Kind
+        for provider: ProjectChatService.ProviderCredential,
+        modelID: String
     ) -> (supported: [ProjectChatService.ReasoningEffort], defaultEffort: ProjectChatService.ReasoningEffort)? {
-        guard providerKind == .openAICompatible else {
+        guard provider.providerKind == .openAICompatible else {
             return nil
         }
-        let normalizedModel = normalizedModelID(modelID)
-        if normalizedModel.contains("mini") {
-            return (supported: [.low, .medium, .high], defaultEffort: .medium)
+        let supported = modelCapabilities(for: provider, modelID: modelID).reasoningEfforts
+        guard !supported.isEmpty else {
+            return nil
         }
-        if normalizedModel.contains("pro") || normalizedModel.contains("codex") {
-            return (supported: [.medium, .high, .xhigh], defaultEffort: .high)
-        }
-        return (supported: [.low, .medium, .high, .xhigh], defaultEffort: .high)
+        let defaultEffort: ProjectChatService.ReasoningEffort = supported.contains(.high)
+            ? .high
+            : (supported.first ?? .medium)
+        return (supported: supported, defaultEffort: defaultEffort)
     }
 
     private func selectedReasoningEffort(
-        forModelID modelID: String,
-        providerKind: LLMProviderRecord.Kind
+        for provider: ProjectChatService.ProviderCredential,
+        modelID: String
     ) -> ProjectChatService.ReasoningEffort {
-        guard let profile = reasoningProfile(forModelID: modelID, providerKind: providerKind) else {
+        guard let profile = reasoningProfile(for: provider, modelID: modelID) else {
             return .high
         }
         let key = normalizedModelID(modelID)
@@ -2051,8 +2420,20 @@ final class ProjectModelConfigurationViewController: UITableViewController {
         return profile.defaultEffort
     }
 
-    private func selectedAnthropicThinkingEnabled(forModelID modelID: String) -> Bool {
+    private func selectedAnthropicThinkingEnabled(
+        for provider: ProjectChatService.ProviderCredential,
+        modelID: String
+    ) -> Bool {
         let key = normalizedModelID(modelID)
+        let capabilities = modelCapabilities(for: provider, modelID: modelID)
+        guard capabilities.thinkingSupported else {
+            state.selectedAnthropicThinkingEnabledByModelID[key] = false
+            return false
+        }
+        guard capabilities.thinkingCanDisable else {
+            state.selectedAnthropicThinkingEnabledByModelID[key] = true
+            return true
+        }
         if let selected = state.selectedAnthropicThinkingEnabledByModelID[key] {
             return selected
         }
@@ -2060,8 +2441,20 @@ final class ProjectModelConfigurationViewController: UITableViewController {
         return true
     }
 
-    private func selectedGeminiThinkingEnabled(forModelID modelID: String) -> Bool {
+    private func selectedGeminiThinkingEnabled(
+        for provider: ProjectChatService.ProviderCredential,
+        modelID: String
+    ) -> Bool {
         let key = normalizedModelID(modelID)
+        let capabilities = modelCapabilities(for: provider, modelID: modelID)
+        guard capabilities.thinkingSupported else {
+            state.selectedGeminiThinkingEnabledByModelID[key] = false
+            return false
+        }
+        guard capabilities.thinkingCanDisable else {
+            state.selectedGeminiThinkingEnabledByModelID[key] = true
+            return true
+        }
         if let selected = state.selectedGeminiThinkingEnabledByModelID[key] {
             return selected
         }
@@ -2122,6 +2515,85 @@ final class ProjectModelConfigurationViewController: UITableViewController {
         return String(format: String(localized: "providers.usage.tokens_format"), formatted)
     }
 
+    private func refreshOfficialModels(for provider: ProjectChatService.ProviderCredential) {
+        guard let providerRecord = providerStore.loadProvider(id: provider.providerID) else {
+            return
+        }
+
+        isRefreshingModels = true
+        tableView.reloadSections(IndexSet(integer: Section.manage.rawValue), with: .none)
+        modelRefreshTask?.cancel()
+        modelRefreshTask = Task { [weak self] in
+            guard let self else {
+                return
+            }
+            defer {
+                Task { @MainActor [weak self] in
+                    self?.isRefreshingModels = false
+                    self?.tableView.reloadData()
+                }
+            }
+
+            let token = (try? self.providerStore.loadBearerToken(for: providerRecord))?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !token.isEmpty else {
+                return
+            }
+
+            do {
+                let models = try await self.modelDiscoveryService.fetchModels(for: providerRecord, bearerToken: token)
+                _ = try self.providerStore.replaceOfficialModels(providerID: providerRecord.id, models: models)
+            } catch {
+                let alert = UIAlertController(
+                    title: "Refresh Failed",
+                    message: error.localizedDescription,
+                    preferredStyle: .alert
+                )
+                alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
+                self.present(alert, animated: true)
+            }
+        }
+    }
+
+    private func presentModelEditor(
+        provider: ProjectChatService.ProviderCredential,
+        existingModel: LLMProviderModelRecord?
+    ) {
+        let controller = ProviderModelEditorViewController(
+            provider: provider,
+            existingModel: existingModel,
+            selectedModelID: selectedModelRecordID(for: provider)
+        )
+        controller.onSave = { [weak self] payload in
+            guard let self else {
+                return
+            }
+            do {
+                let updatedProvider = try self.providerStore.saveCustomModel(
+                    providerID: provider.providerID,
+                    modelID: payload.modelID,
+                    displayName: payload.displayName,
+                    capabilities: payload.capabilities,
+                    shouldSelect: payload.shouldSelect
+                )
+                if payload.shouldSelect {
+                    self.state.selectedModelIDByProviderID[provider.providerID] = updatedProvider.effectiveModelRecordID
+                }
+                self.notifySelectionChanged()
+                self.tableView.reloadData()
+            } catch {
+                let alert = UIAlertController(
+                    title: "Save Failed",
+                    message: error.localizedDescription,
+                    preferredStyle: .alert
+                )
+                alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
+                self.present(alert, animated: true)
+            }
+        }
+        navigationController?.pushViewController(controller, animated: true)
+    }
+
     private func notifySelectionChanged() {
         refreshNavigationTitle()
         onSelectionStateChanged?(state)
@@ -2132,7 +2604,305 @@ final class ProjectModelConfigurationViewController: UITableViewController {
             title = String(localized: "chat.menu.model")
             return
         }
-        title = providerTitle(for: provider) + "-" + selectedModelID(for: provider)
+        let selectedRecordID = selectedModelRecordID(for: provider)
+        let selectedTitle = availableModels(for: provider)
+            .first(where: { $0.normalizedID == selectedRecordID.lowercased() })?
+            .effectiveDisplayName ?? ""
+        title = selectedTitle.isEmpty ? providerTitle(for: provider) : providerTitle(for: provider) + "-" + selectedTitle
+    }
+}
+
+@MainActor
+final class ProviderModelEditorViewController: UITableViewController {
+    struct SavePayload {
+        let modelID: String
+        let displayName: String
+        let capabilities: LLMProviderModelCapabilities
+        let shouldSelect: Bool
+    }
+
+    var onSave: ((SavePayload) -> Void)?
+
+    private enum Section: Int, CaseIterable {
+        case identity
+        case capability
+        case selection
+        case save
+    }
+
+    private enum IdentityRow: Int, CaseIterable {
+        case modelID
+        case displayName
+    }
+
+    private let provider: ProjectChatService.ProviderCredential
+    private let existingModel: LLMProviderModelRecord?
+    private var modelIDText: String
+    private var displayNameText: String
+    private var reasoningEfforts: Set<ProjectChatService.ReasoningEffort>
+    private var thinkingSupported: Bool
+    private var thinkingCanDisable: Bool
+    private var structuredOutputSupported: Bool
+    private var shouldSelect: Bool
+
+    init(
+        provider: ProjectChatService.ProviderCredential,
+        existingModel: LLMProviderModelRecord?,
+        selectedModelID: String
+    ) {
+        self.provider = provider
+        self.existingModel = existingModel
+        let modelID = existingModel?.modelID ?? ""
+        modelIDText = modelID
+        displayNameText = existingModel?.effectiveDisplayName ?? ""
+        let capabilities = existingModel?.capabilities ?? .defaults(for: provider.providerKind, modelID: modelID)
+        reasoningEfforts = Set(capabilities.reasoningEfforts)
+        thinkingSupported = capabilities.thinkingSupported
+        thinkingCanDisable = capabilities.thinkingCanDisable
+        structuredOutputSupported = capabilities.structuredOutputSupported
+        if let existingID = existingModel?.id, !existingID.isEmpty {
+            shouldSelect = existingID.caseInsensitiveCompare(selectedModelID) == .orderedSame
+        } else {
+            shouldSelect = false
+        }
+        super.init(style: .insetGrouped)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        title = existingModel == nil ? "Add Model" : "Edit Model"
+        tableView.register(SettingsTextInputCell.self, forCellReuseIdentifier: SettingsTextInputCell.reuseIdentifier)
+        tableView.register(SettingsToggleCell.self, forCellReuseIdentifier: SettingsToggleCell.reuseIdentifier)
+        tableView.register(SettingsCenteredButtonCell.self, forCellReuseIdentifier: SettingsCenteredButtonCell.reuseIdentifier)
+    }
+
+    override func numberOfSections(in tableView: UITableView) -> Int {
+        Section.allCases.count
+    }
+
+    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+        guard let section = Section(rawValue: section) else {
+            return 0
+        }
+        switch section {
+        case .identity:
+            return IdentityRow.allCases.count
+        case .capability:
+            switch provider.providerKind {
+            case .openAICompatible:
+                return ProjectChatService.ReasoningEffort.allCases.count + 1
+            case .anthropic, .googleGemini:
+                return 3
+            }
+        case .selection, .save:
+            return 1
+        }
+    }
+
+    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
+        guard let section = Section(rawValue: section) else {
+            return nil
+        }
+        switch section {
+        case .identity:
+            return "Identity"
+        case .capability:
+            return provider.providerKind == .openAICompatible ? "Capabilities" : "Thinking"
+        case .selection:
+            return "Selection"
+        case .save:
+            return nil
+        }
+    }
+
+    override func tableView(
+        _ tableView: UITableView,
+        cellForRowAt indexPath: IndexPath
+    ) -> UITableViewCell {
+        guard let section = Section(rawValue: indexPath.section) else {
+            return UITableViewCell()
+        }
+
+        switch section {
+        case .identity:
+            guard
+                let row = IdentityRow(rawValue: indexPath.row),
+                let cell = tableView.dequeueReusableCell(
+                    withIdentifier: SettingsTextInputCell.reuseIdentifier,
+                    for: indexPath
+                ) as? SettingsTextInputCell
+            else {
+                return UITableViewCell()
+            }
+
+            switch row {
+            case .modelID:
+                cell.configure(
+                    title: "Model ID",
+                    text: modelIDText,
+                    placeholder: provider.providerKind.defaultModelID,
+                    autocapitalizationType: .none
+                ) { [weak self] text in
+                    self?.modelIDText = text
+                    self?.tableView.reloadSections(IndexSet(integer: Section.save.rawValue), with: .none)
+                }
+            case .displayName:
+                cell.configure(
+                    title: "Display Name",
+                    text: displayNameText,
+                    placeholder: "Optional",
+                    autocapitalizationType: .words
+                ) { [weak self] text in
+                    self?.displayNameText = text
+                }
+            }
+            return cell
+
+        case .capability:
+            guard
+                let cell = tableView.dequeueReusableCell(
+                    withIdentifier: SettingsToggleCell.reuseIdentifier,
+                    for: indexPath
+                ) as? SettingsToggleCell
+            else {
+                return UITableViewCell()
+            }
+
+            switch provider.providerKind {
+            case .openAICompatible:
+                if indexPath.row < ProjectChatService.ReasoningEffort.allCases.count {
+                    let effort = ProjectChatService.ReasoningEffort.allCases[indexPath.row]
+                    cell.configure(
+                        title: "Reasoning: " + effort.displayName,
+                        isOn: reasoningEfforts.contains(effort)
+                    ) { [weak self] isOn in
+                        guard let self else { return }
+                        if isOn {
+                            self.reasoningEfforts.insert(effort)
+                        } else {
+                            self.reasoningEfforts.remove(effort)
+                        }
+                        self.tableView.reloadSections(IndexSet(integer: Section.save.rawValue), with: .none)
+                    }
+                } else {
+                    cell.configure(
+                        title: "Structured Output",
+                        isOn: structuredOutputSupported
+                    ) { [weak self] isOn in
+                        self?.structuredOutputSupported = isOn
+                    }
+                }
+            case .anthropic, .googleGemini:
+                switch indexPath.row {
+                case 0:
+                    cell.configure(title: "Thinking Supported", isOn: thinkingSupported) { [weak self] isOn in
+                        guard let self else { return }
+                        self.thinkingSupported = isOn
+                        if !isOn {
+                            self.thinkingCanDisable = false
+                        }
+                        self.tableView.reloadSections(IndexSet(integer: Section.capability.rawValue), with: .none)
+                    }
+                case 1:
+                    cell.configure(title: "Thinking Can Disable", isOn: thinkingCanDisable) { [weak self] isOn in
+                        self?.thinkingCanDisable = isOn
+                    }
+                    cell.isUserInteractionEnabled = thinkingSupported
+                    cell.contentView.alpha = thinkingSupported ? 1.0 : 0.72
+                default:
+                    cell.configure(title: "Structured Output", isOn: structuredOutputSupported) { [weak self] isOn in
+                        self?.structuredOutputSupported = isOn
+                    }
+                }
+            }
+            return cell
+
+        case .selection:
+            guard
+                let cell = tableView.dequeueReusableCell(
+                    withIdentifier: SettingsToggleCell.reuseIdentifier,
+                    for: indexPath
+                ) as? SettingsToggleCell
+            else {
+                return UITableViewCell()
+            }
+            cell.configure(title: "Select After Save", isOn: shouldSelect) { [weak self] isOn in
+                self?.shouldSelect = isOn
+            }
+            return cell
+
+        case .save:
+            guard
+                let cell = tableView.dequeueReusableCell(
+                    withIdentifier: SettingsCenteredButtonCell.reuseIdentifier,
+                    for: indexPath
+                ) as? SettingsCenteredButtonCell
+            else {
+                return UITableViewCell()
+            }
+            cell.configure(title: "Save Model", isEnabled: canSave())
+            return cell
+        }
+    }
+
+    override func tableView(_ tableView: UITableView, willSelectRowAt indexPath: IndexPath) -> IndexPath? {
+        guard Section(rawValue: indexPath.section) == .save else {
+            return nil
+        }
+        return canSave() ? indexPath : nil
+    }
+
+    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        defer { tableView.deselectRow(at: indexPath, animated: true) }
+        guard Section(rawValue: indexPath.section) == .save, canSave() else {
+            return
+        }
+
+        let payload = SavePayload(
+            modelID: modelIDText.trimmingCharacters(in: .whitespacesAndNewlines),
+            displayName: displayNameText.trimmingCharacters(in: .whitespacesAndNewlines),
+            capabilities: buildCapabilities(),
+            shouldSelect: shouldSelect
+        )
+        onSave?(payload)
+        navigationController?.popViewController(animated: true)
+    }
+
+    private func canSave() -> Bool {
+        let normalizedModelID = modelIDText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedModelID.isEmpty else {
+            return false
+        }
+
+        if provider.providerKind == .openAICompatible {
+            return !reasoningEfforts.isEmpty
+        }
+        return true
+    }
+
+    private func buildCapabilities() -> LLMProviderModelCapabilities {
+        switch provider.providerKind {
+        case .openAICompatible:
+            let orderedEfforts = ProjectChatService.ReasoningEffort.allCases.filter { reasoningEfforts.contains($0) }
+            return LLMProviderModelCapabilities(
+                reasoningEfforts: orderedEfforts,
+                thinkingSupported: false,
+                thinkingCanDisable: false,
+                structuredOutputSupported: structuredOutputSupported
+            )
+        case .anthropic, .googleGemini:
+            return LLMProviderModelCapabilities(
+                reasoningEfforts: [],
+                thinkingSupported: thinkingSupported,
+                thinkingCanDisable: thinkingSupported && thinkingCanDisable,
+                structuredOutputSupported: structuredOutputSupported
+            )
+        }
     }
 }
 

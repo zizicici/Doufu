@@ -501,8 +501,8 @@ class TokenUsageDashboardViewController: UITableViewController {
             let normalizedProviderLabel = provider.label.trimmingCharacters(in: .whitespacesAndNewlines)
             let providerTitle = normalizedProviderLabel.isEmpty ? provider.kind.displayName : normalizedProviderLabel
 
-            let isModelAvailable = provider.kind.builtInModels.contains {
-                $0.caseInsensitiveCompare(record.model) == .orderedSame
+            let isModelAvailable = provider.availableModels.contains {
+                $0.modelID.caseInsensitiveCompare(record.model) == .orderedSame
             } || provider.effectiveModelID.caseInsensitiveCompare(record.model) == .orderedSame
             let modelTitle = isModelAvailable ? record.model : deletedModel
             return DisplayDailyRecord(

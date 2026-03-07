@@ -1,5 +1,5 @@
 //
-//  OpenAIOAuthProviderFormViewController.swift
+//  ProviderOAuthFormViewController.swift
 //  Doufu
 //
 //  Created by Codex on 2026/03/04.
@@ -8,22 +8,24 @@
 import SafariServices
 import UIKit
 
-final class OpenAIOAuthProviderFormViewController: UITableViewController, SFSafariViewControllerDelegate {
+final class ProviderOAuthFormViewController: UITableViewController, SFSafariViewControllerDelegate {
 
     private enum Section: Int, CaseIterable {
         case label
         case oauth
         case manual
+        case storedModels
+        case manageModels
+        case addProvider
     }
 
     private enum ManualRow: Int, CaseIterable {
         case httpsURL
         case bearerToken
-        case model
-        case addProvider
     }
 
     private let store = LLMProviderSettingsStore.shared
+    private let modelManagement = ProviderModelManagementCoordinator()
     private let editingProvider: LLMProviderRecord?
     private let providerKind: LLMProviderRecord.Kind
     private var oauthService: OpenAIOAuthService?
@@ -32,7 +34,6 @@ final class OpenAIOAuthProviderFormViewController: UITableViewController, SFSafa
     private var labelText = ""
     private var manualBaseURLText = ""
     private var manualBearerTokenText = ""
-    private var modelIDText = ""
     private var oauthSuggestedAutoAppendV1 = true
     private var oauthDerivedChatGPTAccountID: String?
 
@@ -50,15 +51,11 @@ final class OpenAIOAuthProviderFormViewController: UITableViewController, SFSafa
         let trimmedLabel = labelText.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedToken = manualBearerTokenText.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedBaseURL = manualBaseURLText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedModelID = modelIDText.trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard !trimmedLabel.isEmpty else {
             return false
         }
         guard !trimmedToken.isEmpty else {
-            return false
-        }
-        guard !trimmedModelID.isEmpty else {
             return false
         }
         return isValidOptionalBaseURL(trimmedBaseURL)
@@ -68,7 +65,6 @@ final class OpenAIOAuthProviderFormViewController: UITableViewController, SFSafa
         editingProvider = nil
         self.providerKind = providerKind
         oauthSuggestedAutoAppendV1 = providerKind.defaultAutoAppendV1
-        modelIDText = providerKind.defaultModelID
         super.init(style: .insetGrouped)
     }
 
@@ -77,7 +73,6 @@ final class OpenAIOAuthProviderFormViewController: UITableViewController, SFSafa
         providerKind = provider.kind
         labelText = provider.label
         manualBaseURLText = provider.baseURLString
-        modelIDText = provider.effectiveModelID
         oauthSuggestedAutoAppendV1 = provider.autoAppendV1
         oauthDerivedChatGPTAccountID = provider.chatGPTAccountID
         super.init(style: .insetGrouped)
@@ -98,6 +93,19 @@ final class OpenAIOAuthProviderFormViewController: UITableViewController, SFSafa
         tableView.register(SettingsTextInputCell.self, forCellReuseIdentifier: SettingsTextInputCell.reuseIdentifier)
         tableView.register(SettingsSecureInputCell.self, forCellReuseIdentifier: SettingsSecureInputCell.reuseIdentifier)
         tableView.register(SettingsCenteredButtonCell.self, forCellReuseIdentifier: SettingsCenteredButtonCell.reuseIdentifier)
+        tableView.register(UITableViewCell.self, forCellReuseIdentifier: "ProviderCell")
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        if isEditingProvider {
+            tableView.reloadData()
+        }
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        modelManagement.cancelRefreshIfNeeded(whenViewRemoved: view.window == nil)
     }
 
     override func numberOfSections(in tableView: UITableView) -> Int {
@@ -110,10 +118,17 @@ final class OpenAIOAuthProviderFormViewController: UITableViewController, SFSafa
         }
 
         switch section {
-        case .label, .oauth:
+        case .label, .oauth, .addProvider:
             return 1
         case .manual:
             return ManualRow.allCases.count
+        case .storedModels:
+            guard isEditingProvider else {
+                return 0
+            }
+            return max(storedModels().count, 1)
+        case .manageModels:
+            return isEditingProvider ? ProviderModelManageRow.allCases.count : 0
         }
     }
 
@@ -129,6 +144,12 @@ final class OpenAIOAuthProviderFormViewController: UITableViewController, SFSafa
             return String(localized: "providers.form.section.oauth")
         case .manual:
             return String(localized: "providers.oauth_form.section.manual")
+        case .storedModels:
+            return isEditingProvider ? "Stored Models" : nil
+        case .manageModels:
+            return isEditingProvider ? "Manage Models" : nil
+        case .addProvider:
+            return nil
         }
     }
 
@@ -141,7 +162,7 @@ final class OpenAIOAuthProviderFormViewController: UITableViewController, SFSafa
         case .oauth:
             return oauthFooterText()
         case .manual:
-            return "Default Base URL: \(providerKind.defaultBaseURLString)\nBuilt-in Models: \(providerKind.builtInModels.joined(separator: ", "))"
+            return "Default Base URL: \(providerKind.defaultBaseURLString)"
         default:
             return nil
         }
@@ -235,39 +256,67 @@ final class OpenAIOAuthProviderFormViewController: UITableViewController, SFSafa
                     self?.refreshAddProviderCell()
                 }
                 return cell
+            }
 
-            case .model:
-                guard
-                    let cell = tableView.dequeueReusableCell(
-                        withIdentifier: SettingsTextInputCell.reuseIdentifier,
-                        for: indexPath
-                    ) as? SettingsTextInputCell
-                else {
-                    return UITableViewCell()
-                }
-                cell.configure(
-                    title: nil,
-                    text: modelIDText,
-                    placeholder: providerKind.defaultModelID,
-                    autocapitalizationType: .none
-                ) { [weak self] text in
-                    self?.modelIDText = text
-                    self?.refreshAddProviderCell()
-                }
-                return cell
-
-            case .addProvider:
-                guard
-                    let cell = tableView.dequeueReusableCell(
-                        withIdentifier: SettingsCenteredButtonCell.reuseIdentifier,
-                        for: indexPath
-                    ) as? SettingsCenteredButtonCell
-                else {
-                    return UITableViewCell()
-                }
-                cell.configure(title: submitButtonTitle, isEnabled: canSubmitProvider)
+        case .storedModels:
+            let cell = tableView.dequeueReusableCell(withIdentifier: "ProviderCell", for: indexPath)
+            let models = storedModels()
+            if models.isEmpty {
+                cell.selectionStyle = .none
+                cell.accessoryType = .none
+                var configuration = UIListContentConfiguration.cell()
+                configuration.text = "No models stored."
+                configuration.textProperties.color = .secondaryLabel
+                configuration.textProperties.alignment = .center
+                cell.contentConfiguration = configuration
                 return cell
             }
+            guard models.indices.contains(indexPath.row) else {
+                return cell
+            }
+            let model = models[indexPath.row]
+            let selectedRecordID = latestEditingProvider()?.effectiveModelRecordID.lowercased()
+            var configuration = cell.defaultContentConfiguration()
+            configuration.text = model.effectiveDisplayName
+            let sourceLabel: String = model.source == .official ? "Official" : "Custom"
+            configuration.secondaryText = sourceLabel + " · " + model.modelID
+            configuration.secondaryTextProperties.color = .secondaryLabel
+            cell.contentConfiguration = configuration
+            cell.accessoryType = model.normalizedID == selectedRecordID ? .checkmark : .none
+            cell.selectionStyle = .none
+            return cell
+
+        case .manageModels:
+            let cell = tableView.dequeueReusableCell(withIdentifier: "ProviderCell", for: indexPath)
+            guard let row = ProviderModelManageRow(rawValue: indexPath.row) else {
+                return cell
+            }
+            var configuration = cell.defaultContentConfiguration()
+            switch row {
+            case .refreshOfficialModels:
+                configuration.text = modelManagement.isRefreshingModels ? "Refreshing Official Models..." : "Refresh Official Models"
+                configuration.secondaryText = "Pull the latest model list from the provider API."
+                cell.accessoryType = .none
+            case .addCustomModel:
+                configuration.text = "Add Custom Model"
+                configuration.secondaryText = "Register a model that is not returned by the provider API."
+                cell.accessoryType = .disclosureIndicator
+            }
+            configuration.secondaryTextProperties.color = .secondaryLabel
+            cell.contentConfiguration = configuration
+            return cell
+
+        case .addProvider:
+            guard
+                let cell = tableView.dequeueReusableCell(
+                    withIdentifier: SettingsCenteredButtonCell.reuseIdentifier,
+                    for: indexPath
+                ) as? SettingsCenteredButtonCell
+            else {
+                return UITableViewCell()
+            }
+            cell.configure(title: submitButtonTitle, isEnabled: canSubmitProvider)
+            return cell
         }
     }
 
@@ -279,12 +328,11 @@ final class OpenAIOAuthProviderFormViewController: UITableViewController, SFSafa
         switch section {
         case .oauth:
             return indexPath
-        case .manual:
-            guard ManualRow(rawValue: indexPath.row) == .addProvider else {
-                return nil
-            }
+        case .addProvider:
             return canSubmitProvider ? indexPath : nil
-        case .label:
+        case .manageModels:
+            return modelManagement.isRefreshingModels ? nil : indexPath
+        case .label, .manual, .storedModels:
             return nil
         }
     }
@@ -299,11 +347,35 @@ final class OpenAIOAuthProviderFormViewController: UITableViewController, SFSafa
         switch section {
         case .oauth:
             signInWithProvider()
-        case .manual:
-            if ManualRow(rawValue: indexPath.row) == .addProvider, canSubmitProvider {
+        case .addProvider:
+            if canSubmitProvider {
                 submitProvider()
             }
-        case .label:
+        case .manageModels:
+            guard let row = ProviderModelManageRow(rawValue: indexPath.row) else {
+                return
+            }
+            switch row {
+            case .refreshOfficialModels:
+                guard let provider = latestEditingProvider() else {
+                    return
+                }
+                modelManagement.refreshOfficialModels(
+                    for: provider,
+                    manageSectionIndex: Section.manageModels.rawValue,
+                    in: self
+                )
+            case .addCustomModel:
+                guard let provider = latestEditingProvider() else {
+                    return
+                }
+                modelManagement.presentModelEditor(
+                    for: provider,
+                    existingModel: nil,
+                    from: self
+                )
+            }
+        case .label, .manual, .storedModels:
             break
         }
     }
@@ -358,7 +430,6 @@ final class OpenAIOAuthProviderFormViewController: UITableViewController, SFSafa
 
         do {
             let autoAppendV1 = resolveAutoAppendV1()
-            let trimmedModelID = modelIDText.trimmingCharacters(in: .whitespacesAndNewlines)
             let accountID = providerKind == .openAICompatible ? oauthDerivedChatGPTAccountID : nil
             if let editingProvider {
                 _ = try store.updateProviderUsingOAuth(
@@ -368,7 +439,7 @@ final class OpenAIOAuthProviderFormViewController: UITableViewController, SFSafa
                     autoAppendV1: autoAppendV1,
                     bearerToken: trimmedToken,
                     chatGPTAccountID: accountID,
-                    modelID: trimmedModelID
+                    modelID: latestEditingProvider()?.modelID
                 )
                 popToManageProviders()
             } else {
@@ -379,7 +450,7 @@ final class OpenAIOAuthProviderFormViewController: UITableViewController, SFSafa
                     autoAppendV1: autoAppendV1,
                     bearerToken: trimmedToken,
                     chatGPTAccountID: accountID,
-                    modelID: trimmedModelID
+                    modelID: nil
                 )
                 showAddedAlert(providerLabel: provider.label)
             }
@@ -459,8 +530,8 @@ final class OpenAIOAuthProviderFormViewController: UITableViewController, SFSafa
     }
 
     private func refreshAddProviderCell() {
-        let sectionIndex = Section.manual.rawValue
-        let rowIndex = ManualRow.addProvider.rawValue
+        let sectionIndex = Section.addProvider.rawValue
+        let rowIndex = 0
         guard tableView.numberOfSections > sectionIndex else {
             return
         }
@@ -486,7 +557,7 @@ final class OpenAIOAuthProviderFormViewController: UITableViewController, SFSafa
             return
         }
 
-        let rows = [ManualRow.httpsURL.rawValue, ManualRow.bearerToken.rawValue, ManualRow.model.rawValue]
+        let rows = [ManualRow.httpsURL.rawValue, ManualRow.bearerToken.rawValue]
         let indexPaths = rows.compactMap { row -> IndexPath? in
             guard tableView.numberOfRows(inSection: sectionIndex) > row else {
                 return nil
@@ -575,5 +646,16 @@ final class OpenAIOAuthProviderFormViewController: UITableViewController, SFSafa
             return
         }
         navigationController.popViewController(animated: true)
+    }
+
+    private func latestEditingProvider() -> LLMProviderRecord? {
+        guard let editingProvider else {
+            return nil
+        }
+        return store.loadProvider(id: editingProvider.id) ?? editingProvider
+    }
+
+    private func storedModels() -> [LLMProviderModelRecord] {
+        modelManagement.storedModels(for: latestEditingProvider())
     }
 }

@@ -1,5 +1,5 @@
 //
-//  OpenAIProviderAuthMethodViewController.swift
+//  ProviderAuthMethodViewController.swift
 //  Doufu
 //
 //  Created by Codex on 2026/03/04.
@@ -7,7 +7,7 @@
 
 import UIKit
 
-final class OpenAIProviderAuthMethodViewController: UITableViewController {
+final class ProviderAuthMethodViewController: UITableViewController {
     private let providerKind: LLMProviderRecord.Kind
     private var availableMethods: [Method] {
         switch providerKind {
@@ -111,10 +111,10 @@ final class OpenAIProviderAuthMethodViewController: UITableViewController {
 
         switch method {
         case .apiKey:
-            let controller = OpenAIAPIKeyProviderFormViewController(providerKind: providerKind)
+            let controller = ProviderAPIKeyFormViewController(providerKind: providerKind)
             navigationController?.pushViewController(controller, animated: true)
         case .oauth:
-            let controller = OpenAIOAuthProviderFormViewController(providerKind: providerKind)
+            let controller = ProviderOAuthFormViewController(providerKind: providerKind)
             navigationController?.pushViewController(controller, animated: true)
         }
     }

@@ -44,7 +44,7 @@ final class ProjectChatService {
         )
     }
 
-    enum ReasoningEffort: String, CaseIterable {
+    enum ReasoningEffort: String, CaseIterable, Codable, Hashable {
         case low
         case medium
         case high

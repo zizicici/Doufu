@@ -69,7 +69,7 @@ final class AddProviderViewController: UITableViewController {
         guard indexPath.row < providerKinds.count else {
             return
         }
-        let controller = OpenAIProviderAuthMethodViewController(providerKind: providerKinds[indexPath.row])
+        let controller = ProviderAuthMethodViewController(providerKind: providerKinds[indexPath.row])
         navigationController?.pushViewController(controller, animated: true)
     }
 }
