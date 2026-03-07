@@ -85,6 +85,9 @@ final class OpenAIAPIKeyProviderFormViewController: UITableViewController {
         title = providerKind.displayName + " · " + String(localized: "providers.auth_method.api_key.title")
         if let editingProvider {
             apiKeyText = (try? store.loadAPIKey(for: editingProvider.id)) ?? ""
+            if apiKeyText.isEmpty, editingProvider.kind == .anthropic, editingProvider.authMode == .oauth {
+                apiKeyText = (try? store.loadOAuthBearerToken(for: editingProvider.id)) ?? ""
+            }
         }
         tableView.keyboardDismissMode = .onDrag
         tableView.register(SettingsTextInputCell.self, forCellReuseIdentifier: SettingsTextInputCell.reuseIdentifier)

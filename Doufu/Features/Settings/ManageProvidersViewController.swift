@@ -126,8 +126,13 @@ final class ManageProvidersViewController: UITableViewController {
             let controller = OpenAIAPIKeyProviderFormViewController(provider: provider)
             navigationController?.pushViewController(controller, animated: true)
         case .oauth:
-            let controller = OpenAIOAuthProviderFormViewController(provider: provider)
-            navigationController?.pushViewController(controller, animated: true)
+            if provider.kind == .anthropic {
+                let controller = OpenAIAPIKeyProviderFormViewController(provider: provider)
+                navigationController?.pushViewController(controller, animated: true)
+            } else {
+                let controller = OpenAIOAuthProviderFormViewController(provider: provider)
+                navigationController?.pushViewController(controller, animated: true)
+            }
         }
     }
 

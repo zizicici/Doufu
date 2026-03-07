@@ -9,6 +9,14 @@ import UIKit
 
 final class OpenAIProviderAuthMethodViewController: UITableViewController {
     private let providerKind: LLMProviderRecord.Kind
+    private var availableMethods: [Method] {
+        switch providerKind {
+        case .anthropic:
+            return [.apiKey]
+        case .openAICompatible, .googleGemini:
+            return Method.allCases
+        }
+    }
 
     private enum Method: Int, CaseIterable {
         case apiKey
@@ -63,7 +71,7 @@ final class OpenAIProviderAuthMethodViewController: UITableViewController {
     }
 
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        Method.allCases.count
+        availableMethods.count
     }
 
     override func tableView(
@@ -80,9 +88,10 @@ final class OpenAIProviderAuthMethodViewController: UITableViewController {
         let cell = tableView.dequeueReusableCell(withIdentifier: "MethodCell", for: indexPath)
         cell.accessoryType = .disclosureIndicator
 
-        guard let method = Method(rawValue: indexPath.row) else {
+        guard indexPath.row < availableMethods.count else {
             return cell
         }
+        let method = availableMethods[indexPath.row]
 
         var configuration = cell.defaultContentConfiguration()
         configuration.image = method.image
@@ -95,9 +104,10 @@ final class OpenAIProviderAuthMethodViewController: UITableViewController {
 
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
-        guard let method = Method(rawValue: indexPath.row) else {
+        guard indexPath.row < availableMethods.count else {
             return
         }
+        let method = availableMethods[indexPath.row]
 
         switch method {
         case .apiKey:

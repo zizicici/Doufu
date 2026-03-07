@@ -571,11 +571,20 @@ final class ProjectChatViewController: UIViewController {
 
     private func resolvedGeminiThinkingEnabled(forModelID modelID: String) -> Bool {
         let key = normalizedModelID(modelID)
+        guard geminiModelSupportsThinkingToggle(modelID) else {
+            selectedGeminiThinkingEnabledByModelID[key] = true
+            return true
+        }
         if let selected = selectedGeminiThinkingEnabledByModelID[key] {
             return selected
         }
         selectedGeminiThinkingEnabledByModelID[key] = true
         return true
+    }
+
+    private func geminiModelSupportsThinkingToggle(_ modelID: String) -> Bool {
+        let normalized = normalizedModelID(modelID)
+        return !normalized.contains("gemini-2.5-pro")
     }
 
     private func providerMenuTitle(for credential: ProjectChatService.ProviderCredential) -> String {
@@ -623,7 +632,9 @@ final class ProjectChatViewController: UIViewController {
             }
         case .googleGemini:
             selectedReasoningEffortsByModelID.removeValue(forKey: normalizedModel)
-            if selectedGeminiThinkingEnabledByModelID[normalizedModel] == nil {
+            if !geminiModelSupportsThinkingToggle(modelID) {
+                selectedGeminiThinkingEnabledByModelID[normalizedModel] = true
+            } else if selectedGeminiThinkingEnabledByModelID[normalizedModel] == nil {
                 selectedGeminiThinkingEnabledByModelID[normalizedModel] = true
             }
         }
@@ -691,6 +702,10 @@ final class ProjectChatViewController: UIViewController {
             )
         case .googleGemini:
             let key = normalizedModelID(modelID)
+            guard geminiModelSupportsThinkingToggle(modelID) else {
+                selectedGeminiThinkingEnabledByModelID[key] = true
+                return nil
+            }
             let currentValue = selectedGeminiThinkingEnabledByModelID[key] ?? true
             selectedGeminiThinkingEnabledByModelID[key] = currentValue
             let actions = [

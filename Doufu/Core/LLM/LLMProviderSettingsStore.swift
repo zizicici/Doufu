@@ -359,7 +359,7 @@ final class LLMProviderSettingsStore {
         let updatedProvider = LLMProviderRecord(
             id: existingProvider.id,
             kind: existingProvider.kind,
-            authMode: existingProvider.authMode,
+            authMode: .apiKey,
             createdAt: existingProvider.createdAt,
             updatedAt: Date(),
             label: normalizedLabel,
@@ -371,6 +371,9 @@ final class LLMProviderSettingsStore {
         providers[index] = updatedProvider
         try saveProviders(providers)
         try saveAPIKey(normalizedAPIKey, providerID: providerID)
+        if existingProvider.authMode == .oauth {
+            try deleteOAuthBearerToken(providerID: providerID)
+        }
         return updatedProvider
     }
 
@@ -425,7 +428,7 @@ final class LLMProviderSettingsStore {
         let updatedProvider = LLMProviderRecord(
             id: existingProvider.id,
             kind: existingProvider.kind,
-            authMode: existingProvider.authMode,
+            authMode: .oauth,
             createdAt: existingProvider.createdAt,
             updatedAt: Date(),
             label: normalizedLabel,
@@ -437,6 +440,9 @@ final class LLMProviderSettingsStore {
         providers[index] = updatedProvider
         try saveProviders(providers)
         try saveOAuthBearerToken(normalizedToken, providerID: providerID)
+        if existingProvider.authMode == .apiKey {
+            try deleteAPIKey(providerID: providerID)
+        }
         return updatedProvider
     }
 

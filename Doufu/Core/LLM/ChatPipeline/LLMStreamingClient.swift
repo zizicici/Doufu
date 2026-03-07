@@ -104,10 +104,12 @@ final class LLMStreamingClient {
             }
 
             let responseMimeType: String?
+            let responseJsonSchema: JSONValue?
             let thinkingConfig: ThinkingConfig?
 
             private enum CodingKeys: String, CodingKey {
                 case responseMimeType = "response_mime_type"
+                case responseJsonSchema = "response_json_schema"
                 case thinkingConfig = "thinking_config"
             }
         }
@@ -139,11 +141,13 @@ final class LLMStreamingClient {
         struct UsageMetadata: Decodable {
             let promptTokenCount: Int?
             let candidatesTokenCount: Int?
+            let thoughtsTokenCount: Int?
             let totalTokenCount: Int?
 
             private enum CodingKeys: String, CodingKey {
                 case promptTokenCount
                 case candidatesTokenCount
+                case thoughtsTokenCount
                 case totalTokenCount
             }
         }
@@ -509,6 +513,7 @@ final class LLMStreamingClient {
                 contents: messages,
                 generationConfig: .init(
                     responseMimeType: responseFormat == nil ? nil : "application/json",
+                    responseJsonSchema: geminiResponseJSONSchema(from: responseFormat),
                     thinkingConfig: includeThinkingConfig
                         ? .init(thinkingBudget: requestedThinkingBudget)
                         : nil
@@ -565,10 +570,10 @@ final class LLMStreamingClient {
                 providerLabel: credential.providerLabel,
                 model: model,
                 inputTokens: decoded.usageMetadata?.promptTokenCount,
-                outputTokens: decoded.usageMetadata?.candidatesTokenCount,
+                outputTokens: geminiOutputTokenCount(from: decoded.usageMetadata),
                 projectIdentifier: projectUsageIdentifier
             )
-            onUsage?(decoded.usageMetadata?.promptTokenCount, decoded.usageMetadata?.candidatesTokenCount)
+            onUsage?(decoded.usageMetadata?.promptTokenCount, geminiOutputTokenCount(from: decoded.usageMetadata))
             logSuccessfulResponseDebug(
                 request: request,
                 httpResponse: httpResponse,
@@ -585,6 +590,10 @@ final class LLMStreamingClient {
         to request: inout URLRequest,
         credential: ProjectChatService.ProviderCredential
     ) {
+        if credential.providerKind == .anthropic, usesOfficialAnthropicAuthentication(credential.baseURL) {
+            request.setValue(credential.bearerToken, forHTTPHeaderField: "x-api-key")
+            return
+        }
         switch credential.authMode {
         case .apiKey:
             request.setValue(credential.bearerToken, forHTTPHeaderField: "x-api-key")
@@ -789,6 +798,38 @@ final class LLMStreamingClient {
                 schema: format.schema
             )
         )
+    }
+
+    private func geminiResponseJSONSchema(from format: ResponsesTextFormat?) -> JSONValue? {
+        guard let format else {
+            return nil
+        }
+
+        let normalizedType = format.type.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard normalizedType == "json_schema" else {
+            return nil
+        }
+        return format.schema
+    }
+
+    private func geminiOutputTokenCount(from usage: GeminiGenerateContentResponse.UsageMetadata?) -> Int? {
+        guard let usage else {
+            return nil
+        }
+
+        let candidates = usage.candidatesTokenCount ?? 0
+        let thoughts = usage.thoughtsTokenCount ?? 0
+        if usage.candidatesTokenCount == nil, usage.thoughtsTokenCount == nil {
+            return nil
+        }
+        return candidates + thoughts
+    }
+
+    private func usesOfficialAnthropicAuthentication(_ baseURL: URL) -> Bool {
+        guard let host = baseURL.host?.lowercased() else {
+            return false
+        }
+        return host == "api.anthropic.com" || host.hasSuffix(".anthropic.com")
     }
 
     private func serializedJSONObjectString(from object: Any) -> String? {
