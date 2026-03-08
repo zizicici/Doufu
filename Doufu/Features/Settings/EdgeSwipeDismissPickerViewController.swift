@@ -1,5 +1,5 @@
 //
-//  PiPProgressPickerViewController.swift
+//  EdgeSwipeDismissPickerViewController.swift
 //  Doufu
 //
 //  Created by Codex on 2026/03/08.
@@ -7,14 +7,19 @@
 
 import UIKit
 
-final class PiPProgressPickerViewController: UITableViewController {
+/// Project-level picker for disabling edge swipe dismiss.
+final class ProjectEdgeSwipeDismissPickerViewController: UITableViewController {
 
     private enum Row: Int, CaseIterable {
         case on
         case off
     }
 
-    init() {
+    private let projectURL: URL
+    private let projectStore = AppProjectStore.shared
+
+    init(projectURL: URL) {
+        self.projectURL = projectURL
         super.init(style: .insetGrouped)
     }
 
@@ -25,11 +30,9 @@ final class PiPProgressPickerViewController: UITableViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        title = String(localized: "settings.chat.pip_progress.title")
+        title = String(localized: "project_settings.disable_edge_swipe.title")
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "Cell")
     }
-
-    // MARK: - Data Source
 
     override func numberOfSections(in tableView: UITableView) -> Int { 1 }
 
@@ -40,32 +43,29 @@ final class PiPProgressPickerViewController: UITableViewController {
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let cell = tableView.dequeueReusableCell(withIdentifier: "Cell", for: indexPath)
         guard let row = Row(rawValue: indexPath.row) else { return cell }
-        let isEnabled = PiPProgressManager.shared.isEnabled
+        let isDisabled = projectStore.isEdgeSwipeDismissDisabled(projectURL: projectURL)
 
         var configuration = cell.defaultContentConfiguration()
         switch row {
         case .on:
             configuration.text = String(localized: "settings.common.on")
-            cell.accessoryType = isEnabled ? .checkmark : .none
+            cell.accessoryType = isDisabled ? .checkmark : .none
         case .off:
             configuration.text = String(localized: "settings.common.off")
-            cell.accessoryType = !isEnabled ? .checkmark : .none
+            cell.accessoryType = !isDisabled ? .checkmark : .none
         }
         cell.contentConfiguration = configuration
-
         return cell
     }
 
     override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
-        String(localized: "settings.chat.pip_progress.footer")
+        String(localized: "settings.project.disable_edge_swipe.footer")
     }
-
-    // MARK: - Delegate
 
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
         guard let row = Row(rawValue: indexPath.row) else { return }
-        PiPProgressManager.shared.isEnabled = (row == .on)
+        try? projectStore.setEdgeSwipeDismissDisabled(row == .on, projectURL: projectURL)
         tableView.reloadData()
     }
 }

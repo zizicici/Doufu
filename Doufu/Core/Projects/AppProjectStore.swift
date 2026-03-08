@@ -159,6 +159,39 @@ final class AppProjectStore {
         }
     }
 
+    // MARK: - App-Level Project Settings
+
+    private static let autoCollapsePanelKey = "appAutoCollapsePanel"
+
+    var isAutoCollapsePanelEnabled: Bool {
+        get { UserDefaults.standard.object(forKey: Self.autoCollapsePanelKey) as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: Self.autoCollapsePanelKey) }
+    }
+
+    // MARK: - Project-Level Edge Swipe Dismiss
+
+    func isEdgeSwipeDismissDisabled(projectURL: URL) -> Bool {
+        let manifestURL = projectURL.appendingPathComponent("manifest.json")
+        guard
+            let data = try? Data(contentsOf: manifestURL),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return false }
+        return (object["disableEdgeSwipeDismiss"] as? Bool) ?? false
+    }
+
+    func setEdgeSwipeDismissDisabled(_ disabled: Bool, projectURL: URL) throws {
+        let manifestURL = projectURL.appendingPathComponent("manifest.json")
+        guard
+            let data = try? Data(contentsOf: manifestURL),
+            var object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        else {
+            throw AppProjectStoreError.manifestUpdateFailed
+        }
+        object["disableEdgeSwipeDismiss"] = disabled
+        let updatedData = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
+        try updatedData.write(to: manifestURL, options: .atomic)
+    }
+
     // MARK: - App-Level Tool Permission Mode (Default)
 
     private static let appToolPermissionModeKey = "appDefaultToolPermissionMode"

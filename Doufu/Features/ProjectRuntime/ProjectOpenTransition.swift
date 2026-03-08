@@ -172,6 +172,8 @@ private final class ProjectOpenAnimator: NSObject, UIViewControllerAnimatedTrans
             maskView.layer.cornerRadius = self.originCornerRadius
             bgView.frame = self.originFrame
             bgView.layer.cornerRadius = self.originCornerRadius
+            fromView.alpha = 0
+            bgView.alpha = 0
         } completion: { finished in
             fromView.mask = nil
             bgView.removeFromSuperview()
@@ -191,14 +193,21 @@ final class ProjectDismissInteractionController: UIPercentDrivenInteractiveTrans
 
     private(set) var isInteractive = false
     private weak var viewController: UIViewController?
+    private let edgePanGesture: UIScreenEdgePanGestureRecognizer
+
+    var isGestureEnabled: Bool {
+        get { edgePanGesture.isEnabled }
+        set { edgePanGesture.isEnabled = newValue }
+    }
 
     init(viewController: UIViewController) {
         self.viewController = viewController
+        edgePanGesture = UIScreenEdgePanGestureRecognizer()
+        edgePanGesture.edges = .left
         super.init()
 
-        let edgePan = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(handleEdgePan(_:)))
-        edgePan.edges = .left
-        viewController.view.addGestureRecognizer(edgePan)
+        edgePanGesture.addTarget(self, action: #selector(handleEdgePan(_:)))
+        viewController.view.addGestureRecognizer(edgePanGesture)
     }
 
     @objc

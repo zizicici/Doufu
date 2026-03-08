@@ -18,6 +18,11 @@ final class ProjectSettingsViewController: UITableViewController {
         case checkpoints
     }
 
+    private enum ProjectRow: Int, CaseIterable {
+        case name
+        case disableEdgeSwipe
+    }
+
     private enum ChatRow: Int, CaseIterable {
         case toolPermission
     }
@@ -71,7 +76,7 @@ final class ProjectSettingsViewController: UITableViewController {
         guard let section = Section(rawValue: section) else { return 0 }
         switch section {
         case .project:
-            return 1
+            return ProjectRow.allCases.count
         case .chat:
             return ChatRow.allCases.count
         case .checkpoints:
@@ -110,25 +115,41 @@ final class ProjectSettingsViewController: UITableViewController {
 
         switch section {
         case .project:
-            guard
-                let cell = tableView.dequeueReusableCell(
-                    withIdentifier: SettingsTextInputCell.reuseIdentifier,
-                    for: indexPath
-                ) as? SettingsTextInputCell
-            else {
-                return UITableViewCell()
-            }
+            guard let row = ProjectRow(rawValue: indexPath.row) else { return UITableViewCell() }
+            switch row {
+            case .name:
+                guard
+                    let cell = tableView.dequeueReusableCell(
+                        withIdentifier: SettingsTextInputCell.reuseIdentifier,
+                        for: indexPath
+                    ) as? SettingsTextInputCell
+                else {
+                    return UITableViewCell()
+                }
 
-            cell.configure(
-                title: String(localized: "project_settings.field.name_title"),
-                text: projectNameText,
-                placeholder: String(localized: "project_settings.field.name_placeholder"),
-                autocapitalizationType: .words
-            ) { [weak self] text in
-                self?.projectNameText = text
-                self?.commitProjectName()
+                cell.configure(
+                    title: String(localized: "project_settings.field.name_title"),
+                    text: projectNameText,
+                    placeholder: String(localized: "project_settings.field.name_placeholder"),
+                    autocapitalizationType: .words
+                ) { [weak self] text in
+                    self?.projectNameText = text
+                    self?.commitProjectName()
+                }
+                return cell
+
+            case .disableEdgeSwipe:
+                let cell = tableView.dequeueReusableCell(withIdentifier: "ChatSettingCell", for: indexPath)
+                let isDisabled = store.isEdgeSwipeDismissDisabled(projectURL: projectURL)
+                var configuration = UIListContentConfiguration.valueCell()
+                configuration.text = String(localized: "project_settings.disable_edge_swipe.title")
+                configuration.secondaryText = isDisabled
+                    ? String(localized: "settings.common.on")
+                    : String(localized: "settings.common.off")
+                cell.contentConfiguration = configuration
+                cell.accessoryType = .disclosureIndicator
+                return cell
             }
-            return cell
 
         case .chat:
             let cell = tableView.dequeueReusableCell(withIdentifier: "ChatSettingCell", for: indexPath)
@@ -187,7 +208,8 @@ final class ProjectSettingsViewController: UITableViewController {
         guard let section = Section(rawValue: indexPath.section) else { return nil }
         switch section {
         case .project:
-            return nil
+            guard let row = ProjectRow(rawValue: indexPath.row) else { return nil }
+            return row == .disableEdgeSwipe ? indexPath : nil
         case .chat:
             return indexPath
         case .checkpoints:
@@ -201,7 +223,9 @@ final class ProjectSettingsViewController: UITableViewController {
 
         switch section {
         case .project:
-            break
+            guard ProjectRow(rawValue: indexPath.row) == .disableEdgeSwipe else { break }
+            let controller = ProjectEdgeSwipeDismissPickerViewController(projectURL: projectURL)
+            navigationController?.pushViewController(controller, animated: true)
 
         case .chat:
             presentToolPermissionPicker()

@@ -1,5 +1,5 @@
 //
-//  PiPProgressPickerViewController.swift
+//  AutoCollapsePanelPickerViewController.swift
 //  Doufu
 //
 //  Created by Codex on 2026/03/08.
@@ -7,12 +7,14 @@
 
 import UIKit
 
-final class PiPProgressPickerViewController: UITableViewController {
+final class AutoCollapsePanelPickerViewController: UITableViewController {
 
     private enum Row: Int, CaseIterable {
         case on
         case off
     }
+
+    private let projectStore = AppProjectStore.shared
 
     init() {
         super.init(style: .insetGrouped)
@@ -25,11 +27,9 @@ final class PiPProgressPickerViewController: UITableViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        title = String(localized: "settings.chat.pip_progress.title")
+        title = String(localized: "settings.project.auto_collapse_panel.title")
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "Cell")
     }
-
-    // MARK: - Data Source
 
     override func numberOfSections(in tableView: UITableView) -> Int { 1 }
 
@@ -40,7 +40,7 @@ final class PiPProgressPickerViewController: UITableViewController {
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let cell = tableView.dequeueReusableCell(withIdentifier: "Cell", for: indexPath)
         guard let row = Row(rawValue: indexPath.row) else { return cell }
-        let isEnabled = PiPProgressManager.shared.isEnabled
+        let isEnabled = projectStore.isAutoCollapsePanelEnabled
 
         var configuration = cell.defaultContentConfiguration()
         switch row {
@@ -52,20 +52,17 @@ final class PiPProgressPickerViewController: UITableViewController {
             cell.accessoryType = !isEnabled ? .checkmark : .none
         }
         cell.contentConfiguration = configuration
-
         return cell
     }
 
     override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
-        String(localized: "settings.chat.pip_progress.footer")
+        String(localized: "settings.project.auto_collapse_panel.footer")
     }
-
-    // MARK: - Delegate
 
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
         guard let row = Row(rawValue: indexPath.row) else { return }
-        PiPProgressManager.shared.isEnabled = (row == .on)
+        projectStore.isAutoCollapsePanelEnabled = (row == .on)
         tableView.reloadData()
     }
 }

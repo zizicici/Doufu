@@ -12,14 +12,15 @@ final class SettingsViewController: UITableViewController {
     private enum Section: Int, CaseIterable {
         case general
         case llmProviders
-        case chat
+        case project
     }
 
     private enum GeneralRow: Int, CaseIterable {
         case language
     }
 
-    private enum ChatRow: Int, CaseIterable {
+    private enum ProjectRow: Int, CaseIterable {
+        case autoCollapsePanel
         case toolPermission
         case pipProgress
     }
@@ -44,6 +45,7 @@ final class SettingsViewController: UITableViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         title = String(localized: "settings.title")
+        tableView.backgroundColor = .doufuBackground
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "SettingsCell")
     }
 
@@ -63,8 +65,8 @@ final class SettingsViewController: UITableViewController {
             return GeneralRow.allCases.count
         case .llmProviders:
             return LLMProvidersRow.allCases.count
-        case .chat:
-            return ChatRow.allCases.count
+        case .project:
+            return ProjectRow.allCases.count
         }
     }
 
@@ -75,8 +77,8 @@ final class SettingsViewController: UITableViewController {
             return String(localized: "settings.section.general")
         case .llmProviders:
             return String(localized: "settings.section.llm_providers")
-        case .chat:
-            return String(localized: "settings.section.chat")
+        case .project:
+            return String(localized: "settings.section.project")
         }
     }
 
@@ -85,7 +87,7 @@ final class SettingsViewController: UITableViewController {
         switch section {
         case .llmProviders:
             return String(localized: "settings.section.llm_providers.footer")
-        case .general, .chat:
+        case .general, .project:
             return nil
         }
     }
@@ -125,10 +127,16 @@ final class SettingsViewController: UITableViewController {
             }
             cell.contentConfiguration = configuration
 
-        case .chat:
-            guard let row = ChatRow(rawValue: indexPath.row) else { return cell }
+        case .project:
+            guard let row = ProjectRow(rawValue: indexPath.row) else { return cell }
             var configuration = UIListContentConfiguration.valueCell()
             switch row {
+            case .autoCollapsePanel:
+                configuration.image = UIImage(systemName: "sidebar.right")
+                configuration.text = String(localized: "settings.project.auto_collapse_panel.title")
+                configuration.secondaryText = projectStore.isAutoCollapsePanelEnabled
+                    ? String(localized: "settings.common.on")
+                    : String(localized: "settings.common.off")
             case .toolPermission:
                 let mode = projectStore.loadAppToolPermissionMode()
                 configuration.image = UIImage(systemName: "wrench")
@@ -138,8 +146,8 @@ final class SettingsViewController: UITableViewController {
                 configuration.image = UIImage(systemName: "pip")
                 configuration.text = String(localized: "settings.chat.pip_progress.title")
                 configuration.secondaryText = PiPProgressManager.shared.isEnabled
-                    ? String(localized: "settings.chat.pip_progress.on")
-                    : String(localized: "settings.chat.pip_progress.off")
+                    ? String(localized: "settings.common.on")
+                    : String(localized: "settings.common.off")
             }
             cell.contentConfiguration = configuration
         }
@@ -168,9 +176,12 @@ final class SettingsViewController: UITableViewController {
                 navigationController?.pushViewController(controller, animated: true)
             }
 
-        case .chat:
-            guard let row = ChatRow(rawValue: indexPath.row) else { return }
+        case .project:
+            guard let row = ProjectRow(rawValue: indexPath.row) else { return }
             switch row {
+            case .autoCollapsePanel:
+                let controller = AutoCollapsePanelPickerViewController()
+                navigationController?.pushViewController(controller, animated: true)
             case .toolPermission:
                 let controller = ToolPermissionPickerViewController()
                 navigationController?.pushViewController(controller, animated: true)

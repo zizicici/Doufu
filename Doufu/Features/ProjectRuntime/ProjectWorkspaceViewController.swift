@@ -32,12 +32,12 @@ final class ProjectWorkspaceViewController: UIViewController {
     private lazy var jsErrorMessageProxy = WeakScriptMessageHandler(target: self)
 
     private let panelSize = CGSize(width: 72, height: 278)
-    private let collapsedHandleSize = CGSize(width: 36, height: 96)
-    private let collapsedVisibleWidth: CGFloat = 14
+    private let collapsedHandleSize = CGSize(width: 28, height: 72)
+    private let collapsedVisibleWidth: CGFloat = 10
     private let panelMargin: CGFloat = 10
     private let panelAutoCollapseDelay: TimeInterval = 2.4
     private let panelAnimationDuration: TimeInterval = 0.22
-    private let collapsedHandleVisibleAlpha: CGFloat = 0.82
+    private let collapsedHandleVisibleAlpha: CGFloat = 0.5
     private let edgeSnapThreshold: CGFloat = 28
     private var hasInitializedPanelPosition = false
     private var panelState: PanelPresentationState = .expanded
@@ -224,16 +224,21 @@ final class ProjectWorkspaceViewController: UIViewController {
 
         if !hasInitializedPanelPosition {
             let safeFrame = currentSafeFrame()
-            let initialFrame = expandedFrame(
-                for: .right,
-                preferredY: safeFrame.minY + panelMargin,
-                safeFrame: safeFrame
-            )
-            panelContainer.frame = initialFrame
-            panelContainer.alpha = 1
-            panelContainer.isHidden = false
-            panelState = .expanded
-            scheduleAutoCollapse()
+            if AppProjectStore.shared.isAutoCollapsePanelEnabled {
+                // Start collapsed directly
+                let preferredY = safeFrame.minY + panelMargin
+                collapsePanel(to: .right, preferredY: preferredY, animated: false)
+            } else {
+                let initialFrame = expandedFrame(
+                    for: .right,
+                    preferredY: safeFrame.minY + panelMargin,
+                    safeFrame: safeFrame
+                )
+                panelContainer.frame = initialFrame
+                panelContainer.alpha = 1
+                panelContainer.isHidden = false
+                panelState = .expanded
+            }
             hasInitializedPanelPosition = true
         } else {
             relayoutPanelForCurrentState()
@@ -276,10 +281,15 @@ final class ProjectWorkspaceViewController: UIViewController {
 
     private func configureInteractiveDismiss() {
         let interaction = ProjectDismissInteractionController(viewController: self)
+        interaction.isGestureEnabled = !AppProjectStore.shared.isEdgeSwipeDismissDisabled(projectURL: projectURL)
         dismissInteractionController = interaction
         if let delegate = transitioningDelegate as? ProjectOpenTransitionDelegate {
             delegate.interactionController = interaction
         }
+    }
+
+    func reloadEdgeSwipeSetting() {
+        dismissInteractionController?.isGestureEnabled = !AppProjectStore.shared.isEdgeSwipeDismissDisabled(projectURL: projectURL)
     }
 
     private func configureFloatingPanel() {
@@ -327,8 +337,8 @@ final class ProjectWorkspaceViewController: UIViewController {
 
             collapsedHandleIndicator.centerXAnchor.constraint(equalTo: collapsedHandleView.contentView.centerXAnchor),
             collapsedHandleIndicator.centerYAnchor.constraint(equalTo: collapsedHandleView.contentView.centerYAnchor),
-            collapsedHandleIndicator.widthAnchor.constraint(equalToConstant: 20),
-            collapsedHandleIndicator.heightAnchor.constraint(equalToConstant: 4)
+            collapsedHandleIndicator.widthAnchor.constraint(equalToConstant: 14),
+            collapsedHandleIndicator.heightAnchor.constraint(equalToConstant: 3)
         ])
 
         let panelPanGestureLeft = UIPanGestureRecognizer(target: self, action: #selector(handleExpandedPanelPan(_:)))
@@ -703,6 +713,7 @@ final class ProjectWorkspaceViewController: UIViewController {
             sheet.detents = [.medium(), .large()]
             sheet.prefersGrabberVisible = true
         }
+        navigationController.presentationController?.delegate = self
         present(navigationController, animated: true)
     }
 
@@ -877,6 +888,12 @@ final class ProjectWorkspaceViewController: UIViewController {
                 try? FileManager.default.removeItem(at: legacyPNGURL)
             }
         }
+    }
+}
+
+extension ProjectWorkspaceViewController: UIAdaptivePresentationControllerDelegate {
+    func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
+        reloadEdgeSwipeSetting()
     }
 }
 
