@@ -32,6 +32,8 @@ final class HomeViewController: UIViewController {
     private let defaults = UserDefaults.standard
     private let customOrderKey = "home.project.custom_order.v1"
     private var customProjectOrder: [String] = []
+    private let projectTransitionDelegate = ProjectOpenTransitionDelegate()
+    private var selectedCellIndexPath: IndexPath?
 
     private lazy var collectionView: UICollectionView = {
         let layout = UICollectionViewFlowLayout()
@@ -147,7 +149,7 @@ final class HomeViewController: UIViewController {
         do {
             let project = try projectStore.createBlankProject()
             reloadProjects()
-            openProject(name: project.name, projectURL: project.projectURL, isNewlyCreated: true)
+            openProject(name: project.name, projectURL: project.projectURL, isNewlyCreated: true, cellIndexPath: nil)
         } catch {
             showPlaceholderAlert(title: String(localized: "home.alert.create_failed.title"), message: error.localizedDescription)
         }
@@ -414,17 +416,37 @@ final class HomeViewController: UIViewController {
         emptyStateContainer.isHidden = !filteredProjects.isEmpty
     }
 
-    private func openProject(_ project: HomeProjectItem) {
-        openProject(name: project.name, projectURL: project.projectURL, isNewlyCreated: false)
+    private func openProject(_ project: HomeProjectItem, at indexPath: IndexPath? = nil) {
+        openProject(name: project.name, projectURL: project.projectURL, isNewlyCreated: false, cellIndexPath: indexPath)
     }
 
-    private func openProject(name: String, projectURL: URL, isNewlyCreated: Bool) {
+    private func openProject(name: String, projectURL: URL, isNewlyCreated: Bool, cellIndexPath: IndexPath? = nil) {
+        // Compute origin frame from the tapped cell
+        if let indexPath = cellIndexPath,
+           let cell = collectionView.cellForItem(at: indexPath) {
+            let frameInWindow = cell.convert(cell.bounds, to: view.window)
+            projectTransitionDelegate.originFrame = frameInWindow
+            projectTransitionDelegate.originCornerRadius = cell.contentView.layer.cornerRadius
+            selectedCellIndexPath = indexPath
+        } else {
+            // Fallback: center rect
+            let center = view.center
+            projectTransitionDelegate.originFrame = CGRect(x: center.x - 60, y: center.y - 60, width: 120, height: 120)
+            projectTransitionDelegate.originCornerRadius = 14
+            selectedCellIndexPath = nil
+        }
+
         let controller = ProjectWorkspaceViewController(
             projectName: name,
             projectURL: projectURL,
             isNewlyCreated: isNewlyCreated
         )
-        navigationController?.pushViewController(controller, animated: true)
+        controller.modalPresentationStyle = .fullScreen
+        controller.transitioningDelegate = projectTransitionDelegate
+        controller.onDismissed = { [weak self] in
+            self?.reloadProjects()
+        }
+        present(controller, animated: true)
     }
 
     private func showPlaceholderAlert(title: String, message: String) {
@@ -466,7 +488,7 @@ extension HomeViewController: UICollectionViewDataSource {
 extension HomeViewController: UICollectionViewDelegate {
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         let project = filteredProjects[indexPath.item]
-        openProject(project)
+        openProject(project, at: indexPath)
     }
 
     func collectionView(

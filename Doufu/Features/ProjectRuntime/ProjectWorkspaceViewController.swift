@@ -24,7 +24,9 @@ final class ProjectWorkspaceViewController: UIViewController {
     private let projectURL: URL
     private let isNewlyCreated: Bool
     private let projectStore = AppProjectStore.shared
+    var onDismissed: (() -> Void)?
     private var hasProjectBeenModified = false
+    private var dismissInteractionController: ProjectDismissInteractionController?
     private let jsErrorHandlerName = "jsError"
     private var lastPresentedJSErrorSignature: String?
     private lazy var jsErrorMessageProxy = WeakScriptMessageHandler(target: self)
@@ -42,6 +44,7 @@ final class ProjectWorkspaceViewController: UIViewController {
     private var panelPanStartFrame: CGRect = .zero
     private var autoCollapseWorkItem: DispatchWorkItem?
     private var chatNavigationController: UINavigationController?
+    private var webLoadingCover: UIView?
 
     private lazy var webView: WKWebView = {
         let configuration = WKWebViewConfiguration()
@@ -188,19 +191,16 @@ final class ProjectWorkspaceViewController: UIViewController {
         title = projectName
         view.backgroundColor = .systemBackground
         configureLayout()
+        installWebLoadingCover()
         configureFloatingPanel()
+        configureInteractiveDismiss()
         loadProjectPage()
     }
 
-    override func viewWillAppear(_ animated: Bool) {
-        super.viewWillAppear(animated)
-        navigationController?.setNavigationBarHidden(true, animated: animated)
-    }
-
-    override func viewWillDisappear(_ animated: Bool) {
-        super.viewWillDisappear(animated)
-        if isMovingFromParent || isBeingDismissed {
-            navigationController?.setNavigationBarHidden(false, animated: animated)
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        if isBeingDismissed {
+            onDismissed?()
         }
     }
 
@@ -233,6 +233,38 @@ final class ProjectWorkspaceViewController: UIViewController {
             webView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             webView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         ])
+    }
+
+    private func installWebLoadingCover() {
+        let cover = UIView()
+        cover.translatesAutoresizingMaskIntoConstraints = false
+        cover.backgroundColor = .systemBackground
+        view.insertSubview(cover, aboveSubview: webView)
+        NSLayoutConstraint.activate([
+            cover.topAnchor.constraint(equalTo: webView.topAnchor),
+            cover.leadingAnchor.constraint(equalTo: webView.leadingAnchor),
+            cover.trailingAnchor.constraint(equalTo: webView.trailingAnchor),
+            cover.bottomAnchor.constraint(equalTo: webView.bottomAnchor),
+        ])
+        webLoadingCover = cover
+    }
+
+    private func removeWebLoadingCover() {
+        guard let cover = webLoadingCover else { return }
+        webLoadingCover = nil
+        UIView.animate(withDuration: 0.18) {
+            cover.alpha = 0
+        } completion: { _ in
+            cover.removeFromSuperview()
+        }
+    }
+
+    private func configureInteractiveDismiss() {
+        let interaction = ProjectDismissInteractionController(viewController: self)
+        dismissInteractionController = interaction
+        if let delegate = transitioningDelegate as? ProjectOpenTransitionDelegate {
+            delegate.interactionController = interaction
+        }
     }
 
     private func configureFloatingPanel() {
@@ -664,7 +696,7 @@ final class ProjectWorkspaceViewController: UIViewController {
             presentUnsavedNewProjectAlert()
             return
         }
-        presentNormalExitAlert()
+        dismiss(animated: true)
     }
 
     private func showLoadError(_ message: String) {
@@ -677,19 +709,6 @@ final class ProjectWorkspaceViewController: UIViewController {
         present(alert, animated: true)
     }
 
-    private func presentNormalExitAlert() {
-        let alert = UIAlertController(
-            title: String(localized: "workspace.alert.exit_project.title"),
-            message: String(localized: "workspace.alert.exit_project.message"),
-            preferredStyle: .alert
-        )
-        alert.addAction(UIAlertAction(title: String(localized: "common.action.cancel"), style: .cancel))
-        alert.addAction(UIAlertAction(title: String(localized: "common.action.exit"), style: .destructive, handler: { [weak self] _ in
-            self?.navigationController?.popViewController(animated: true)
-        }))
-        present(alert, animated: true)
-    }
-
     private func presentUnsavedNewProjectAlert() {
         let alert = UIAlertController(
             title: String(localized: "workspace.alert.save_new_project.title"),
@@ -698,7 +717,7 @@ final class ProjectWorkspaceViewController: UIViewController {
         )
         alert.addAction(UIAlertAction(title: String(localized: "common.action.cancel"), style: .cancel))
         alert.addAction(UIAlertAction(title: String(localized: "workspace.action.save_and_exit"), style: .default, handler: { [weak self] _ in
-            self?.navigationController?.popViewController(animated: true)
+            self?.dismiss(animated: true)
         }))
         alert.addAction(UIAlertAction(title: String(localized: "workspace.action.discard"), style: .destructive, handler: { [weak self] _ in
             self?.discardProjectAndExit()
@@ -709,7 +728,7 @@ final class ProjectWorkspaceViewController: UIViewController {
     private func discardProjectAndExit() {
         do {
             try projectStore.deleteProject(projectURL: projectURL)
-            navigationController?.popViewController(animated: true)
+            dismiss(animated: true)
         } catch {
             let alert = UIAlertController(
                 title: String(localized: "workspace.alert.delete_failed.title"),
@@ -834,6 +853,7 @@ final class ProjectWorkspaceViewController: UIViewController {
 extension ProjectWorkspaceViewController: WKNavigationDelegate {
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         lastPresentedJSErrorSignature = nil
+        removeWebLoadingCover()
         captureProjectPreviewIfNeeded()
     }
 
