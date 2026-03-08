@@ -101,6 +101,39 @@ struct LLMProviderHelpers {
         return message.contains("thinking") || message.contains("budget")
     }
 
+    static func parseJSONToJSONValue(_ jsonString: String) -> JSONValue {
+        guard let data = jsonString.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return .object([:]) }
+        return jsonObjectToJSONValue(obj)
+    }
+
+    static func jsonObjectToJSONValue(_ obj: [String: Any]) -> JSONValue {
+        var result: [String: JSONValue] = [:]
+        for (key, value) in obj {
+            if let str = value as? String { result[key] = .string(str) }
+            else if let num = value as? Int { result[key] = .integer(num) }
+            else if let num = value as? Double { result[key] = .number(num) }
+            else if let bool = value as? Bool { result[key] = .bool(bool) }
+            else if let arr = value as? [Any] { result[key] = jsonArrayToJSONValue(arr) }
+            else if let dict = value as? [String: Any] { result[key] = jsonObjectToJSONValue(dict) }
+            else { result[key] = .null }
+        }
+        return .object(result)
+    }
+
+    static func jsonArrayToJSONValue(_ arr: [Any]) -> JSONValue {
+        .array(arr.map { element in
+            if let str = element as? String { return .string(str) }
+            else if let num = element as? Int { return .integer(num) }
+            else if let num = element as? Double { return .number(num) }
+            else if let bool = element as? Bool { return .bool(bool) }
+            else if let dict = element as? [String: Any] { return jsonObjectToJSONValue(dict) }
+            else if let arr = element as? [Any] { return jsonArrayToJSONValue(arr) }
+            else { return .null }
+        })
+    }
+
     static func debugLog(_ message: @autoclosure () -> String) {
 #if DEBUG
         print(message())

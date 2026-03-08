@@ -41,6 +41,7 @@ final class ProjectChatViewController: UIViewController {
         var finishedAt: Date?
         let isProgress: Bool
         let requestTokenUsage: ProjectChatService.RequestTokenUsage?
+        let toolSummary: String?
     }
 
     private var projectName: String
@@ -1087,7 +1088,8 @@ final class ProjectChatViewController: UIViewController {
                         inputTokens: input,
                         outputTokens: output
                     )
-                }()
+                }(),
+                toolSummary: persistedMessage.toolSummary
             )
         }
 
@@ -1135,7 +1137,8 @@ final class ProjectChatViewController: UIViewController {
                 finishedAt: message.finishedAt,
                 isProgress: message.isProgress,
                 inputTokens: message.requestTokenUsage?.inputTokens,
-                outputTokens: message.requestTokenUsage?.outputTokens
+                outputTokens: message.requestTokenUsage?.outputTokens,
+                toolSummary: message.toolSummary
             )
         }
         threadStore.saveMessages(projectURL: projectURL, threadID: threadID, messages: persisted)
@@ -1189,7 +1192,8 @@ final class ProjectChatViewController: UIViewController {
         isProgress: Bool = false,
         startedAt: Date? = nil,
         finishedAt: Date? = nil,
-        requestTokenUsage: ProjectChatService.RequestTokenUsage? = nil
+        requestTokenUsage: ProjectChatService.RequestTokenUsage? = nil,
+        toolSummary: String? = nil
     ) -> Int? {
         let normalizedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedText.isEmpty else {
@@ -1208,7 +1212,8 @@ final class ProjectChatViewController: UIViewController {
                 startedAt: startedAt,
                 finishedAt: resolvedFinishedAt,
                 isProgress: isProgress,
-                requestTokenUsage: requestTokenUsage
+                requestTokenUsage: requestTokenUsage,
+                toolSummary: toolSummary
             )
         )
         tableView.reloadData()
@@ -1286,7 +1291,7 @@ final class ProjectChatViewController: UIViewController {
                 if message.isProgress {
                     return nil
                 }
-                return .init(role: .assistant, text: normalizedText)
+                return .init(role: .assistant, text: normalizedText, toolSummary: message.toolSummary)
             case .system:
                 return nil
             }
@@ -1699,7 +1704,8 @@ final class ProjectChatViewController: UIViewController {
                     role: .assistant,
                     text: assistantText,
                     startedAt: currentRequestStartedAt,
-                    requestTokenUsage: result.requestTokenUsage
+                    requestTokenUsage: result.requestTokenUsage,
+                    toolSummary: result.toolActivitySummary
                 )
 
                 do {

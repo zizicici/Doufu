@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		14A5B8432F5D305000758F69 /* SwiftGitX in Frameworks */ = {isa = PBXBuildFile; productRef = 14C0A0022F5CC00000AA1001 /* SwiftGitX */; };
 		14B7E4342F5A8AB200BB3324 /* Runestone in Frameworks */ = {isa = PBXBuildFile; productRef = 14B7E4332F5A8AB200BB3324 /* Runestone */; };
 		14B7E5442F5AB2C100BB3324 /* TreeSitterJavaScriptRunestone in Frameworks */ = {isa = PBXBuildFile; productRef = 14B7E54A2F5AB2C100BB3324 /* TreeSitterJavaScriptRunestone */; };
 		14B7E5452F5AB2C100BB3324 /* TreeSitterTypeScriptRunestone in Frameworks */ = {isa = PBXBuildFile; productRef = 14B7E54B2F5AB2C100BB3324 /* TreeSitterTypeScriptRunestone */; };
@@ -48,6 +49,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				14A5B8432F5D305000758F69 /* SwiftGitX in Frameworks */,
 				14B7E4342F5A8AB200BB3324 /* Runestone in Frameworks */,
 				14B7E5492F5AB2C100BB3324 /* TreeSitterCSSRunestone in Frameworks */,
 				14B7E5482F5AB2C100BB3324 /* TreeSitterHTMLRunestone in Frameworks */,

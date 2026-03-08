@@ -40,7 +40,7 @@ final class GeminiProvider: LLMProviderAdapter {
         let timeoutSeconds = LLMProviderHelpers.timeoutSeconds(for: initialReasoningEffort, configuration: configuration)
         let apiKey: String? = credential.authMode == .apiKey ? credential.bearerToken : nil
         guard let url = buildGenerateContentURL(baseURL: credential.baseURL, model: model, apiKey: apiKey) else {
-            throw ProjectChatService.ServiceError.networkFailed("请求失败：Gemini URL 无效。")
+            throw ProjectChatService.ServiceError.networkFailed(String(localized: "llm.error.invalid_gemini_url"))
         }
 
         var includeThinkingConfig = true
@@ -82,7 +82,7 @@ final class GeminiProvider: LLMProviderAdapter {
 
             let (data, response) = try await URLSession.shared.data(for: request)
             guard let httpResponse = response as? HTTPURLResponse else {
-                throw ProjectChatService.ServiceError.networkFailed("请求失败：无效响应。")
+                throw ProjectChatService.ServiceError.networkFailed(String(localized: "llm.error.invalid_response"))
             }
             guard (200...299).contains(httpResponse.statusCode) else {
                 if includeThinkingConfig, LLMProviderHelpers.shouldFallbackThinkingConfiguration(responseBodyData: data) {
@@ -95,7 +95,7 @@ final class GeminiProvider: LLMProviderAdapter {
                 )
                 let message = LLMProviderHelpers.parseErrorMessage(from: data)
                     ?? HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
-                throw ProjectChatService.ServiceError.networkFailed("请求失败：\(message)")
+                throw ProjectChatService.ServiceError.networkFailed(String(format: String(localized: "llm.error.request_failed_format"), message))
             }
 
             guard let decoded = try? jsonDecoder.decode(GeminiGenerateContentResponse.self, from: data) else {
@@ -133,7 +133,8 @@ final class GeminiProvider: LLMProviderAdapter {
         onUsage: ((Int?, Int?) -> Void)?
     ) async throws -> AgentLLMResponse {
         let model = credential.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
-        let timeoutSeconds = LLMProviderHelpers.timeoutSeconds(for: .high, configuration: configuration)
+        let effort = executionOptions.reasoningEffort
+        let timeoutSeconds = LLMProviderHelpers.timeoutSeconds(for: effort, configuration: configuration)
         let apiKey: String? = credential.authMode == .apiKey ? credential.bearerToken : nil
 
         guard let url = buildGenerateContentURL(baseURL: credential.baseURL, model: model, apiKey: apiKey) else {
@@ -155,7 +156,7 @@ final class GeminiProvider: LLMProviderAdapter {
             systemInstruction: GeminiToolUseRequest.SystemInstruction(parts: [GeminiTextPart(text: systemInstruction)]),
             generationConfig: executionOptions.geminiThinkingEnabled
                 ? GeminiToolUseRequest.GenerationConfig(
-                    thinkingConfig: .init(thinkingBudget: 2048)
+                    thinkingConfig: .init(thinkingBudget: geminiThinkingBudget(for: effort))
                 )
                 : nil
         )
@@ -287,7 +288,7 @@ final class GeminiProvider: LLMProviderAdapter {
                 var parts: [GeminiPart] = []
                 if !text.isEmpty { parts.append(.text(text)) }
                 for tc in toolCalls {
-                    let argsValue = parseJSONToJSONValue(tc.argumentsJSON)
+                    let argsValue = LLMProviderHelpers.parseJSONToJSONValue(tc.argumentsJSON)
                     parts.append(.functionCall(name: tc.name, args: argsValue))
                 }
                 if !parts.isEmpty {
@@ -301,39 +302,6 @@ final class GeminiProvider: LLMProviderAdapter {
             }
         }
         return contents
-    }
-
-    private func parseJSONToJSONValue(_ jsonString: String) -> JSONValue {
-        guard let data = jsonString.data(using: .utf8),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else { return .object([:]) }
-        return jsonObjectToJSONValue(obj)
-    }
-
-    private func jsonObjectToJSONValue(_ obj: [String: Any]) -> JSONValue {
-        var result: [String: JSONValue] = [:]
-        for (key, value) in obj {
-            if let str = value as? String { result[key] = .string(str) }
-            else if let num = value as? Int { result[key] = .integer(num) }
-            else if let num = value as? Double { result[key] = .number(num) }
-            else if let bool = value as? Bool { result[key] = .bool(bool) }
-            else if let arr = value as? [Any] { result[key] = jsonArrayToJSONValue(arr) }
-            else if let dict = value as? [String: Any] { result[key] = jsonObjectToJSONValue(dict) }
-            else { result[key] = .null }
-        }
-        return .object(result)
-    }
-
-    private func jsonArrayToJSONValue(_ arr: [Any]) -> JSONValue {
-        .array(arr.map { element in
-            if let str = element as? String { return .string(str) }
-            else if let num = element as? Int { return .integer(num) }
-            else if let num = element as? Double { return .number(num) }
-            else if let bool = element as? Bool { return .bool(bool) }
-            else if let dict = element as? [String: Any] { return jsonObjectToJSONValue(dict) }
-            else if let arr = element as? [Any] { return jsonArrayToJSONValue(arr) }
-            else { return .null }
-        })
     }
 
     // MARK: - Helpers

@@ -29,6 +29,7 @@ struct ProjectChatPersistedMessage: Codable {
     let isProgress: Bool
     let inputTokens: Int64?
     let outputTokens: Int64?
+    let toolSummary: String?
 
     init(
         role: String,
@@ -38,7 +39,8 @@ struct ProjectChatPersistedMessage: Codable {
         finishedAt: Date? = nil,
         isProgress: Bool = false,
         inputTokens: Int64? = nil,
-        outputTokens: Int64? = nil
+        outputTokens: Int64? = nil,
+        toolSummary: String? = nil
     ) {
         self.role = role
         self.text = text
@@ -48,6 +50,7 @@ struct ProjectChatPersistedMessage: Codable {
         self.isProgress = isProgress
         self.inputTokens = inputTokens
         self.outputTokens = outputTokens
+        self.toolSummary = toolSummary
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -59,6 +62,7 @@ struct ProjectChatPersistedMessage: Codable {
         case isProgress
         case inputTokens
         case outputTokens
+        case toolSummary
     }
 
     init(from decoder: Decoder) throws {
@@ -71,6 +75,7 @@ struct ProjectChatPersistedMessage: Codable {
         isProgress = try container.decodeIfPresent(Bool.self, forKey: .isProgress) ?? false
         inputTokens = try container.decodeIfPresent(Int64.self, forKey: .inputTokens)
         outputTokens = try container.decodeIfPresent(Int64.self, forKey: .outputTokens)
+        toolSummary = try container.decodeIfPresent(String.self, forKey: .toolSummary)
     }
 }
 

@@ -9,15 +9,12 @@ import Foundation
 
 final class LLMStreamingClient {
     private let configuration: ProjectChatConfiguration
-    private let openAIProvider: OpenAIProvider
-    private let anthropicProvider: AnthropicProvider
-    private let geminiProvider: GeminiProvider
+    private lazy var openAIProvider = OpenAIProvider(configuration: configuration)
+    private lazy var anthropicProvider = AnthropicProvider(configuration: configuration)
+    private lazy var geminiProvider = GeminiProvider(configuration: configuration)
 
     init(configuration: ProjectChatConfiguration) {
         self.configuration = configuration
-        self.openAIProvider = OpenAIProvider(configuration: configuration)
-        self.anthropicProvider = AnthropicProvider(configuration: configuration)
-        self.geminiProvider = GeminiProvider(configuration: configuration)
     }
 
     func requestModelResponseStreaming(
@@ -58,16 +55,44 @@ final class LLMStreamingClient {
         onStreamedText: (@MainActor (String) -> Void)?,
         onUsage: ((Int?, Int?) -> Void)?
     ) async throws -> AgentLLMResponse {
-        try await provider(for: credential.providerKind).requestWithTools(
-            systemInstruction: systemInstruction,
-            conversationItems: conversationItems,
-            tools: tools,
-            credential: credential,
-            projectUsageIdentifier: projectUsageIdentifier,
-            executionOptions: executionOptions,
-            onStreamedText: onStreamedText,
-            onUsage: onUsage
-        )
+        var lastError: Error?
+        for attempt in 0...configuration.maxTransientRetries {
+            if attempt > 0 {
+                let delaySeconds = Double(1 << (attempt - 1)) // 1s, 2s
+                try await Task.sleep(nanoseconds: UInt64(delaySeconds * 1_000_000_000))
+                try Task.checkCancellation()
+            }
+            do {
+                return try await provider(for: credential.providerKind).requestWithTools(
+                    systemInstruction: systemInstruction,
+                    conversationItems: conversationItems,
+                    tools: tools,
+                    credential: credential,
+                    projectUsageIdentifier: projectUsageIdentifier,
+                    executionOptions: executionOptions,
+                    onStreamedText: onStreamedText,
+                    onUsage: onUsage
+                )
+            } catch let error as ProjectChatService.ServiceError {
+                guard case let .networkFailed(message) = error,
+                      Self.isTransientError(message),
+                      attempt < configuration.maxTransientRetries
+                else { throw error }
+                lastError = error
+                LLMProviderHelpers.debugLog("[Doufu] Transient error (attempt \(attempt + 1)): \(message)")
+            }
+        }
+        throw lastError ?? ProjectChatService.ServiceError.networkFailed(String(localized: "llm.error.request_failed"))
+    }
+
+    private static func isTransientError(_ message: String) -> Bool {
+        let lowered = message.lowercased()
+        let transientPatterns = ["429", "rate limit", "too many requests",
+                                 "500", "internal server error",
+                                 "502", "bad gateway",
+                                 "503", "service unavailable",
+                                 "overloaded"]
+        return transientPatterns.contains { lowered.contains($0) }
     }
 
     private func provider(for kind: LLMProviderRecord.Kind) -> LLMProviderAdapter {

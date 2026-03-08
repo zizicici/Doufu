@@ -8,7 +8,7 @@
 import Foundation
 
 final class ProjectChatOrchestrator {
-    private final class UsageAccumulator {
+    private actor UsageAccumulator {
         private(set) var inputTokens: Int64 = 0
         private(set) var outputTokens: Int64 = 0
 
@@ -86,15 +86,23 @@ final class ProjectChatOrchestrator {
         // Build initial conversation
         var conversation: [AgentConversationItem] = []
 
-        // Add history turns
+        // Add history turns (include tool summaries so the model knows what happened)
         let historyItems = memoryManager.buildHistoryInputMessages(from: normalizedHistory)
-        for item in historyItems {
+        for (index, item) in historyItems.enumerated() {
             let role = item.role.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             let text = item.content.map(\.text).joined(separator: "\n")
             if role == "user" {
                 conversation.append(.userMessage(text))
             } else if role == "assistant" {
-                conversation.append(.assistantMessage(text: text, toolCalls: []))
+                // Find the matching history turn to get tool summary
+                let matchingTurn = normalizedHistory.first(where: { turn in
+                    turn.role == .assistant && turn.text.trimmingCharacters(in: .whitespacesAndNewlines) == text.trimmingCharacters(in: .whitespacesAndNewlines)
+                })
+                var assistantText = text
+                if let summary = matchingTurn?.toolSummary, !summary.isEmpty {
+                    assistantText += "\n\n<tool-activity>\n\(summary)\n</tool-activity>"
+                }
+                conversation.append(.assistantMessage(text: assistantText, toolCalls: []))
             }
         }
 
@@ -110,6 +118,7 @@ final class ProjectChatOrchestrator {
         var allChangedPaths: [String] = []
         var accumulatedText = ""
         var totalToolCalls = 0
+        var toolActivityLog: [String] = []
 
         if let onProgress {
             await onProgress("正在思考...")
@@ -131,6 +140,8 @@ final class ProjectChatOrchestrator {
                 }
             }
 
+            compactConversationIfNeeded(&conversation)
+
             let response = try await streamingClient.requestWithTools(
                 systemInstruction: systemPrompt,
                 conversationItems: conversation,
@@ -140,19 +151,27 @@ final class ProjectChatOrchestrator {
                 executionOptions: executionOptions,
                 onStreamedText: streamCallback,
                 onUsage: { inputTokens, outputTokens in
-                    usageAccumulator.record(inputTokens: inputTokens, outputTokens: outputTokens)
+                    Task { await usageAccumulator.record(inputTokens: inputTokens, outputTokens: outputTokens) }
                 }
             )
 
             let responseText = response.textContent.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
 
-            // No tool calls = final response
+            // No tool calls — check if this is a final response or a truncated one
             if response.toolCalls.isEmpty {
                 if !responseText.isEmpty {
                     accumulatedText += (accumulatedText.isEmpty ? "" : "\n\n") + responseText
                 }
                 if let onStreamedText {
                     await onStreamedText(accumulatedText)
+                }
+
+                // If truncated by max_tokens, auto-continue
+                if response.stopReason == .maxTokens {
+                    conversation.append(.assistantMessage(text: responseText, toolCalls: []))
+                    conversation.append(.userMessage("Please continue from where you left off."))
+                    debugLog("[Doufu Agent] response truncated (max_tokens), requesting continuation")
+                    continue
                 }
 
                 let finalMessage = accumulatedText.isEmpty ? "已完成。" : accumulatedText
@@ -174,7 +193,8 @@ final class ProjectChatOrchestrator {
                     changedPaths: allChangedPaths,
                     updatedMemory: updatedMemory,
                     threadMemoryUpdate: nil,
-                    requestTokenUsage: usageAccumulator.usage
+                    requestTokenUsage: await usageAccumulator.usage,
+                    toolActivitySummary: toolActivityLog.isEmpty ? nil : toolActivityLog.joined(separator: "\n")
                 )
             }
 
@@ -199,10 +219,11 @@ final class ProjectChatOrchestrator {
                     break
                 }
 
+                let toolDescription = describeToolCall(toolCall)
                 if let onProgress {
-                    let description = describeToolCall(toolCall)
-                    await onProgress(description)
+                    await onProgress(toolDescription)
                 }
+                toolActivityLog.append(toolDescription)
 
                 let result = await toolProvider.execute(toolCall: toolCall)
 
@@ -211,11 +232,12 @@ final class ProjectChatOrchestrator {
                     mergeChangedPaths(result.changedPaths, into: &allChangedPaths)
                 }
 
-                // Add tool result to conversation
+                // Add tool result to conversation (truncated to prevent context bloat)
+                let truncatedOutput = truncateToolResult(result.output)
                 conversation.append(.toolResult(
                     callID: toolCall.id,
                     name: toolCall.name,
-                    content: result.output,
+                    content: truncatedOutput,
                     isError: result.isError
                 ))
             }
@@ -245,7 +267,8 @@ final class ProjectChatOrchestrator {
             changedPaths: allChangedPaths,
             updatedMemory: updatedMemory,
             threadMemoryUpdate: nil,
-            requestTokenUsage: usageAccumulator.usage
+            requestTokenUsage: await usageAccumulator.usage,
+            toolActivitySummary: toolActivityLog.isEmpty ? nil : toolActivityLog.joined(separator: "\n")
         )
     }
 
@@ -266,8 +289,9 @@ final class ProjectChatOrchestrator {
         case "delete_file":
             return "删除文件：\(path ?? "?")"
         case "move_file":
+            let source = args["source"] as? String ?? "?"
             let dest = args["destination"] as? String ?? "?"
-            return "移动文件：\(path ?? "?") → \(dest)"
+            return "移动文件：\(source) → \(dest)"
         case "list_directory":
             return "浏览目录：\(path ?? ".")"
         case "search_files":
@@ -307,6 +331,43 @@ final class ProjectChatOrchestrator {
             try gitService.createCheckpoint(projectURL: projectURL, userMessage: userMessage)
         } catch {
             debugLog("[Doufu Agent] git checkpoint failed: \(error.localizedDescription)")
+        }
+    }
+
+    private func truncateToolResult(_ output: String) -> String {
+        guard output.count > configuration.maxToolResultCharacters else { return output }
+        return String(output.prefix(configuration.maxToolResultCharacters))
+            + "\n\n[Output truncated at \(configuration.maxToolResultCharacters) characters]"
+    }
+
+    /// Estimate the conversation size in characters (rough proxy for tokens).
+    /// When the conversation is too large, compact old tool results to keep
+    /// the context within reasonable bounds.
+    private func compactConversationIfNeeded(_ conversation: inout [AgentConversationItem]) {
+        let totalChars = conversation.reduce(0) { sum, item in
+            switch item {
+            case let .userMessage(text): return sum + text.count
+            case let .assistantMessage(text, toolCalls):
+                return sum + text.count + toolCalls.reduce(0) { $0 + $1.argumentsJSON.count }
+            case let .toolResult(_, _, content, _): return sum + content.count
+            }
+        }
+
+        // ~4 chars per token, target ~100k tokens → ~400k chars
+        let maxConversationChars = 400_000
+        guard totalChars > maxConversationChars else { return }
+
+        // Compact: truncate tool results from oldest to newest until under budget
+        var excess = totalChars - maxConversationChars
+        for i in conversation.indices {
+            guard excess > 0 else { break }
+            if case let .toolResult(callID, name, content, isError) = conversation[i],
+               content.count > 500 {
+                let truncated = String(content.prefix(200)) + "\n[Compacted to save context space]"
+                let saved = content.count - truncated.count
+                conversation[i] = .toolResult(callID: callID, name: name, content: truncated, isError: isError)
+                excess -= saved
+            }
         }
     }
 

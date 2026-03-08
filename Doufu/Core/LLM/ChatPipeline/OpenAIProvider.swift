@@ -69,7 +69,7 @@ final class OpenAIProvider: LLMProviderAdapter {
 
             let (bytes, response) = try await URLSession.shared.bytes(for: request)
             guard let httpResponse = response as? HTTPURLResponse else {
-                throw ProjectChatService.ServiceError.networkFailed("请求失败：无效响应。")
+                throw ProjectChatService.ServiceError.networkFailed(String(localized: "llm.error.invalid_response"))
             }
 
             guard (200...299).contains(httpResponse.statusCode) else {
@@ -100,7 +100,7 @@ final class OpenAIProvider: LLMProviderAdapter {
                     responseBodyData: data, requestLabel: requestLabel
                 )
                 let message = LLMProviderHelpers.parseErrorMessage(from: data) ?? HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
-                throw ProjectChatService.ServiceError.networkFailed("请求失败：\(message)")
+                throw ProjectChatService.ServiceError.networkFailed(String(format: String(localized: "llm.error.request_failed_format"), message))
             }
 
             do {
@@ -159,15 +159,17 @@ final class OpenAIProvider: LLMProviderAdapter {
         onUsage: ((Int?, Int?) -> Void)?
     ) async throws -> AgentLLMResponse {
         let model = credential.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
-        let timeoutSeconds = LLMProviderHelpers.timeoutSeconds(for: .high, configuration: configuration)
+        let effort = executionOptions.reasoningEffort
+        let timeoutSeconds = LLMProviderHelpers.timeoutSeconds(for: effort, configuration: configuration)
 
         let inputItems = buildToolUseInputItems(from: conversationItems)
+        let isChatGPT = isChatGPTCodexBackend(url: credential.baseURL)
         let toolDefinitions = tools.map { tool in
             OpenAIToolDefinition(
                 name: tool.name,
                 description: tool.description,
                 parameters: tool.parameters,
-                strict: true
+                strict: !isChatGPT
             )
         }
 
@@ -176,14 +178,15 @@ final class OpenAIProvider: LLMProviderAdapter {
             instructions: systemInstruction,
             input: inputItems,
             tools: toolDefinitions,
-            stream: false,
-            store: isChatGPTCodexBackend(url: credential.baseURL) ? false : nil
+            stream: true,
+            store: isChatGPT ? false : nil
         )
 
         var request = URLRequest(url: credential.baseURL.appendingPathComponent("responses"))
         request.httpMethod = "POST"
         request.timeoutInterval = timeoutSeconds
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         request.setValue("Bearer \(credential.bearerToken)", forHTTPHeaderField: "Authorization")
         request.setValue("responses=experimental", forHTTPHeaderField: "OpenAI-Beta")
         if let accountID = credential.chatGPTAccountID?.trimmingCharacters(in: .whitespacesAndNewlines), !accountID.isEmpty {
@@ -191,64 +194,223 @@ final class OpenAIProvider: LLMProviderAdapter {
         }
         request.httpBody = try jsonEncoder.encode(requestBody)
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (bytes, response) = try await URLSession.shared.bytes(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {
-            throw ProjectChatService.ServiceError.networkFailed("Invalid response")
+            throw ProjectChatService.ServiceError.networkFailed(String(localized: "llm.error.invalid_response"))
         }
         guard (200...299).contains(httpResponse.statusCode) else {
+            let data = try await consumeStreamBytes(bytes: bytes)
             let message = LLMProviderHelpers.parseErrorMessage(from: data)
                 ?? HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
-            throw ProjectChatService.ServiceError.networkFailed(message)
+            throw ProjectChatService.ServiceError.networkFailed(String(format: String(localized: "llm.error.request_failed_format"), message))
         }
 
-        guard let responseObj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let outputItems = responseObj["output"] as? [[String: Any]]
-        else {
-            throw ProjectChatService.ServiceError.invalidResponse
-        }
-
-        // Parse usage
-        var usage: ResponsesUsage?
-        if let usageData = try? JSONSerialization.data(withJSONObject: responseObj["usage"] ?? [:]),
-           let decoded = try? jsonDecoder.decode(ResponsesUsage.self, from: usageData) {
-            usage = decoded
-        }
-        tokenUsageStore.recordUsage(
-            providerID: credential.providerID, providerLabel: credential.providerLabel,
-            model: model,
-            inputTokens: usage?.inputTokens, outputTokens: usage?.outputTokens,
-            projectIdentifier: projectUsageIdentifier
+        let result = try await consumeToolUseStream(
+            bytes: bytes, model: model, credential: credential,
+            projectUsageIdentifier: projectUsageIdentifier,
+            timeoutSeconds: timeoutSeconds,
+            onStreamedText: onStreamedText, onUsage: onUsage
         )
-        onUsage?(usage?.inputTokens, usage?.outputTokens)
+        return result
+    }
 
-        var textContent = ""
-        var toolCalls: [AgentToolCall] = []
+    // MARK: - Tool Use SSE Stream Consumer
 
-        for item in outputItems {
-            let type = item["type"] as? String ?? ""
-            switch type {
-            case "message":
-                if let contentBlocks = item["content"] as? [[String: Any]] {
-                    for block in contentBlocks {
-                        if let text = block["text"] as? String { textContent += text }
-                    }
+    private func consumeToolUseStream(
+        bytes: URLSession.AsyncBytes,
+        model: String,
+        credential: ProjectChatService.ProviderCredential,
+        projectUsageIdentifier: String?,
+        timeoutSeconds: TimeInterval,
+        onStreamedText: (@MainActor (String) -> Void)?,
+        onUsage: ((Int?, Int?) -> Void)?
+    ) async throws -> AgentLLMResponse {
+        try await withTimeout(seconds: timeoutSeconds + configuration.streamCompletionGraceSeconds) { [self] in
+            var streamedText = ""
+            var toolCalls: [AgentToolCall] = []
+            var usage: ResponsesUsage?
+            // Track in-progress function calls by output_index
+            var pendingFuncCalls: [Int: (callID: String, name: String, arguments: String)] = [:]
+            var pendingDataLines: [String] = []
+
+            for try await rawLine in bytes.lines {
+                let line = rawLine.trimmingCharacters(in: .newlines)
+                if line.isEmpty {
+                    try await self.processToolUseSSEEvent(
+                        from: pendingDataLines,
+                        streamedText: &streamedText, toolCalls: &toolCalls,
+                        pendingFuncCalls: &pendingFuncCalls, usage: &usage,
+                        onStreamedText: onStreamedText
+                    )
+                    pendingDataLines.removeAll(keepingCapacity: true)
+                    continue
                 }
-            case "function_call":
-                let callID = (item["call_id"] as? String) ?? (item["id"] as? String) ?? UUID().uuidString
+                guard line.hasPrefix("data:") else { continue }
+                var dataLine = String(line.dropFirst(5))
+                if dataLine.hasPrefix(" ") { dataLine.removeFirst() }
+                pendingDataLines.append(dataLine)
+            }
+
+            // Process any remaining data
+            try await self.processToolUseSSEEvent(
+                from: pendingDataLines,
+                streamedText: &streamedText, toolCalls: &toolCalls,
+                pendingFuncCalls: &pendingFuncCalls, usage: &usage,
+                onStreamedText: onStreamedText
+            )
+
+            // Finalize any pending function calls
+            for (_, pending) in pendingFuncCalls.sorted(by: { $0.key < $1.key }) {
+                toolCalls.append(AgentToolCall(id: pending.callID, name: pending.name, argumentsJSON: pending.arguments))
+            }
+
+            tokenUsageStore.recordUsage(
+                providerID: credential.providerID, providerLabel: credential.providerLabel,
+                model: model,
+                inputTokens: usage?.inputTokens, outputTokens: usage?.outputTokens,
+                projectIdentifier: projectUsageIdentifier
+            )
+            onUsage?(usage?.inputTokens, usage?.outputTokens)
+
+            let stopReason: AgentStopReason = toolCalls.isEmpty ? .endTurn : .toolUse
+            return AgentLLMResponse(
+                textContent: streamedText, toolCalls: toolCalls,
+                usage: usage, stopReason: stopReason
+            )
+        }
+    }
+
+    private func processToolUseSSEEvent(
+        from dataLines: [String],
+        streamedText: inout String,
+        toolCalls: inout [AgentToolCall],
+        pendingFuncCalls: inout [Int: (callID: String, name: String, arguments: String)],
+        usage: inout ResponsesUsage?,
+        onStreamedText: (@MainActor (String) -> Void)?
+    ) async throws {
+        guard !dataLines.isEmpty else { return }
+
+        let eventPayload = dataLines.joined(separator: "\n")
+        if eventPayload == "[DONE]" { return }
+
+        // Try parsing as single JSON
+        if let (obj, eventType) = decodeSSEEvent(from: eventPayload) {
+            try await handleToolUseSSEEvent(
+                obj, eventType: eventType,
+                streamedText: &streamedText, toolCalls: &toolCalls,
+                pendingFuncCalls: &pendingFuncCalls, usage: &usage,
+                onStreamedText: onStreamedText
+            )
+            return
+        }
+
+        // Fallback: try each line individually
+        for line in dataLines {
+            let candidate = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !candidate.isEmpty, candidate != "[DONE]" else { continue }
+            guard let (obj, eventType) = decodeSSEEvent(from: candidate) else { continue }
+            try await handleToolUseSSEEvent(
+                obj, eventType: eventType,
+                streamedText: &streamedText, toolCalls: &toolCalls,
+                pendingFuncCalls: &pendingFuncCalls, usage: &usage,
+                onStreamedText: onStreamedText
+            )
+        }
+    }
+
+    private func handleToolUseSSEEvent(
+        _ eventObject: [String: Any],
+        eventType: String,
+        streamedText: inout String,
+        toolCalls: inout [AgentToolCall],
+        pendingFuncCalls: inout [Int: (callID: String, name: String, arguments: String)],
+        usage: inout ResponsesUsage?,
+        onStreamedText: (@MainActor (String) -> Void)?
+    ) async throws {
+        switch eventType {
+        // Text streaming
+        case "response.output_text.delta":
+            guard let delta = eventObject["delta"] as? String, !delta.isEmpty else { return }
+            streamedText.append(delta)
+            if let onStreamedText { await onStreamedText(streamedText) }
+
+        // Function call started
+        case "response.function_call_arguments.delta":
+            let outputIndex = eventObject["output_index"] as? Int ?? 0
+            let delta = eventObject["delta"] as? String ?? ""
+            if var pending = pendingFuncCalls[outputIndex] {
+                pending.arguments += delta
+                pendingFuncCalls[outputIndex] = pending
+            }
+
+        // Function call item added — capture name and call_id
+        case "response.output_item.added":
+            guard let item = eventObject["item"] as? [String: Any],
+                  (item["type"] as? String) == "function_call"
+            else { return }
+            let outputIndex = eventObject["output_index"] as? Int ?? 0
+            let callID = (item["call_id"] as? String) ?? UUID().uuidString
+            let name = item["name"] as? String ?? ""
+            pendingFuncCalls[outputIndex] = (callID: callID, name: name, arguments: "")
+
+        // Function call completed
+        case "response.output_item.done":
+            guard let item = eventObject["item"] as? [String: Any],
+                  (item["type"] as? String) == "function_call"
+            else { return }
+            let outputIndex = eventObject["output_index"] as? Int ?? 0
+            if let pending = pendingFuncCalls.removeValue(forKey: outputIndex) {
+                // Use the streamed arguments if available, otherwise fall back to the done payload
+                let arguments = pending.arguments.isEmpty
+                    ? (item["arguments"] as? String ?? "{}")
+                    : pending.arguments
+                toolCalls.append(AgentToolCall(id: pending.callID, name: pending.name, argumentsJSON: arguments))
+            } else {
+                // We didn't track it incrementally; parse from the done event
+                let callID = (item["call_id"] as? String) ?? UUID().uuidString
                 let name = item["name"] as? String ?? ""
                 let arguments = item["arguments"] as? String ?? "{}"
                 toolCalls.append(AgentToolCall(id: callID, name: name, argumentsJSON: arguments))
-            default:
-                break
             }
-        }
 
-        if let onStreamedText, !textContent.isEmpty {
-            await onStreamedText(textContent)
-        }
+        // Response completed — extract usage and any final data
+        case "response.completed":
+            guard let responseObject = eventObject["response"] as? [String: Any] else { return }
+            if let extractedUsage = extractUsage(fromResponseObject: responseObject) {
+                usage = extractedUsage
+            }
+            // Extract any text from the completed response if we missed it during streaming
+            if streamedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               let text = extractText(fromResponseObject: responseObject),
+               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                streamedText = text
+                if let onStreamedText { await onStreamedText(text) }
+            }
+            // Extract any function calls from the completed response if we missed them
+            if toolCalls.isEmpty, let outputItems = responseObject["output"] as? [[String: Any]] {
+                for item in outputItems where (item["type"] as? String) == "function_call" {
+                    let callID = (item["call_id"] as? String) ?? UUID().uuidString
+                    let name = item["name"] as? String ?? ""
+                    let arguments = item["arguments"] as? String ?? "{}"
+                    toolCalls.append(AgentToolCall(id: callID, name: name, argumentsJSON: arguments))
+                }
+            }
 
-        let stopReason: AgentStopReason = toolCalls.isEmpty ? .endTurn : .toolUse
-        return AgentLLMResponse(textContent: textContent, toolCalls: toolCalls, usage: usage, stopReason: stopReason)
+        case "error":
+            let message = parseStreamingErrorMessage(from: eventObject) ?? String(localized: "llm.error.stream_failed")
+            throw ProjectChatService.ServiceError.networkFailed(String(format: String(localized: "llm.error.request_failed_format"), message))
+
+        case "response.failed":
+            let message = parseNestedErrorMessage(from: eventObject["response"]) ?? String(localized: "llm.error.response_failed")
+            throw ProjectChatService.ServiceError.networkFailed(String(format: String(localized: "llm.error.request_failed_format"), message))
+
+        case "response.incomplete":
+            let message = parseIncompleteReason(from: eventObject["response"]) ?? String(localized: "llm.error.response_incomplete")
+            throw ProjectChatService.ServiceError.networkFailed(String(format: String(localized: "llm.error.request_failed_format"), message))
+
+        default:
+            return
+        }
     }
 
     // MARK: - Build Input Items
@@ -446,16 +608,16 @@ final class OpenAIProvider: LLMProviderAdapter {
             }
 
         case "error":
-            let message = parseStreamingErrorMessage(from: eventObject) ?? "流式响应失败。"
-            throw ProjectChatService.ServiceError.networkFailed("请求失败：\(message)")
+            let message = parseStreamingErrorMessage(from: eventObject) ?? String(localized: "llm.error.stream_failed")
+            throw ProjectChatService.ServiceError.networkFailed(String(format: String(localized: "llm.error.request_failed_format"), message))
 
         case "response.failed":
-            let message = parseNestedErrorMessage(from: eventObject["response"]) ?? "响应失败。"
-            throw ProjectChatService.ServiceError.networkFailed("请求失败：\(message)")
+            let message = parseNestedErrorMessage(from: eventObject["response"]) ?? String(localized: "llm.error.response_failed")
+            throw ProjectChatService.ServiceError.networkFailed(String(format: String(localized: "llm.error.request_failed_format"), message))
 
         case "response.incomplete":
-            let message = parseIncompleteReason(from: eventObject["response"]) ?? "响应不完整。"
-            throw ProjectChatService.ServiceError.networkFailed("请求失败：\(message)")
+            let message = parseIncompleteReason(from: eventObject["response"]) ?? String(localized: "llm.error.response_incomplete")
+            throw ProjectChatService.ServiceError.networkFailed(String(format: String(localized: "llm.error.request_failed_format"), message))
 
         default:
             return
@@ -476,11 +638,11 @@ final class OpenAIProvider: LLMProviderAdapter {
             group.addTask {
                 let nanoseconds = UInt64(max(1, seconds) * 1_000_000_000)
                 try await Task.sleep(nanoseconds: nanoseconds)
-                throw ProjectChatService.ServiceError.networkFailed("请求超时，请重试。")
+                throw ProjectChatService.ServiceError.networkFailed(String(localized: "llm.error.request_timeout"))
             }
             guard let first = try await group.next() else {
                 group.cancelAll()
-                throw ProjectChatService.ServiceError.networkFailed("请求失败，请重试。")
+                throw ProjectChatService.ServiceError.networkFailed(String(localized: "llm.error.request_failed"))
             }
             group.cancelAll()
             return first

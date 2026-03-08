@@ -28,6 +28,13 @@ final class ProjectChatService {
     struct ChatTurn {
         let role: Role
         let text: String
+        let toolSummary: String?
+
+        init(role: Role, text: String, toolSummary: String? = nil) {
+            self.role = role
+            self.text = text
+            self.toolSummary = toolSummary
+        }
     }
 
     struct SessionMemory: Codable, Equatable {
@@ -62,6 +69,7 @@ final class ProjectChatService {
                 return String(localized: "chat.reasoning.xhigh")
             }
         }
+
     }
 
     struct ModelExecutionOptions {
@@ -113,6 +121,7 @@ final class ProjectChatService {
         let updatedMemory: SessionMemory
         let threadMemoryUpdate: ThreadMemoryUpdate?
         let requestTokenUsage: RequestTokenUsage?
+        let toolActivitySummary: String?
     }
 
     enum ServiceError: LocalizedError {

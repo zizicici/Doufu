@@ -10,17 +10,8 @@ import Foundation
 struct ProjectChatConfiguration {
     let defaultModel = LLMProviderRecord.Kind.openAICompatible.defaultModelID
 
-    let maxFilesForCatalog = 300
     let maxBytesPerCatalogFile = 120_000
-    let maxPreviewCharactersForCatalog = 220
-
-    let maxFilesForContext = 20
     let maxBytesPerContextFile = 65_000
-    let maxContextBytesTotal = 360_000
-    let maxFilePathsFromSelection = 16
-
-    let maxPlannedTasks = 5
-    let maxFilesPerTaskContext = 6
 
     let maxHistoryTurns = 16
     let maxHistoryTurnsDirectlyIncluded = 8
@@ -32,12 +23,6 @@ struct ProjectChatConfiguration {
     let maxMemoryTodoItems = 8
     let maxMemoryItemCharacters = 120
 
-    let maxTaskTitleCharacters = 48
-    let maxTaskGoalCharacters = 260
-
-    let singlePassFileThreshold = 8
-    let singlePassContextFileLimit = 8
-
     let lowReasoningTimeoutSeconds: TimeInterval = 240
     let mediumReasoningTimeoutSeconds: TimeInterval = 320
     let highReasoningTimeoutSeconds: TimeInterval = 400
@@ -45,13 +30,8 @@ struct ProjectChatConfiguration {
     let streamCompletionGraceSeconds: TimeInterval = 10
 
     let maxThreadMemoryCharactersInPrompt = 16_000
-    let maxDebugTextCharacters = 1_600
 
-    let maxContextRefinementRounds = 1
-    let maxFilesPerRefinementRequest = 5
-    let maxPatchRepairAttempts = 1
-
-    let maxOutputTokens = 8192
+    let maxOutputTokens = 16_384
 
     let webFetchMaxBytes = 65_000
     let webFetchTimeoutSeconds: TimeInterval = 15
@@ -59,6 +39,12 @@ struct ProjectChatConfiguration {
 
     let maxAgentIterations = 25
     let maxToolCallsPerIteration = 8
+
+    /// Maximum tool result size in characters to prevent conversation bloat.
+    let maxToolResultCharacters = 32_000
+
+    /// Maximum retries for transient network errors (429, 500, 502, 503).
+    let maxTransientRetries = 2
 
     static let `default` = ProjectChatConfiguration()
 }

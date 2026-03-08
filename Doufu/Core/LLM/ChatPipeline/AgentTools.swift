@@ -288,9 +288,14 @@ final class AgentToolProvider {
         let output: String
         let isError: Bool
         let changedPaths: [String]
+        var metadata: [String: String] = [:]
     }
 
     func execute(toolCall: AgentToolCall) async -> ToolExecutionResult {
+        if Task.isCancelled {
+            return ToolExecutionResult(output: "Operation cancelled.", isError: true, changedPaths: [])
+        }
+
         let args = toolCall.decodedArguments() ?? [:]
 
         switch toolCall.name {
@@ -303,7 +308,7 @@ final class AgentToolProvider {
         case "delete_file":
             return await executeDeleteFile(args: args)
         case "move_file":
-            return executeMoveFile(args: args)
+            return await executeMoveFile(args: args)
         case "list_directory":
             return executeListDirectory(args: args)
         case "search_files":
@@ -349,11 +354,22 @@ final class AgentToolProvider {
             return ToolExecutionResult(output: "File is not valid UTF-8 text: \(path)", isError: true, changedPaths: [])
         }
 
-        let truncationNote = data.count > configuration.maxBytesPerContextFile
+        let isTruncated = data.count > configuration.maxBytesPerContextFile
+        let lineCount = content.components(separatedBy: .newlines).count
+
+        let truncationNote = isTruncated
             ? "\n\n[Note: File truncated at \(configuration.maxBytesPerContextFile) bytes. Total size: \(data.count) bytes]"
             : ""
 
-        return ToolExecutionResult(output: content + truncationNote, isError: false, changedPaths: [])
+        var metadata: [String: String] = [
+            "size_bytes": "\(data.count)",
+            "lines": "\(lineCount)",
+        ]
+        if isTruncated {
+            metadata["truncated"] = "true"
+        }
+
+        return ToolExecutionResult(output: content + truncationNote, isError: false, changedPaths: [], metadata: metadata)
     }
 
     // MARK: - Write File
@@ -451,6 +467,13 @@ final class AgentToolProvider {
                 continue
             }
 
+            // Check for ambiguous matches — warn if old_text appears more than once
+            let afterFirst = content[range.upperBound...]
+            if afterFirst.range(of: oldText) != nil {
+                let preview = oldText.count > 80 ? String(oldText.prefix(80)) + "..." : oldText
+                failures.append("Edit \(index + 1): old_text appears multiple times, only the first occurrence was replaced: \"\(preview)\"")
+            }
+
             content.replaceSubrange(range, with: newText)
             successCount += 1
         }
@@ -478,7 +501,12 @@ final class AgentToolProvider {
         return ToolExecutionResult(
             output: resultLines.joined(separator: "\n"),
             isError: successCount == 0,
-            changedPaths: successCount > 0 ? [normalizedPath] : []
+            changedPaths: successCount > 0 ? [normalizedPath] : [],
+            metadata: [
+                "edits_applied": "\(successCount)",
+                "edits_total": "\(edits.count)",
+                "edits_failed": "\(failures.count)",
+            ]
         )
     }
 
@@ -540,7 +568,7 @@ final class AgentToolProvider {
 
     // MARK: - Move File
 
-    private func executeMoveFile(args: [String: Any]) -> ToolExecutionResult {
+    private func executeMoveFile(args: [String: Any]) async -> ToolExecutionResult {
         guard let source = args["source"] as? String else {
             return ToolExecutionResult(output: "Missing required parameter: source", isError: true, changedPaths: [])
         }
@@ -564,6 +592,22 @@ final class AgentToolProvider {
 
         if FileManager.default.fileExists(atPath: resolvedDest.path) {
             return ToolExecutionResult(output: "Destination already exists: \(normalizedDest)", isError: true, changedPaths: [])
+        }
+
+        if let handler = confirmationHandler {
+            let approved = await handler.confirmDestructiveAction(
+                description: String(
+                    format: String(localized: "tool.confirm.move_file"),
+                    normalizedSource, normalizedDest
+                )
+            )
+            if !approved {
+                return ToolExecutionResult(
+                    output: "User denied moving \(normalizedSource) to \(normalizedDest)",
+                    isError: true,
+                    changedPaths: []
+                )
+            }
         }
 
         do {
@@ -635,10 +679,17 @@ final class AgentToolProvider {
         }
 
         let header = path.isEmpty ? "Project root:" : "\(path)/:"
+        let dirCount = sorted.prefix(200).filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }.count
+        let fileCount = sorted.prefix(200).count - dirCount
         return ToolExecutionResult(
             output: header + "\n" + lines.joined(separator: "\n"),
             isError: false,
-            changedPaths: []
+            changedPaths: [],
+            metadata: [
+                "total_entries": "\(sorted.count)",
+                "files": "\(fileCount)",
+                "directories": "\(dirCount)",
+            ]
         )
     }
 
@@ -714,14 +765,21 @@ final class AgentToolProvider {
             return ToolExecutionResult(
                 output: "No matches found for \"\(query)\" in \(filesSearched) files searched.",
                 isError: false,
-                changedPaths: []
+                changedPaths: [],
+                metadata: ["files_searched": "\(filesSearched)", "matches": "0"]
             )
         }
 
+        let matchingFileCount = results.filter { !$0.hasPrefix("  ") }.count
         return ToolExecutionResult(
             output: "Search results for \"\(query)\":\n" + results.joined(separator: "\n"),
             isError: false,
-            changedPaths: []
+            changedPaths: [],
+            metadata: [
+                "files_searched": "\(filesSearched)",
+                "files_matched": "\(matchingFileCount)",
+                "limit_reached": filesSearched >= maxFilesToSearch || results.count >= maxResults ? "true" : "false",
+            ]
         )
     }
 
@@ -812,14 +870,21 @@ final class AgentToolProvider {
             return ToolExecutionResult(
                 output: "No matches found for /\(pattern)/ in \(filesSearched) files searched.",
                 isError: false,
-                changedPaths: []
+                changedPaths: [],
+                metadata: ["files_searched": "\(filesSearched)", "matches": "0"]
             )
         }
 
+        let matchingFileCount = results.filter { !$0.hasPrefix("  ") }.count
         return ToolExecutionResult(
             output: "Grep results for /\(pattern)/:\n" + results.joined(separator: "\n"),
             isError: false,
-            changedPaths: []
+            changedPaths: [],
+            metadata: [
+                "files_searched": "\(filesSearched)",
+                "files_matched": "\(matchingFileCount)",
+                "limit_reached": filesSearched >= maxFilesToSearch || results.count >= maxResults ? "true" : "false",
+            ]
         )
     }
 
@@ -871,7 +936,8 @@ final class AgentToolProvider {
             return ToolExecutionResult(
                 output: "No files matching \"\(pattern)\" found.",
                 isError: false,
-                changedPaths: []
+                changedPaths: [],
+                metadata: ["matches": "0"]
             )
         }
 
@@ -882,7 +948,15 @@ final class AgentToolProvider {
             output += "\n... (results limited to \(maxResults))"
         }
 
-        return ToolExecutionResult(output: output, isError: false, changedPaths: [])
+        return ToolExecutionResult(
+            output: output,
+            isError: false,
+            changedPaths: [],
+            metadata: [
+                "matches": "\(sorted.count)",
+                "limit_reached": matches.count >= maxResults ? "true" : "false",
+            ]
+        )
     }
 
     private func globPatternToRegex(_ pattern: String) -> NSRegularExpression {
@@ -914,7 +988,7 @@ final class AgentToolProvider {
                 regex += "[^/]"
             case ".":
                 regex += "\\."
-            case "(", ")", "+", "^", "$", "|", "{", "}":
+            case "(", ")", "+", "^", "$", "|", "{", "}", "[", "]":
                 regex += "\\\(ch)"
             default:
                 regex += String(ch)

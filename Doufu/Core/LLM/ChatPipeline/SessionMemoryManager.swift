@@ -66,12 +66,6 @@ final class SessionMemoryManager {
             memory.objective = inferredObjective
         }
 
-        memory.constraints = mergeUniqueItems(
-            inferConstraints(from: latestUserMessage),
-            memory.constraints,
-            limit: configuration.maxMemoryConstraintItems
-        )
-
         if let pendingTodo = pendingTodoItem(for: latestUserMessage) {
             memory.todoItems = mergeUniqueItems(
                 [pendingTodo],
@@ -117,12 +111,6 @@ final class SessionMemoryManager {
             }
         }
 
-        memory.constraints = mergeUniqueItems(
-            inferConstraints(from: userMessage),
-            memory.constraints,
-            limit: configuration.maxMemoryConstraintItems
-        )
-
         if !changedPaths.isEmpty {
             memory.changedFiles = mergeUniquePaths(
                 changedPaths,
@@ -154,32 +142,6 @@ final class SessionMemoryManager {
         }
 
         return sanitizeMemory(memory)
-    }
-
-    func rollTodoFromRemainingTasks(
-        memory: ProjectChatService.SessionMemory,
-        remainingTasks: [TaskPlanItem]
-    ) -> ProjectChatService.SessionMemory {
-        var nextMemory = memory
-        let remainingTodoItems = remainingTasks.map { "Pending: \($0.title) - \($0.goal)" }
-        nextMemory.todoItems = sanitizeMemoryItems(remainingTodoItems, limit: configuration.maxMemoryTodoItems)
-        return sanitizeMemory(nextMemory)
-    }
-
-    func buildTaskRequestText(
-        originalUserMessage: String,
-        task: TaskPlanItem,
-        stepNumber: Int,
-        totalSteps: Int
-    ) -> String {
-        """
-        原始用户请求：
-        \(originalUserMessage)
-
-        当前执行步骤：\(stepNumber)/\(totalSteps)
-        当前任务标题：\(task.title)
-        当前任务目标：\(task.goal)
-        """
     }
 
     func mergeChangedPaths(_ paths: [String], into target: inout [String]) {
@@ -362,26 +324,6 @@ final class SessionMemoryManager {
             return nil
         }
         return "Pending: \(normalized)"
-    }
-
-    private func inferConstraints(from text: String) -> [String] {
-        let lowered = text.lowercased()
-        var constraints: [String] = []
-
-        if lowered.contains("iphone") || lowered.contains("ios") || text.contains("移动端") || text.contains("手机") {
-            constraints.append("Default target: iPhone portrait")
-        }
-        if lowered.contains("safe area") || text.contains("safe area") || text.contains("安全区") {
-            constraints.append("Must handle Safe Area correctly")
-        }
-        if text.contains("原生") || text.contains("网页感") || lowered.contains("native") {
-            constraints.append("Visual style should be close to native iOS, minimize web-page feel")
-        }
-        if text.contains("44") || text.contains("触控") || lowered.contains("touch") {
-            constraints.append("Key interactive areas must have adequate touch target size")
-        }
-
-        return constraints
     }
 
     private func isSafeRelativePath(_ path: String) -> Bool {

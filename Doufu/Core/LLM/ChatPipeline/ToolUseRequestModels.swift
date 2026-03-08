@@ -88,12 +88,13 @@ struct AnthropicToolUseRequest: Encodable {
     let messages: [AnthropicToolUseMessage]
     let tools: [AnthropicToolDefinitionItem]
     let maxTokens: Int
+    let stream: Bool
     let thinking: AnthropicThinkingConfig?
 
     private enum CodingKeys: String, CodingKey {
         case model, system, messages, tools
         case maxTokens = "max_tokens"
-        case thinking
+        case stream, thinking
     }
 }
 

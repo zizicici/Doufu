@@ -80,11 +80,13 @@ final class PromptBuilder {
         memoryJSON: String
     ) -> String {
         """
-        Session memory:
+        <session-memory>
         \(memoryJSON)
+        </session-memory>
 
-        User request:
+        <user-request>
         \(userMessage)
+        </user-request>
         """
     }
 

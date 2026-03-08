@@ -80,13 +80,17 @@ final class WebToolProvider {
 
         // Try each search engine in order; fall back on failure or empty results
         for engine in SearchEngine.allCases {
+            if Task.isCancelled {
+                return .failure(WebToolError(message: "Operation cancelled"))
+            }
+
             guard let searchURL = engine.searchURL(query: trimmedQuery) else { continue }
 
             var request = URLRequest(url: searchURL)
             request.httpMethod = "GET"
             request.timeoutInterval = configuration.webFetchTimeoutSeconds
             request.setValue(
-                "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+                "Mozilla/5.0 (iPhone; CPU iPhone OS 19_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/19.0 Mobile/15E148 Safari/604.1",
                 forHTTPHeaderField: "User-Agent"
             )
             request.setValue("text/html", forHTTPHeaderField: "Accept")
@@ -138,6 +142,10 @@ final class WebToolProvider {
             return .failure(WebToolError(message: "Missing required parameter: url"))
         }
 
+        if Task.isCancelled {
+            return .failure(WebToolError(message: "Operation cancelled"))
+        }
+
         guard let url = URL(string: trimmed), url.scheme == "http" || url.scheme == "https" else {
             return .failure(WebToolError(message: "Invalid URL: \(trimmed). Only http and https URLs are supported."))
         }
@@ -146,7 +154,7 @@ final class WebToolProvider {
         request.httpMethod = "GET"
         request.timeoutInterval = configuration.webFetchTimeoutSeconds
         request.setValue(
-            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 19_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/19.0 Mobile/15E148 Safari/604.1",
             forHTTPHeaderField: "User-Agent"
         )
         // Prefer plain text to reduce parsing burden
