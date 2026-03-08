@@ -16,7 +16,6 @@ final class ProjectSettingsViewController: UITableViewController {
         case project
         case chat
         case checkpoints
-        case action
     }
 
     private enum ChatRow: Int, CaseIterable {
@@ -32,24 +31,14 @@ final class ProjectSettingsViewController: UITableViewController {
     private let store = AppProjectStore.shared
     private let gitService = ProjectGitService.shared
 
-    private var baselineProjectName: String
     private var projectNameText: String
-    private var toolPermissionMode: ToolPermissionMode
-
-    private var canSave: Bool {
-        let trimmed = projectNameText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let initialTrimmed = baselineProjectName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            return false
-        }
-        return trimmed != initialTrimmed
-    }
+    /// nil means "use app default"
+    private var toolPermissionOverride: ToolPermissionMode?
 
     init(projectURL: URL, projectName: String) {
         self.projectURL = projectURL
-        baselineProjectName = projectName
         projectNameText = projectName
-        toolPermissionMode = AppProjectStore.shared.loadToolPermissionMode(projectURL: projectURL)
+        toolPermissionOverride = AppProjectStore.shared.loadProjectToolPermissionOverride(projectURL: projectURL)
         super.init(style: .insetGrouped)
     }
 
@@ -79,12 +68,9 @@ final class ProjectSettingsViewController: UITableViewController {
     }
 
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        guard let section = Section(rawValue: section) else {
-            return 0
-        }
-
+        guard let section = Section(rawValue: section) else { return 0 }
         switch section {
-        case .project, .action:
+        case .project:
             return 1
         case .chat:
             return ChatRow.allCases.count
@@ -94,9 +80,7 @@ final class ProjectSettingsViewController: UITableViewController {
     }
 
     override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
-        guard let section = Section(rawValue: section) else {
-            return nil
-        }
+        guard let section = Section(rawValue: section) else { return nil }
         switch section {
         case .project:
             return String(localized: "project_settings.section.project")
@@ -104,16 +88,11 @@ final class ProjectSettingsViewController: UITableViewController {
             return String(localized: "project_settings.section.chat")
         case .checkpoints:
             return String(localized: "project_settings.section.checkpoints")
-        case .action:
-            return nil
         }
     }
 
     override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
-        guard let section = Section(rawValue: section) else {
-            return nil
-        }
-
+        guard let section = Section(rawValue: section) else { return nil }
         switch section {
         case .project:
             return String(localized: "project_settings.footer.project_name_usage")
@@ -121,8 +100,6 @@ final class ProjectSettingsViewController: UITableViewController {
             return String(localized: "project_settings.footer.tool_permission")
         case .checkpoints:
             return String(localized: "project_settings.footer.checkpoints")
-        case .action:
-            return nil
         }
     }
 
@@ -149,7 +126,7 @@ final class ProjectSettingsViewController: UITableViewController {
                 autocapitalizationType: .words
             ) { [weak self] text in
                 self?.projectNameText = text
-                self?.refreshSaveButton()
+                self?.commitProjectName()
             }
             return cell
 
@@ -157,7 +134,15 @@ final class ProjectSettingsViewController: UITableViewController {
             let cell = tableView.dequeueReusableCell(withIdentifier: "ChatSettingCell", for: indexPath)
             var configuration = cell.defaultContentConfiguration()
             configuration.text = String(localized: "project_settings.chat.tool_permission.title")
-            configuration.secondaryText = displayName(for: toolPermissionMode)
+            if let override = toolPermissionOverride {
+                configuration.secondaryText = displayName(for: override)
+            } else {
+                let appDefault = store.loadAppToolPermissionMode()
+                configuration.secondaryText = String(
+                    format: String(localized: "project_settings.chat.tool_permission.default_format"),
+                    displayName(for: appDefault)
+                )
+            }
             configuration.secondaryTextProperties.color = .secondaryLabel
             cell.contentConfiguration = configuration
             cell.accessoryType = .disclosureIndicator
@@ -195,67 +180,53 @@ final class ProjectSettingsViewController: UITableViewController {
                 cell.accessoryType = .disclosureIndicator
                 return cell
             }
-
-        case .action:
-            guard
-                let cell = tableView.dequeueReusableCell(
-                    withIdentifier: SettingsCenteredButtonCell.reuseIdentifier,
-                    for: indexPath
-                ) as? SettingsCenteredButtonCell
-            else {
-                return UITableViewCell()
-            }
-            cell.configure(title: String(localized: "project_settings.action.save"), isEnabled: canSave)
-            return cell
         }
     }
 
     override func tableView(_ tableView: UITableView, willSelectRowAt indexPath: IndexPath) -> IndexPath? {
-        guard let section = Section(rawValue: indexPath.section) else {
-            return nil
-        }
+        guard let section = Section(rawValue: indexPath.section) else { return nil }
         switch section {
+        case .project:
+            return nil
         case .chat:
             return indexPath
         case .checkpoints:
             return indexPath
-        case .action:
-            return canSave ? indexPath : nil
-        case .project:
-            return nil
         }
     }
 
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         defer { tableView.deselectRow(at: indexPath, animated: true) }
-        guard let section = Section(rawValue: indexPath.section) else {
-            return
-        }
+        guard let section = Section(rawValue: indexPath.section) else { return }
 
         switch section {
+        case .project:
+            break
+
         case .chat:
             presentToolPermissionPicker()
 
         case .checkpoints:
-            guard let row = CheckpointRow(rawValue: indexPath.row) else {
-                return
-            }
+            guard let row = CheckpointRow(rawValue: indexPath.row) else { return }
             switch row {
             case .undo:
                 undoLastCheckpoint()
             case .history:
                 openCheckpointsPage()
             }
-
-        case .action:
-            guard canSave else {
-                return
-            }
-            saveProjectSettings()
-
-        case .project:
-            return
         }
+    }
+
+    // MARK: - Project Name Auto-Save
+
+    private func commitProjectName() {
+        var name = projectNameText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if name.isEmpty {
+            name = String(localized: "project_settings.unnamed_project")
+            projectNameText = name
+        }
+        try? store.updateProjectName(projectURL: projectURL, name: name)
+        onProjectUpdated?(name)
     }
 
     // MARK: - Tool Permission Picker
@@ -271,17 +242,6 @@ final class ProjectSettingsViewController: UITableViewController {
         }
     }
 
-    private func subtitle(for mode: ToolPermissionMode) -> String {
-        switch mode {
-        case .standard:
-            return String(localized: "tool_permission.mode.standard.subtitle")
-        case .autoApproveNonDestructive:
-            return String(localized: "tool_permission.mode.auto_non_destructive.subtitle")
-        case .fullAutoApprove:
-            return String(localized: "tool_permission.mode.full_auto.subtitle")
-        }
-    }
-
     private func presentToolPermissionPicker() {
         let alert = UIAlertController(
             title: String(localized: "tool_permission.picker.title"),
@@ -289,12 +249,24 @@ final class ProjectSettingsViewController: UITableViewController {
             preferredStyle: .actionSheet
         )
 
+        // "Use Default" option
+        let defaultAction = UIAlertAction(
+            title: String(localized: "project_settings.chat.tool_permission.use_default"),
+            style: .default
+        ) { [weak self] _ in
+            self?.applyToolPermissionOverride(nil)
+        }
+        if toolPermissionOverride == nil {
+            defaultAction.setValue(true, forKey: "checked")
+        }
+        alert.addAction(defaultAction)
+
         for mode in ToolPermissionMode.allCases {
             let title = displayName(for: mode)
             let action = UIAlertAction(title: title, style: .default) { [weak self] _ in
-                self?.applyToolPermissionMode(mode)
+                self?.applyToolPermissionOverride(mode)
             }
-            if mode == toolPermissionMode {
+            if mode == toolPermissionOverride {
                 action.setValue(true, forKey: "checked")
             }
             alert.addAction(action)
@@ -304,11 +276,11 @@ final class ProjectSettingsViewController: UITableViewController {
         present(alert, animated: true)
     }
 
-    private func applyToolPermissionMode(_ mode: ToolPermissionMode) {
-        guard mode != toolPermissionMode else { return }
-        toolPermissionMode = mode
+    private func applyToolPermissionOverride(_ mode: ToolPermissionMode?) {
+        toolPermissionOverride = mode
         try? store.saveToolPermissionMode(projectURL: projectURL, mode: mode)
-        onToolPermissionModeChanged?(mode)
+        let effective = mode ?? store.loadAppToolPermissionMode()
+        onToolPermissionModeChanged?(effective)
         tableView.reloadSections(IndexSet(integer: Section.chat.rawValue), with: .none)
     }
 
@@ -317,35 +289,6 @@ final class ProjectSettingsViewController: UITableViewController {
     @objc
     private func didTapClose() {
         dismiss(animated: true)
-    }
-
-    private func refreshSaveButton() {
-        let sectionIndex = Section.action.rawValue
-        guard tableView.numberOfSections > sectionIndex else {
-            return
-        }
-        guard tableView.numberOfRows(inSection: sectionIndex) > 0 else {
-            return
-        }
-        tableView.reloadRows(at: [IndexPath(row: 0, section: sectionIndex)], with: .none)
-    }
-
-    private func saveProjectSettings() {
-        let normalizedName = projectNameText.trimmingCharacters(in: .whitespacesAndNewlines)
-        do {
-            try store.updateProjectName(projectURL: projectURL, name: normalizedName)
-            baselineProjectName = normalizedName
-            onProjectUpdated?(normalizedName)
-            dismiss(animated: true)
-        } catch {
-            let alert = UIAlertController(
-                title: String(localized: "project_settings.alert.save_failed.title"),
-                message: error.localizedDescription,
-                preferredStyle: .alert
-            )
-            alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
-            present(alert, animated: true)
-        }
     }
 
     private func undoLastCheckpoint() {
@@ -366,7 +309,6 @@ final class ProjectSettingsViewController: UITableViewController {
             let didUndo = try gitService.undo(projectURL: projectURL)
             if didUndo {
                 let latestProjectName = store.loadProjectName(projectURL: projectURL)
-                baselineProjectName = latestProjectName
                 projectNameText = latestProjectName
                 onProjectUpdated?(latestProjectName)
                 tableView.reloadData()
@@ -395,7 +337,6 @@ final class ProjectSettingsViewController: UITableViewController {
         controller.onCheckpointRestored = { [weak self] in
             guard let self else { return }
             let latestProjectName = self.store.loadProjectName(projectURL: self.projectURL)
-            self.baselineProjectName = latestProjectName
             self.projectNameText = latestProjectName
             self.onProjectUpdated?(latestProjectName)
             self.tableView.reloadData()

@@ -159,9 +159,28 @@ final class AppProjectStore {
         }
     }
 
-    // MARK: - Tool Permission Mode
+    // MARK: - App-Level Tool Permission Mode (Default)
 
-    func loadToolPermissionMode(projectURL: URL) -> ToolPermissionMode {
+    private static let appToolPermissionModeKey = "appDefaultToolPermissionMode"
+
+    func loadAppToolPermissionMode() -> ToolPermissionMode {
+        guard
+            let raw = UserDefaults.standard.string(forKey: Self.appToolPermissionModeKey),
+            let mode = ToolPermissionMode(rawValue: raw)
+        else {
+            return .standard
+        }
+        return mode
+    }
+
+    func saveAppToolPermissionMode(_ mode: ToolPermissionMode) {
+        UserDefaults.standard.set(mode.rawValue, forKey: Self.appToolPermissionModeKey)
+    }
+
+    // MARK: - Project-Level Tool Permission Mode
+
+    /// Returns the project-level override, or nil if not explicitly set.
+    func loadProjectToolPermissionOverride(projectURL: URL) -> ToolPermissionMode? {
         let manifestURL = projectURL.appendingPathComponent("manifest.json")
         guard
             let data = try? Data(contentsOf: manifestURL),
@@ -169,12 +188,17 @@ final class AppProjectStore {
             let rawMode = object["toolPermissionMode"] as? String,
             let mode = ToolPermissionMode(rawValue: rawMode)
         else {
-            return .standard
+            return nil
         }
         return mode
     }
 
-    func saveToolPermissionMode(projectURL: URL, mode: ToolPermissionMode) throws {
+    /// Returns the effective tool permission mode: project override if set, otherwise app default.
+    func loadToolPermissionMode(projectURL: URL) -> ToolPermissionMode {
+        loadProjectToolPermissionOverride(projectURL: projectURL) ?? loadAppToolPermissionMode()
+    }
+
+    func saveToolPermissionMode(projectURL: URL, mode: ToolPermissionMode?) throws {
         let manifestURL = projectURL.appendingPathComponent("manifest.json")
         guard
             let data = try? Data(contentsOf: manifestURL),
@@ -183,7 +207,11 @@ final class AppProjectStore {
             throw AppProjectStoreError.manifestUpdateFailed
         }
 
-        object["toolPermissionMode"] = mode.rawValue
+        if let mode {
+            object["toolPermissionMode"] = mode.rawValue
+        } else {
+            object.removeValue(forKey: "toolPermissionMode")
+        }
         object["updatedAt"] = isoFormatter.string(from: Date())
 
         do {
