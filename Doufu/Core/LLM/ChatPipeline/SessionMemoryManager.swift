@@ -45,8 +45,9 @@ final class SessionMemoryManager {
         let summary = summarizeHistoryTurns(olderTurns)
         if !summary.isEmpty {
             let summaryMessage = """
-            对话历史摘要（自动压缩）：
+            <conversation-history-summary>
             \(summary)
+            </conversation-history-summary>
             """
             items.append(ResponseInputMessage(role: "user", text: summaryMessage))
         }
@@ -60,10 +61,16 @@ final class SessionMemoryManager {
         latestUserMessage: String
     ) -> ProjectChatService.SessionMemory {
         var memory = base ?? .empty
+
+        // Normalize existing objective if present
         if let objective = normalizedMemoryItem(memory.objective, maxCharacters: configuration.maxMemoryObjectiveCharacters) {
             memory.objective = objective
-        } else if let inferredObjective = inferObjective(from: latestUserMessage) {
-            memory.objective = inferredObjective
+        } else if memory.objective.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            // Only infer objective from user message when memory has no objective yet.
+            // Once set, the objective should only be updated via <memory-update> from the model.
+            if let inferredObjective = inferObjective(from: latestUserMessage) {
+                memory.objective = inferredObjective
+            }
         }
 
         if let pendingTodo = pendingTodoItem(for: latestUserMessage) {

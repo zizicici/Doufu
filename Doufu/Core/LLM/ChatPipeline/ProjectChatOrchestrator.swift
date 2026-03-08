@@ -74,13 +74,15 @@ final class ProjectChatOrchestrator {
         // Create git checkpoint before agent loop starts
         createCheckpointBeforeAgentLoop(projectURL: projectURL, userMessage: trimmedMessage)
 
-        // Read AGENTS.md if present
+        // Read AGENTS.md and DOUFU.MD if present
         let agentsMarkdown = readAgentsMarkdown(projectURL: projectURL)
+        let doufuMarkdown = readDoufuMarkdown(projectURL: projectURL)
 
         // Build system prompt
         let systemPrompt = promptBuilder.agentSystemPrompt(
             threadContext: threadContext,
-            agentsMarkdown: agentsMarkdown
+            agentsMarkdown: agentsMarkdown,
+            doufuMarkdown: doufuMarkdown
         )
 
         // Build initial conversation
@@ -124,8 +126,18 @@ final class ProjectChatOrchestrator {
             await onProgress("正在思考...")
         }
 
+        let budgetWarningThreshold = Int(Double(configuration.maxAgentIterations) * 0.8)
+
         for iteration in 0 ..< configuration.maxAgentIterations {
             try Task.checkCancellation()
+
+            // Inject budget warning when approaching iteration limit
+            if iteration == budgetWarningThreshold {
+                let remaining = configuration.maxAgentIterations - iteration
+                conversation.append(.userMessage(
+                    "[System: You have \(remaining) tool-use iterations remaining. Please complete your current task and provide a summary. Do not start new tasks.]"
+                ))
+            }
 
             // Stream text from the LLM response to the UI in real-time.
             // We capture the current accumulated text prefix so that partial
@@ -174,7 +186,13 @@ final class ProjectChatOrchestrator {
                     continue
                 }
 
-                let finalMessage = accumulatedText.isEmpty ? "已完成。" : accumulatedText
+                let rawFinalMessage = accumulatedText.isEmpty ? "已完成。" : accumulatedText
+                let (modelMemoryUpdate, cleanedFinalMessage) = extractMemoryUpdate(from: rawFinalMessage)
+                let finalMessage = cleanedFinalMessage.isEmpty ? "已完成。" : cleanedFinalMessage
+
+                if let onStreamedText, cleanedFinalMessage != rawFinalMessage {
+                    await onStreamedText(finalMessage)
+                }
 
                 if !allChangedPaths.isEmpty {
                     AppProjectStore.shared.touchProjectUpdatedAt(projectURL: projectURL)
@@ -185,7 +203,7 @@ final class ProjectChatOrchestrator {
                     userMessage: trimmedMessage,
                     assistantMessage: finalMessage,
                     changedPaths: allChangedPaths,
-                    modelMemoryUpdate: nil
+                    modelMemoryUpdate: modelMemoryUpdate
                 )
 
                 return ProjectChatService.ResultPayload(
@@ -209,8 +227,36 @@ final class ProjectChatOrchestrator {
             // Add assistant message with tool calls to conversation
             conversation.append(.assistantMessage(text: responseText, toolCalls: response.toolCalls))
 
-            // Execute each tool call
-            for toolCall in response.toolCalls {
+            // Partition tool calls into read-only (parallelizable) and mutating (sequential)
+            let readOnlyTools: Set<String> = ["read_file", "list_directory", "search_files", "grep_files", "glob_files"]
+            let (parallelCalls, sequentialCalls) = partitionToolCalls(response.toolCalls, readOnly: readOnlyTools)
+
+            // Execute read-only tools in parallel
+            if !parallelCalls.isEmpty {
+                let parallelResults = await executeToolCallsInParallel(
+                    parallelCalls,
+                    toolProvider: toolProvider,
+                    totalToolCalls: &totalToolCalls,
+                    maxTotalToolCalls: configuration.maxAgentIterations * configuration.maxToolCallsPerIteration,
+                    onProgress: onProgress,
+                    toolActivityLog: &toolActivityLog
+                )
+                for (toolCall, result) in parallelResults {
+                    if !result.changedPaths.isEmpty {
+                        mergeChangedPaths(result.changedPaths, into: &allChangedPaths)
+                    }
+                    let truncatedOutput = truncateToolResult(result.output)
+                    conversation.append(.toolResult(
+                        callID: toolCall.id,
+                        name: toolCall.name,
+                        content: truncatedOutput,
+                        isError: result.isError
+                    ))
+                }
+            }
+
+            // Execute mutating tools sequentially
+            for toolCall in sequentialCalls {
                 try Task.checkCancellation()
 
                 totalToolCalls += 1
@@ -246,9 +292,11 @@ final class ProjectChatOrchestrator {
         }
 
         // Max iterations reached
-        let finalMessage = accumulatedText.isEmpty
+        let rawMaxMessage = accumulatedText.isEmpty
             ? "已达到最大执行步骤数。请再发一条消息继续。"
             : accumulatedText + "\n\n（已达到最大执行步骤数）"
+        let (maxModelMemoryUpdate, cleanedMaxMessage) = extractMemoryUpdate(from: rawMaxMessage)
+        let finalMessage = cleanedMaxMessage
 
         if !allChangedPaths.isEmpty {
             AppProjectStore.shared.touchProjectUpdatedAt(projectURL: projectURL)
@@ -259,7 +307,7 @@ final class ProjectChatOrchestrator {
             userMessage: trimmedMessage,
             assistantMessage: finalMessage,
             changedPaths: allChangedPaths,
-            modelMemoryUpdate: nil
+            modelMemoryUpdate: maxModelMemoryUpdate
         )
 
         return ProjectChatService.ResultPayload(
@@ -292,6 +340,8 @@ final class ProjectChatOrchestrator {
             let source = args["source"] as? String ?? "?"
             let dest = args["destination"] as? String ?? "?"
             return "移动文件：\(source) → \(dest)"
+        case "revert_file":
+            return "还原文件：\(path ?? "?")"
         case "list_directory":
             return "浏览目录：\(path ?? ".")"
         case "search_files":
@@ -325,6 +375,17 @@ final class ProjectChatOrchestrator {
         return content
     }
 
+    private func readDoufuMarkdown(projectURL: URL) -> String? {
+        let doufuURL = projectURL.appendingPathComponent("DOUFU.MD")
+        guard FileManager.default.fileExists(atPath: doufuURL.path),
+              let content = try? String(contentsOf: doufuURL, encoding: .utf8),
+              !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            return nil
+        }
+        return content
+    }
+
     private func createCheckpointBeforeAgentLoop(projectURL: URL, userMessage: String) {
         do {
             try gitService.ensureRepository(at: projectURL)
@@ -343,6 +404,11 @@ final class ProjectChatOrchestrator {
     /// Estimate the conversation size in characters (rough proxy for tokens).
     /// When the conversation is too large, compact old tool results to keep
     /// the context within reasonable bounds.
+    ///
+    /// Compaction strategy varies by tool type:
+    /// - read_file / list_directory: aggressively compacted (model can re-read)
+    /// - search_files / grep_files / glob_files / web_search: moderately compacted (re-search is expensive)
+    /// - error results: preserved as-is (diagnostic info is important)
     private func compactConversationIfNeeded(_ conversation: inout [AgentConversationItem]) {
         let totalChars = conversation.reduce(0) { sum, item in
             switch item {
@@ -357,22 +423,143 @@ final class ProjectChatOrchestrator {
         let maxConversationChars = 400_000
         guard totalChars > maxConversationChars else { return }
 
-        // Compact: truncate tool results from oldest to newest until under budget
+        let reReadableTools: Set<String> = ["read_file", "list_directory"]
+        let searchTools: Set<String> = ["search_files", "grep_files", "glob_files", "web_search", "web_fetch"]
+
+        // Pass 1: aggressively compact re-readable tool results (model can re-read)
         var excess = totalChars - maxConversationChars
         for i in conversation.indices {
             guard excess > 0 else { break }
             if case let .toolResult(callID, name, content, isError) = conversation[i],
-               content.count > 500 {
+               !isError, reReadableTools.contains(name), content.count > 300 {
+                let truncated = String(content.prefix(100)) + "\n[Compacted — use \(name) again if needed]"
+                let saved = content.count - truncated.count
+                conversation[i] = .toolResult(callID: callID, name: name, content: truncated, isError: isError)
+                excess -= saved
+            }
+        }
+
+        // Pass 2: moderately compact search results (preserve more context)
+        for i in conversation.indices {
+            guard excess > 0 else { break }
+            if case let .toolResult(callID, name, content, isError) = conversation[i],
+               !isError, searchTools.contains(name), content.count > 800 {
+                let truncated = String(content.prefix(400)) + "\n[Compacted to save context space]"
+                let saved = content.count - truncated.count
+                conversation[i] = .toolResult(callID: callID, name: name, content: truncated, isError: isError)
+                excess -= saved
+            }
+        }
+
+        // Pass 3: compact remaining large non-error results if still over budget
+        for i in conversation.indices {
+            guard excess > 0 else { break }
+            if case let .toolResult(callID, name, content, isError) = conversation[i],
+               !isError, content.count > 500 {
                 let truncated = String(content.prefix(200)) + "\n[Compacted to save context space]"
                 let saved = content.count - truncated.count
+                guard saved > 0 else { continue }
                 conversation[i] = .toolResult(callID: callID, name: name, content: truncated, isError: isError)
                 excess -= saved
             }
         }
     }
 
+    /// Partition tool calls into read-only (safe to parallelize) and mutating (must run sequentially).
+    /// Preserves original ordering within each group.
+    private func partitionToolCalls(
+        _ calls: [AgentToolCall],
+        readOnly: Set<String>
+    ) -> (parallel: [AgentToolCall], sequential: [AgentToolCall]) {
+        var parallel: [AgentToolCall] = []
+        var sequential: [AgentToolCall] = []
+        for call in calls {
+            if readOnly.contains(call.name) {
+                parallel.append(call)
+            } else {
+                sequential.append(call)
+            }
+        }
+        return (parallel, sequential)
+    }
+
+    /// Execute read-only tool calls concurrently and return results in the original call order.
+    private func executeToolCallsInParallel(
+        _ calls: [AgentToolCall],
+        toolProvider: AgentToolProvider,
+        totalToolCalls: inout Int,
+        maxTotalToolCalls: Int,
+        onProgress: (@MainActor (String) -> Void)?,
+        toolActivityLog: inout [String]
+    ) async -> [(AgentToolCall, AgentToolProvider.ToolExecutionResult)] {
+        // Log activity for all calls first
+        for call in calls {
+            totalToolCalls += 1
+            let description = describeToolCall(call)
+            toolActivityLog.append(description)
+        }
+
+        if let onProgress {
+            let summary = calls.count == 1
+                ? describeToolCall(calls[0])
+                : "并行执行 \(calls.count) 个读取操作..."
+            await onProgress(summary)
+        }
+
+        // Execute concurrently using a task group
+        let indexedResults = await withTaskGroup(
+            of: (Int, AgentToolCall, AgentToolProvider.ToolExecutionResult).self,
+            returning: [(AgentToolCall, AgentToolProvider.ToolExecutionResult)].self
+        ) { group in
+            for (index, call) in calls.enumerated() {
+                group.addTask {
+                    let result = await toolProvider.execute(toolCall: call)
+                    return (index, call, result)
+                }
+            }
+
+            var collected: [(Int, AgentToolCall, AgentToolProvider.ToolExecutionResult)] = []
+            for await item in group {
+                collected.append(item)
+            }
+            // Sort by original index to preserve call order
+            return collected.sorted { $0.0 < $1.0 }.map { ($0.1, $0.2) }
+        }
+
+        return indexedResults
+    }
+
     private func mergeChangedPaths(_ paths: [String], into target: inout [String]) {
         ProjectPathResolver.mergeChangedPaths(paths, into: &target)
+    }
+
+    /// Parse a `<memory-update>` JSON block from the model's response text.
+    /// Returns the parsed update and the text with the block removed.
+    private func extractMemoryUpdate(from text: String) -> (update: PatchMemoryUpdate?, cleanedText: String) {
+        let openTag = "<memory-update>"
+        let closeTag = "</memory-update>"
+
+        guard let openRange = text.range(of: openTag),
+              let closeRange = text.range(of: closeTag, range: openRange.upperBound..<text.endIndex)
+        else {
+            return (nil, text)
+        }
+
+        let jsonString = String(text[openRange.upperBound..<closeRange.lowerBound])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        var update: PatchMemoryUpdate?
+        if let data = jsonString.data(using: .utf8) {
+            update = try? JSONDecoder().decode(PatchMemoryUpdate.self, from: data)
+        }
+
+        // Remove the entire <memory-update>...</memory-update> block from the displayed text
+        let fullBlockRange = openRange.lowerBound..<closeRange.upperBound
+        var cleaned = text
+        cleaned.removeSubrange(fullBlockRange)
+        cleaned = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return (update, cleaned)
     }
 
     private func debugLog(_ message: @autoclosure () -> String) {

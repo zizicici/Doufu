@@ -151,6 +151,51 @@ final class ProjectGitService {
         }
     }
 
+    // MARK: - File-Level Revert
+
+    /// Open a repository for revert operations (exposed for AgentTools).
+    func openRepositoryForRevert(at projectURL: URL) throws -> Repository {
+        try openRepository(at: projectURL)
+    }
+
+    /// Read a file's content from the HEAD commit.
+    /// Returns nil if the file doesn't exist in HEAD.
+    func fileContentAtHEAD(repo: Repository, relativePath: String) throws -> String? {
+        let head = try repo.HEAD
+        guard let commit = head.target as? Commit else {
+            return nil
+        }
+        let tree = commit.tree
+
+        // Navigate the tree to find the file
+        let components = relativePath.components(separatedBy: "/").filter { !$0.isEmpty }
+        var currentTree = tree
+
+        for (index, component) in components.enumerated() {
+            let isLast = index == components.count - 1
+
+            guard let entry = currentTree.entries.first(where: { $0.name == component }) else {
+                return nil
+            }
+
+            if isLast {
+                // This should be a blob (file)
+                guard let blob: Blob = try? repo.show(id: entry.id) else {
+                    return nil
+                }
+                return String(data: blob.content, encoding: .utf8)
+            } else {
+                // Navigate into subdirectory
+                guard let subTree: Tree = try? repo.show(id: entry.id) else {
+                    return nil
+                }
+                currentTree = subTree
+            }
+        }
+
+        return nil
+    }
+
     // MARK: - Private
 
     private func openRepository(at projectURL: URL) throws -> Repository {

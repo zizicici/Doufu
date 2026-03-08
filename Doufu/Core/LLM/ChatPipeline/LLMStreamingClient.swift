@@ -87,12 +87,19 @@ final class LLMStreamingClient {
 
     private static func isTransientError(_ message: String) -> Bool {
         let lowered = message.lowercased()
-        let transientPatterns = ["429", "rate limit", "too many requests",
-                                 "500", "internal server error",
-                                 "502", "bad gateway",
-                                 "503", "service unavailable",
-                                 "overloaded"]
-        return transientPatterns.contains { lowered.contains($0) }
+
+        // Match HTTP status codes as word boundaries to avoid false positives
+        // (e.g. "500" in "File size is 15002 bytes")
+        let statusCodePattern = #"\b(429|500|502|503)\b"#
+        if let regex = try? NSRegularExpression(pattern: statusCodePattern),
+           regex.firstMatch(in: message, range: NSRange(message.startIndex..., in: message)) != nil {
+            return true
+        }
+
+        let transientPhrases = ["rate limit", "too many requests",
+                                "internal server error", "bad gateway",
+                                "service unavailable", "overloaded"]
+        return transientPhrases.contains { lowered.contains($0) }
     }
 
     private func provider(for kind: LLMProviderRecord.Kind) -> LLMProviderAdapter {

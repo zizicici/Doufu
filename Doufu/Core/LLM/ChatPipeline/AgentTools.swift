@@ -32,6 +32,7 @@ final class AgentToolProvider {
             editFileTool(),
             deleteFileTool(),
             moveFileTool(),
+            revertFileTool(),
             listDirectoryTool(),
             searchFilesTool(),
             grepFilesTool(),
@@ -158,6 +159,24 @@ final class AgentToolProvider {
         )
     }
 
+    private func revertFileTool() -> AgentToolDefinition {
+        AgentToolDefinition(
+            name: "revert_file",
+            description: "Revert a single file to its state at the last git checkpoint (before the current agent loop started). Use this when your edits to a file caused problems and you want to start over with that file. Does not affect other files.",
+            parameters: .object([
+                "type": .string("object"),
+                "properties": .object([
+                    "path": .object([
+                        "type": .string("string"),
+                        "description": .string("File path relative to project root to revert")
+                    ])
+                ]),
+                "required": .array([.string("path")]),
+                "additionalProperties": .bool(false)
+            ])
+        )
+    }
+
     private func listDirectoryTool() -> AgentToolDefinition {
         AgentToolDefinition(
             name: "list_directory",
@@ -190,6 +209,10 @@ final class AgentToolProvider {
                     "path": .object([
                         "type": .string("string"),
                         "description": .string("Optional directory to limit the search to, relative to project root")
+                    ]),
+                    "include": .object([
+                        "type": .string("string"),
+                        "description": .string("Optional glob pattern to filter files, e.g. '*.js', '*.{html,css}'. Only files matching this pattern will be searched.")
                     ])
                 ]),
                 "required": .array([.string("query")]),
@@ -212,6 +235,10 @@ final class AgentToolProvider {
                     "path": .object([
                         "type": .string("string"),
                         "description": .string("Optional directory to limit the search to, relative to project root")
+                    ]),
+                    "include": .object([
+                        "type": .string("string"),
+                        "description": .string("Optional glob pattern to filter files, e.g. '*.js', '*.{html,css}'. Only files matching this pattern will be searched.")
                     ]),
                     "case_sensitive": .object([
                         "type": .string("boolean"),
@@ -309,6 +336,8 @@ final class AgentToolProvider {
             return await executeDeleteFile(args: args)
         case "move_file":
             return await executeMoveFile(args: args)
+        case "revert_file":
+            return executeRevertFile(args: args)
         case "list_directory":
             return executeListDirectory(args: args)
         case "search_files":
@@ -450,6 +479,7 @@ final class AgentToolProvider {
 
         var successCount = 0
         var failures: [String] = []
+        var editDetails: [String] = []
 
         for (index, edit) in edits.enumerated() {
             guard let oldText = edit["old_text"] as? String, !oldText.isEmpty else {
@@ -462,20 +492,32 @@ final class AgentToolProvider {
             }
 
             guard let range = content.range(of: oldText) else {
+                // Fallback: try whitespace-normalized matching
+                if let fuzzyResult = fuzzyMatch(oldText: oldText, in: content) {
+                    let lineNumber = content[..<fuzzyResult.lowerBound].components(separatedBy: .newlines).count
+                    content.replaceSubrange(fuzzyResult, with: newText)
+                    successCount += 1
+                    editDetails.append("Edit \(index + 1): applied with whitespace normalization at line \(lineNumber)")
+                    continue
+                }
+
                 let preview = oldText.count > 80 ? String(oldText.prefix(80)) + "..." : oldText
                 failures.append("Edit \(index + 1): old_text not found: \"\(preview)\"")
                 continue
             }
 
-            // Check for ambiguous matches — warn if old_text appears more than once
+            // Check for ambiguous matches — reject if old_text appears more than once
             let afterFirst = content[range.upperBound...]
             if afterFirst.range(of: oldText) != nil {
                 let preview = oldText.count > 80 ? String(oldText.prefix(80)) + "..." : oldText
-                failures.append("Edit \(index + 1): old_text appears multiple times, only the first occurrence was replaced: \"\(preview)\"")
+                failures.append("Edit \(index + 1): old_text matches multiple locations. Please provide more surrounding context to ensure a unique match: \"\(preview)\"")
+                continue
             }
 
+            let lineNumber = content[..<range.lowerBound].components(separatedBy: .newlines).count
             content.replaceSubrange(range, with: newText)
             successCount += 1
+            editDetails.append("Edit \(index + 1): replaced at line \(lineNumber)")
         }
 
         if successCount > 0 {
@@ -493,6 +535,7 @@ final class AgentToolProvider {
         var resultLines: [String] = []
         if successCount > 0 {
             resultLines.append("Applied \(successCount)/\(edits.count) edits to \(normalizedPath)")
+            resultLines.append(contentsOf: editDetails)
         }
         if !failures.isEmpty {
             resultLines.append(contentsOf: failures)
@@ -628,6 +671,50 @@ final class AgentToolProvider {
         }
     }
 
+    // MARK: - Revert File
+
+    private func executeRevertFile(args: [String: Any]) -> ToolExecutionResult {
+        guard let path = args["path"] as? String else {
+            return ToolExecutionResult(output: "Missing required parameter: path", isError: true, changedPaths: [])
+        }
+
+        guard let resolved = resolveSafePath(path) else {
+            return ToolExecutionResult(output: "Invalid path: \(path)", isError: true, changedPaths: [])
+        }
+
+        let normalizedPath = normalizeRelativePath(path)
+
+        do {
+            let repo = try ProjectGitService.shared.openRepositoryForRevert(at: projectURL)
+
+            // Get the file content from HEAD (the checkpoint commit)
+            guard let headContent = try ProjectGitService.shared.fileContentAtHEAD(
+                repo: repo,
+                relativePath: normalizedPath
+            ) else {
+                return ToolExecutionResult(
+                    output: "File \(normalizedPath) not found in the last checkpoint. It may be a new file created during this session.",
+                    isError: true,
+                    changedPaths: []
+                )
+            }
+
+            try headContent.write(to: resolved, atomically: true, encoding: .utf8)
+
+            return ToolExecutionResult(
+                output: "Successfully reverted \(normalizedPath) to its checkpoint state.",
+                isError: false,
+                changedPaths: [normalizedPath]
+            )
+        } catch {
+            return ToolExecutionResult(
+                output: "Failed to revert \(normalizedPath): \(error.localizedDescription)",
+                isError: true,
+                changedPaths: []
+            )
+        }
+    }
+
     // MARK: - List Directory
 
     private func executeListDirectory(args: [String: Any]) -> ToolExecutionResult {
@@ -701,6 +788,7 @@ final class AgentToolProvider {
         }
 
         let searchPath = args["path"] as? String
+        let includePattern = args["include"] as? String
         let searchRoot: URL
         if let searchPath, !searchPath.isEmpty, searchPath != "." {
             guard let resolved = resolveSafePath(searchPath) else {
@@ -710,6 +798,8 @@ final class AgentToolProvider {
         } else {
             searchRoot = projectURL
         }
+
+        let includeRegex = includePattern.flatMap { buildIncludeRegex($0) }
 
         guard let enumerator = FileManager.default.enumerator(
             at: searchRoot,
@@ -734,6 +824,13 @@ final class AgentToolProvider {
 
             let relativePath = normalizedRelativePath(fileURL: fileURL, rootURL: projectURL)
             guard isTextFile(relativePath) else { continue }
+
+            // Apply include filter if specified
+            if let includeRegex {
+                let fileName = fileURL.lastPathComponent
+                let range = NSRange(fileName.startIndex..., in: fileName)
+                guard includeRegex.firstMatch(in: fileName, range: range) != nil else { continue }
+            }
 
             guard let data = try? Data(contentsOf: fileURL),
                   data.count < configuration.maxBytesPerCatalogFile,
@@ -791,6 +888,7 @@ final class AgentToolProvider {
         }
 
         let caseSensitive = args["case_sensitive"] as? Bool ?? false
+        let includePattern = args["include"] as? String
         let regexOptions: NSRegularExpression.Options = caseSensitive ? [] : [.caseInsensitive]
 
         let regex: NSRegularExpression
@@ -805,6 +903,7 @@ final class AgentToolProvider {
         }
 
         let searchPath = args["path"] as? String
+        let includeRegex = includePattern.flatMap { buildIncludeRegex($0) }
         let searchRoot: URL
         if let searchPath, !searchPath.isEmpty, searchPath != "." {
             guard let resolved = resolveSafePath(searchPath) else {
@@ -838,6 +937,13 @@ final class AgentToolProvider {
 
             let relativePath = normalizedRelativePath(fileURL: fileURL, rootURL: projectURL)
             guard isTextFile(relativePath) else { continue }
+
+            // Apply include filter if specified
+            if let includeRegex {
+                let fileName = fileURL.lastPathComponent
+                let range = NSRange(fileName.startIndex..., in: fileName)
+                guard includeRegex.firstMatch(in: fileName, range: range) != nil else { continue }
+            }
 
             guard let data = try? Data(contentsOf: fileURL),
                   data.count < configuration.maxBytesPerCatalogFile,
@@ -1077,6 +1183,106 @@ final class AgentToolProvider {
 
     private func isTextFile(_ relativePath: String) -> Bool {
         ProjectPathResolver.isTextFile(relativePath)
+    }
+
+    /// Convert an include glob pattern (e.g. "*.js", "*.{html,css}") into a regex
+    /// that matches against file names (not full paths).
+    private func buildIncludeRegex(_ pattern: String) -> NSRegularExpression? {
+        let trimmed = pattern.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        // Expand brace groups: "*.{html,css}" → "*.html|*.css"
+        var alternatives: [String] = []
+        if let braceOpen = trimmed.range(of: "{"),
+           let braceClose = trimmed.range(of: "}", range: braceOpen.upperBound..<trimmed.endIndex) {
+            let prefix = String(trimmed[trimmed.startIndex..<braceOpen.lowerBound])
+            let suffix = String(trimmed[braceClose.upperBound..<trimmed.endIndex])
+            let inner = String(trimmed[braceOpen.upperBound..<braceClose.lowerBound])
+            for part in inner.components(separatedBy: ",") {
+                alternatives.append(prefix + part.trimmingCharacters(in: .whitespaces) + suffix)
+            }
+        } else {
+            alternatives = [trimmed]
+        }
+
+        // Convert each alternative from glob to regex
+        let regexParts = alternatives.map { alt -> String in
+            var regex = "^"
+            for ch in alt {
+                switch ch {
+                case "*": regex += ".*"
+                case "?": regex += "."
+                case ".": regex += "\\."
+                case "(", ")", "+", "^", "$", "|", "[", "]":
+                    regex += "\\\(ch)"
+                default:
+                    regex += String(ch)
+                }
+            }
+            regex += "$"
+            return regex
+        }
+
+        let combined = regexParts.joined(separator: "|")
+        return try? NSRegularExpression(pattern: combined, options: [.caseInsensitive])
+    }
+
+    /// Try whitespace-normalized matching when exact match fails.
+    /// Collapses all whitespace (spaces, tabs) in both the search text and content
+    /// to single spaces, then looks for a unique match. Returns the range in the
+    /// original content if exactly one match is found.
+    private func fuzzyMatch(oldText: String, in content: String) -> Range<String.Index>? {
+        let normalizeWS: (String) -> String = { text in
+            text.replacingOccurrences(of: "[ \\t]+", with: " ", options: .regularExpression)
+        }
+
+        let normalizedOld = normalizeWS(oldText)
+        let normalizedContent = normalizeWS(content)
+
+        // Find the match in the normalized content
+        guard let normalizedRange = normalizedContent.range(of: normalizedOld) else {
+            return nil
+        }
+
+        // Ensure uniqueness — reject if there's a second match
+        let afterFirst = normalizedContent[normalizedRange.upperBound...]
+        if afterFirst.range(of: normalizedOld) != nil {
+            return nil
+        }
+
+        // Map the normalized range back to original content by character offset
+        let normalizedPrefix = normalizedContent[normalizedContent.startIndex..<normalizedRange.lowerBound]
+        let normalizedMatch = normalizedContent[normalizedRange]
+        let startOffset = normalizedPrefix.count
+        let matchLength = normalizedMatch.count
+
+        // Walk the original content to find the corresponding range
+        // The normalized prefix has `startOffset` characters; find where those
+        // characters start in the original by scanning non-collapsed characters
+        var origIndex = content.startIndex
+        var normCount = 0
+        while origIndex < content.endIndex, normCount < startOffset {
+            origIndex = content.index(after: origIndex)
+            let normalizedUpTo = normalizeWS(String(content[content.startIndex..<origIndex]))
+            normCount = normalizedUpTo.count
+        }
+        let matchStart = origIndex
+
+        // Find the end
+        while origIndex < content.endIndex {
+            origIndex = content.index(after: origIndex)
+            let normalizedUpTo = normalizeWS(String(content[content.startIndex..<origIndex]))
+            if normalizedUpTo.count >= startOffset + matchLength {
+                break
+            }
+        }
+        let matchEnd = origIndex
+
+        guard matchStart < matchEnd, matchEnd <= content.endIndex else {
+            return nil
+        }
+
+        return matchStart..<matchEnd
     }
 
     private func formattedByteCount(_ bytes: Int) -> String {
