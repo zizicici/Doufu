@@ -159,6 +159,41 @@ final class AppProjectStore {
         }
     }
 
+    // MARK: - Tool Permission Mode
+
+    func loadToolPermissionMode(projectURL: URL) -> ToolPermissionMode {
+        let manifestURL = projectURL.appendingPathComponent("manifest.json")
+        guard
+            let data = try? Data(contentsOf: manifestURL),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let rawMode = object["toolPermissionMode"] as? String,
+            let mode = ToolPermissionMode(rawValue: rawMode)
+        else {
+            return .standard
+        }
+        return mode
+    }
+
+    func saveToolPermissionMode(projectURL: URL, mode: ToolPermissionMode) throws {
+        let manifestURL = projectURL.appendingPathComponent("manifest.json")
+        guard
+            let data = try? Data(contentsOf: manifestURL),
+            var object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        else {
+            throw AppProjectStoreError.manifestUpdateFailed
+        }
+
+        object["toolPermissionMode"] = mode.rawValue
+        object["updatedAt"] = isoFormatter.string(from: Date())
+
+        do {
+            let updatedData = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
+            try updatedData.write(to: manifestURL, options: .atomic)
+        } catch {
+            throw AppProjectStoreError.manifestUpdateFailed
+        }
+    }
+
     private func ensureProjectsRootDirectory() throws -> URL {
         guard let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first else {
             throw AppProjectStoreError.unavailableDocumentsDirectory

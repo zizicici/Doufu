@@ -73,6 +73,7 @@ final class ProjectChatViewController: UIViewController {
     private var selectedReasoningEffortsByModelID: [String: ProjectChatService.ReasoningEffort] = [:]
     private var selectedAnthropicThinkingEnabledByModelID: [String: Bool] = [:]
     private var selectedGeminiThinkingEnabledByModelID: [String: Bool] = [:]
+    private var toolPermissionMode: ToolPermissionMode = .standard
     private var modelRefreshTask: Task<Void, Never>?
     private let inputMinHeight: CGFloat = 38
     private let inputMaxHeight: CGFloat = 120
@@ -179,6 +180,7 @@ final class ProjectChatViewController: UIViewController {
         ensureProjectMemoryDocumentIfNeeded()
         restoreThreadStateIfNeeded()
         configureProvider()
+        toolPermissionMode = AppProjectStore.shared.loadToolPermissionMode(projectURL: projectURL)
         refreshInputPlaceholder()
         refreshSendButton()
     }
@@ -1590,6 +1592,9 @@ final class ProjectChatViewController: UIViewController {
             self.projectName = updatedProjectName
             self.onProjectFilesUpdated?()
         }
+        settingsController.onToolPermissionModeChanged = { [weak self] mode in
+            self?.toolPermissionMode = mode
+        }
         let navigationController = UINavigationController(rootViewController: settingsController)
         navigationController.modalPresentationStyle = .pageSheet
         if let sheet = navigationController.sheetPresentationController {
@@ -1674,6 +1679,7 @@ final class ProjectChatViewController: UIViewController {
                     threadContext: threadContext,
                     executionOptions: requestExecutionOptions,
                     confirmationHandler: self,
+                    permissionMode: toolPermissionMode,
                     onStreamedText: { [weak self] chunk in
                         guard let self else {
                             return

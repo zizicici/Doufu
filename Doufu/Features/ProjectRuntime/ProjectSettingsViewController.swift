@@ -10,22 +10,22 @@ import UIKit
 final class ProjectSettingsViewController: UITableViewController {
 
     var onProjectUpdated: ((String) -> Void)?
+    var onToolPermissionModeChanged: ((ToolPermissionMode) -> Void)?
 
     private enum Section: Int, CaseIterable {
         case project
+        case chat
         case checkpoints
-        case future
         case action
+    }
+
+    private enum ChatRow: Int, CaseIterable {
+        case toolPermission
     }
 
     private enum CheckpointRow: Int, CaseIterable {
         case undo
         case history
-    }
-
-    private enum FutureRow: Int, CaseIterable {
-        case runMode
-        case buildPipeline
     }
 
     private let projectURL: URL
@@ -34,6 +34,7 @@ final class ProjectSettingsViewController: UITableViewController {
 
     private var baselineProjectName: String
     private var projectNameText: String
+    private var toolPermissionMode: ToolPermissionMode
 
     private var canSave: Bool {
         let trimmed = projectNameText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -48,6 +49,7 @@ final class ProjectSettingsViewController: UITableViewController {
         self.projectURL = projectURL
         baselineProjectName = projectName
         projectNameText = projectName
+        toolPermissionMode = AppProjectStore.shared.loadToolPermissionMode(projectURL: projectURL)
         super.init(style: .insetGrouped)
     }
 
@@ -62,8 +64,8 @@ final class ProjectSettingsViewController: UITableViewController {
         tableView.keyboardDismissMode = .onDrag
         tableView.register(SettingsTextInputCell.self, forCellReuseIdentifier: SettingsTextInputCell.reuseIdentifier)
         tableView.register(SettingsCenteredButtonCell.self, forCellReuseIdentifier: SettingsCenteredButtonCell.reuseIdentifier)
-        tableView.register(UITableViewCell.self, forCellReuseIdentifier: "ProjectFutureCell")
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "CheckpointCell")
+        tableView.register(UITableViewCell.self, forCellReuseIdentifier: "ChatSettingCell")
 
         navigationItem.leftBarButtonItem = UIBarButtonItem(
             barButtonSystemItem: .close,
@@ -84,10 +86,10 @@ final class ProjectSettingsViewController: UITableViewController {
         switch section {
         case .project, .action:
             return 1
+        case .chat:
+            return ChatRow.allCases.count
         case .checkpoints:
             return CheckpointRow.allCases.count
-        case .future:
-            return FutureRow.allCases.count
         }
     }
 
@@ -98,10 +100,10 @@ final class ProjectSettingsViewController: UITableViewController {
         switch section {
         case .project:
             return String(localized: "project_settings.section.project")
+        case .chat:
+            return String(localized: "project_settings.section.chat")
         case .checkpoints:
             return String(localized: "project_settings.section.checkpoints")
-        case .future:
-            return String(localized: "project_settings.section.coming_soon")
         case .action:
             return nil
         }
@@ -115,10 +117,10 @@ final class ProjectSettingsViewController: UITableViewController {
         switch section {
         case .project:
             return String(localized: "project_settings.footer.project_name_usage")
+        case .chat:
+            return String(localized: "project_settings.footer.tool_permission")
         case .checkpoints:
             return String(localized: "project_settings.footer.checkpoints")
-        case .future:
-            return String(localized: "project_settings.footer.future_features")
         case .action:
             return nil
         }
@@ -149,6 +151,16 @@ final class ProjectSettingsViewController: UITableViewController {
                 self?.projectNameText = text
                 self?.refreshSaveButton()
             }
+            return cell
+
+        case .chat:
+            let cell = tableView.dequeueReusableCell(withIdentifier: "ChatSettingCell", for: indexPath)
+            var configuration = cell.defaultContentConfiguration()
+            configuration.text = String(localized: "project_settings.chat.tool_permission.title")
+            configuration.secondaryText = displayName(for: toolPermissionMode)
+            configuration.secondaryTextProperties.color = .secondaryLabel
+            cell.contentConfiguration = configuration
+            cell.accessoryType = .disclosureIndicator
             return cell
 
         case .checkpoints:
@@ -184,25 +196,6 @@ final class ProjectSettingsViewController: UITableViewController {
                 return cell
             }
 
-        case .future:
-            guard let row = FutureRow(rawValue: indexPath.row) else {
-                return UITableViewCell()
-            }
-            let cell = tableView.dequeueReusableCell(withIdentifier: "ProjectFutureCell", for: indexPath)
-            var configuration = cell.defaultContentConfiguration()
-            switch row {
-            case .runMode:
-                configuration.text = String(localized: "project_settings.future.run_mode.title")
-                configuration.secondaryText = String(localized: "project_settings.future.run_mode.subtitle")
-            case .buildPipeline:
-                configuration.text = String(localized: "project_settings.future.build_pipeline.title")
-                configuration.secondaryText = String(localized: "project_settings.future.build_pipeline.subtitle")
-            }
-            configuration.secondaryTextProperties.color = .secondaryLabel
-            cell.contentConfiguration = configuration
-            cell.selectionStyle = .none
-            return cell
-
         case .action:
             guard
                 let cell = tableView.dequeueReusableCell(
@@ -222,11 +215,13 @@ final class ProjectSettingsViewController: UITableViewController {
             return nil
         }
         switch section {
+        case .chat:
+            return indexPath
         case .checkpoints:
             return indexPath
         case .action:
             return canSave ? indexPath : nil
-        case .project, .future:
+        case .project:
             return nil
         }
     }
@@ -238,6 +233,9 @@ final class ProjectSettingsViewController: UITableViewController {
         }
 
         switch section {
+        case .chat:
+            presentToolPermissionPicker()
+
         case .checkpoints:
             guard let row = CheckpointRow(rawValue: indexPath.row) else {
                 return
@@ -255,10 +253,66 @@ final class ProjectSettingsViewController: UITableViewController {
             }
             saveProjectSettings()
 
-        case .project, .future:
+        case .project:
             return
         }
     }
+
+    // MARK: - Tool Permission Picker
+
+    private func displayName(for mode: ToolPermissionMode) -> String {
+        switch mode {
+        case .standard:
+            return String(localized: "tool_permission.mode.standard")
+        case .autoApproveNonDestructive:
+            return String(localized: "tool_permission.mode.auto_non_destructive")
+        case .fullAutoApprove:
+            return String(localized: "tool_permission.mode.full_auto")
+        }
+    }
+
+    private func subtitle(for mode: ToolPermissionMode) -> String {
+        switch mode {
+        case .standard:
+            return String(localized: "tool_permission.mode.standard.subtitle")
+        case .autoApproveNonDestructive:
+            return String(localized: "tool_permission.mode.auto_non_destructive.subtitle")
+        case .fullAutoApprove:
+            return String(localized: "tool_permission.mode.full_auto.subtitle")
+        }
+    }
+
+    private func presentToolPermissionPicker() {
+        let alert = UIAlertController(
+            title: String(localized: "tool_permission.picker.title"),
+            message: String(localized: "tool_permission.picker.message"),
+            preferredStyle: .actionSheet
+        )
+
+        for mode in ToolPermissionMode.allCases {
+            let title = displayName(for: mode)
+            let action = UIAlertAction(title: title, style: .default) { [weak self] _ in
+                self?.applyToolPermissionMode(mode)
+            }
+            if mode == toolPermissionMode {
+                action.setValue(true, forKey: "checked")
+            }
+            alert.addAction(action)
+        }
+
+        alert.addAction(UIAlertAction(title: String(localized: "common.action.cancel"), style: .cancel))
+        present(alert, animated: true)
+    }
+
+    private func applyToolPermissionMode(_ mode: ToolPermissionMode) {
+        guard mode != toolPermissionMode else { return }
+        toolPermissionMode = mode
+        try? store.saveToolPermissionMode(projectURL: projectURL, mode: mode)
+        onToolPermissionModeChanged?(mode)
+        tableView.reloadSections(IndexSet(integer: Section.chat.rawValue), with: .none)
+    }
+
+    // MARK: - Actions
 
     @objc
     private func didTapClose() {

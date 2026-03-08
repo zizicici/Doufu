@@ -57,6 +57,7 @@ final class ProjectChatOrchestrator {
         threadContext: ProjectChatService.ThreadContext?,
         executionOptions: ProjectChatService.ModelExecutionOptions,
         confirmationHandler: ToolConfirmationHandler? = nil,
+        permissionMode: ToolPermissionMode = .standard,
         onStreamedText: (@MainActor (String) -> Void)? = nil,
         onProgress: (@MainActor (ToolProgressEvent) -> Void)? = nil
     ) async throws -> ProjectChatService.ResultPayload {
@@ -70,6 +71,7 @@ final class ProjectChatOrchestrator {
         let usageAccumulator = UsageAccumulator()
         let toolProvider = AgentToolProvider(projectURL: projectURL, configuration: configuration)
         toolProvider.confirmationHandler = confirmationHandler
+        toolProvider.permissionMode = permissionMode
 
         // Create git checkpoint before agent loop starts
         createCheckpointBeforeAgentLoop(projectURL: projectURL, userMessage: trimmedMessage)

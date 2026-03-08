@@ -9,6 +9,16 @@ import Foundation
 
 // MARK: - Tool Permission Model
 
+/// User-facing permission mode controlling how much autonomy the AI has.
+enum ToolPermissionMode: String, CaseIterable {
+    /// Default: prompt for mutating operations on first use, always prompt for destructive ones.
+    case standard
+    /// Auto-approve all operations except destructive ones (delete, web).
+    case autoApproveNonDestructive
+    /// Auto-approve everything — no confirmation prompts at all.
+    case fullAutoApprove
+}
+
 /// Permission tier for tool execution.
 enum ToolPermissionTier {
     /// Read-only operations — never prompt the user.
@@ -87,6 +97,7 @@ final class AgentToolProvider {
     private let projectURL: URL
     private let configuration: ProjectChatConfiguration
     weak var confirmationHandler: ToolConfirmationHandler?
+    var permissionMode: ToolPermissionMode = .standard
 
     /// Tools the user has already approved in this session (for `.confirmOnce` tier).
     private var approvedOnceTools: Set<String> = []
@@ -114,6 +125,18 @@ final class AgentToolProvider {
     /// Check permission for a tool action.  Returns `true` if the action is allowed.
     private func checkPermission(toolName: String, description: String) async -> Bool {
         let tier = Self.permissionTier(for: toolName)
+
+        // Apply permission mode overrides
+        switch permissionMode {
+        case .fullAutoApprove:
+            return true
+        case .autoApproveNonDestructive:
+            if tier != .alwaysConfirm { return true }
+            // Fall through to prompt for destructive operations
+        case .standard:
+            break
+        }
+
         switch tier {
         case .autoAllow:
             return true
