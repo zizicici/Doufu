@@ -72,6 +72,7 @@ final class ProjectChatOrchestrator {
         let toolProvider = AgentToolProvider(projectURL: projectURL, configuration: configuration)
         toolProvider.confirmationHandler = confirmationHandler
         toolProvider.permissionMode = permissionMode
+        toolProvider.codeValidator = await CodeValidator()
 
         // Create git checkpoint before agent loop starts
         createCheckpointBeforeAgentLoop(projectURL: projectURL, userMessage: trimmedMessage)
@@ -242,7 +243,7 @@ final class ProjectChatOrchestrator {
             conversation.append(.assistantMessage(text: responseText, toolCalls: response.toolCalls))
 
             // Partition tool calls into read-only (parallelizable) and mutating (sequential)
-            let readOnlyTools: Set<String> = ["read_file", "list_directory", "search_files", "grep_files", "glob_files"]
+            let readOnlyTools: Set<String> = ["read_file", "list_directory", "search_files", "grep_files", "glob_files", "validate_code"]
             let (parallelCalls, sequentialCalls) = partitionToolCalls(response.toolCalls, readOnly: readOnlyTools)
 
             // Execute read-only tools in parallel

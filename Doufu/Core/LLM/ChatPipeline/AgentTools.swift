@@ -58,6 +58,10 @@ enum ToolProgressEvent {
     case webActivity(description: String)
     /// Parallel batch of read-only operations.
     case parallelBatch(count: Int, descriptions: [String])
+    /// Validating code in a hidden WebView.
+    case validatingCode(path: String)
+    /// Code validation completed.
+    case codeValidated(path: String, errorCount: Int)
     /// Extended thinking content from the model (e.g. Claude thinking blocks).
     case thinking(content: String)
 }
@@ -78,6 +82,8 @@ extension ToolProgressEvent {
         case let .searching(desc):                    return desc
         case let .searchCompleted(desc, count):       return "\(desc)（\(count) 个结果）"
         case let .webActivity(desc):                  return desc
+        case let .validatingCode(path):               return "验证代码：\(path)"
+        case let .codeValidated(path, count):         return count == 0 ? "验证通过：\(path)" : "发现 \(count) 个错误：\(path)"
         case let .parallelBatch(count, _):            return "并行执行 \(count) 个读取操作..."
         case .thinking:                               return "正在深度思考..."
         }
@@ -98,6 +104,7 @@ final class AgentToolProvider {
     private let configuration: ProjectChatConfiguration
     weak var confirmationHandler: ToolConfirmationHandler?
     var permissionMode: ToolPermissionMode = .standard
+    var codeValidator: CodeValidator?
 
     /// Tools the user has already approved in this session (for `.confirmOnce` tier).
     private var approvedOnceTools: Set<String> = []
@@ -111,7 +118,7 @@ final class AgentToolProvider {
 
     static func permissionTier(for toolName: String) -> ToolPermissionTier {
         switch toolName {
-        case "read_file", "list_directory", "search_files", "grep_files", "glob_files":
+        case "read_file", "list_directory", "search_files", "grep_files", "glob_files", "validate_code":
             return .autoAllow
         case "write_file", "edit_file", "move_file", "revert_file":
             return .confirmOnce
@@ -174,6 +181,7 @@ final class AgentToolProvider {
             globFilesTool(),
             webSearchTool(),
             webFetchTool(),
+            validateCodeTool(),
         ]
     }
 
@@ -444,6 +452,24 @@ final class AgentToolProvider {
         )
     }
 
+    private func validateCodeTool() -> AgentToolDefinition {
+        AgentToolDefinition(
+            name: "validate_code",
+            description: "Validate HTML/JS code by loading it in a hidden browser and checking for JavaScript errors. Use this after writing or editing HTML/JS files to catch syntax errors, runtime errors, and missing references before the user sees them. If errors are found, fix them with edit_file and validate again.",
+            parameters: .object([
+                "type": .string("object"),
+                "properties": .object([
+                    "path": .object([
+                        "type": .string("string"),
+                        "description": .string("Path to the HTML entry file to validate, relative to project root (e.g. 'index.html')")
+                    ])
+                ]),
+                "required": .array([.string("path")]),
+                "additionalProperties": .bool(false)
+            ])
+        )
+    }
+
     // MARK: - Tool Result Metadata
 
     /// Structured metadata attached to a tool execution result.
@@ -467,6 +493,8 @@ final class AgentToolProvider {
         case searchResult(query: String, matchCount: Int, matchedFiles: [String])
         /// Web search or fetch.
         case webResult(url: String?, statusCode: Int?)
+        /// Code validation result.
+        case codeValidation(path: String, errorCount: Int, passed: Bool)
     }
 
     // MARK: - Tool Execution
@@ -540,6 +568,10 @@ final class AgentToolProvider {
             let url = (args["url"] as? String) ?? "?"
             if let onProgress { await onProgress(.webActivity(description: "获取网页：\(url)")) }
             return await executeWebFetch(args: args)
+        case "validate_code":
+            let path = (args["path"] as? String) ?? "?"
+            if let onProgress { await onProgress(.validatingCode(path: path)) }
+            return await executeValidateCode(args: args, onProgress: onProgress)
         default:
             return ToolExecutionResult(
                 output: "Unknown tool: \(toolCall.name)",
@@ -1360,6 +1392,50 @@ final class AgentToolProvider {
         case let .failure(error):
             return ToolExecutionResult(output: "Web fetch failed: \(error.message)", isError: true, changedPaths: [])
         }
+    }
+
+    // MARK: - Validate Code
+
+    private func executeValidateCode(
+        args: [String: Any],
+        onProgress: (@MainActor (ToolProgressEvent) -> Void)?
+    ) async -> ToolExecutionResult {
+        guard let path = args["path"] as? String else {
+            return ToolExecutionResult(output: "Missing required parameter: path", isError: true, changedPaths: [])
+        }
+
+        guard let resolved = resolveSafePath(path) else {
+            return ToolExecutionResult(output: "Invalid path: \(path)", isError: true, changedPaths: [])
+        }
+
+        guard FileManager.default.fileExists(atPath: resolved.path) else {
+            return ToolExecutionResult(output: "File not found: \(path)", isError: true, changedPaths: [])
+        }
+
+        guard let validator = codeValidator else {
+            return ToolExecutionResult(
+                output: "Code validator is not available in this context.",
+                isError: true,
+                changedPaths: []
+            )
+        }
+
+        let normalizedPath = normalizeRelativePath(path)
+        let result = await validator.validate(
+            entryFileURL: resolved,
+            allowingReadAccessTo: projectURL
+        )
+
+        if let onProgress {
+            await onProgress(.codeValidated(path: normalizedPath, errorCount: result.errors.count))
+        }
+
+        return ToolExecutionResult(
+            output: result.summary,
+            isError: false,
+            changedPaths: [],
+            metadata: .codeValidation(path: normalizedPath, errorCount: result.errors.count, passed: result.passed)
+        )
     }
 
     // MARK: - Path Helpers (delegates to ProjectPathResolver)

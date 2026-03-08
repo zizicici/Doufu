@@ -40,6 +40,7 @@ final class PromptBuilder {
         - **Write**: `write_file` for new files or complete rewrites only.
         - **Revert**: `revert_file` to undo your changes to a single file if something went wrong.
         - **Web**: `web_search` to find documentation or examples; `web_fetch` to read a specific page.
+        - **Validate**: `validate_code` to check HTML/JS files for errors by loading them in a hidden browser. Always validate after writing or editing HTML/JS files. If errors are found, fix them with `edit_file` and validate again.
 
         ## Mobile Web Guidelines
         The default target device is an iPhone in portrait orientation. Follow these rules unless the user explicitly requests otherwise:
