@@ -67,25 +67,26 @@ enum ToolProgressEvent {
 }
 
 extension ToolProgressEvent {
-    /// Render a short Chinese text suitable for the progress UI.
     var displayText: String {
         switch self {
         case let .text(s):                            return s
-        case let .readingFile(path):                  return "读取文件：\(path)"
-        case let .fileRead(path, lines, _):           return "已读取：\(path)（\(lines) 行）"
-        case let .writingFile(path, isNew):            return isNew ? "创建文件：\(path)" : "写入文件：\(path)"
-        case let .fileWritten(path, chars):           return "已写入：\(path)（\(chars) 字符）"
-        case let .editingFile(path, count):           return "编辑文件：\(path)（\(count) 处修改）"
-        case let .fileEdited(path, applied, total, _): return "已编辑：\(path)（\(applied)/\(total) 成功）"
-        case let .deletingFile(path):                 return "删除文件：\(path)"
-        case let .listingDirectory(path):             return "浏览目录：\(path)"
+        case let .readingFile(path):                  return String(format: String(localized: "tool.progress.reading_file"), path)
+        case let .fileRead(path, lines, _):           return String(format: String(localized: "tool.progress.file_read"), path, lines)
+        case let .writingFile(path, isNew):            return String(format: String(localized: isNew ? "tool.progress.creating_file" : "tool.progress.writing_file"), path)
+        case let .fileWritten(path, chars):           return String(format: String(localized: "tool.progress.file_written"), path, chars)
+        case let .editingFile(path, count):           return String(format: String(localized: "tool.progress.editing_file"), path, count)
+        case let .fileEdited(path, applied, total, _): return String(format: String(localized: "tool.progress.file_edited"), path, applied, total)
+        case let .deletingFile(path):                 return String(format: String(localized: "tool.progress.deleting_file"), path)
+        case let .listingDirectory(path):             return String(format: String(localized: "tool.progress.listing_directory"), path)
         case let .searching(desc):                    return desc
-        case let .searchCompleted(desc, count):       return "\(desc)（\(count) 个结果）"
+        case let .searchCompleted(desc, count):       return String(format: String(localized: "tool.progress.search_completed"), desc, count)
         case let .webActivity(desc):                  return desc
-        case let .validatingCode(path):               return "验证代码：\(path)"
-        case let .codeValidated(path, count):         return count == 0 ? "验证通过：\(path)" : "发现 \(count) 个错误：\(path)"
-        case let .parallelBatch(count, _):            return "并行执行 \(count) 个读取操作..."
-        case .thinking:                               return "正在深度思考..."
+        case let .validatingCode(path):               return String(format: String(localized: "tool.progress.validating_code"), path)
+        case let .codeValidated(path, count):         return count == 0
+            ? String(format: String(localized: "tool.progress.validation_passed"), path)
+            : String(format: String(localized: "tool.progress.validation_failed"), count, path)
+        case let .parallelBatch(count, _):            return String(format: String(localized: "tool.progress.parallel_batch"), count)
+        case .thinking:                               return String(localized: "tool.progress.thinking")
         }
     }
 }
@@ -550,23 +551,23 @@ final class AgentToolProvider {
             return executeListDirectory(args: args)
         case "search_files":
             let query = (args["query"] as? String) ?? "?"
-            if let onProgress { await onProgress(.searching(description: "搜索文件：\"\(query)\"")) }
+            if let onProgress { await onProgress(.searching(description: String(format: String(localized: "tool.progress.search_files"), query))) }
             return executeSearchFiles(args: args)
         case "grep_files":
             let pattern = (args["pattern"] as? String) ?? "?"
-            if let onProgress { await onProgress(.searching(description: "正则搜索：/\(pattern)/")) }
+            if let onProgress { await onProgress(.searching(description: String(format: String(localized: "tool.progress.grep_files"), pattern))) }
             return executeGrepFiles(args: args)
         case "glob_files":
             let pattern = (args["pattern"] as? String) ?? "?"
-            if let onProgress { await onProgress(.searching(description: "查找文件：\(pattern)")) }
+            if let onProgress { await onProgress(.searching(description: String(format: String(localized: "tool.progress.glob_files"), pattern))) }
             return executeGlobFiles(args: args)
         case "web_search":
             let query = (args["query"] as? String) ?? "?"
-            if let onProgress { await onProgress(.webActivity(description: "搜索网页：\"\(query)\"")) }
+            if let onProgress { await onProgress(.webActivity(description: String(format: String(localized: "tool.progress.web_search"), query))) }
             return await executeWebSearch(args: args)
         case "web_fetch":
             let url = (args["url"] as? String) ?? "?"
-            if let onProgress { await onProgress(.webActivity(description: "获取网页：\(url)")) }
+            if let onProgress { await onProgress(.webActivity(description: String(format: String(localized: "tool.progress.web_fetch"), url))) }
             return await executeWebFetch(args: args)
         case "validate_code":
             let path = (args["path"] as? String) ?? "?"
@@ -1093,7 +1094,7 @@ final class AgentToolProvider {
                 isError: false,
                 changedPaths: [],
                 metadata: .searchResult(query: query, matchCount: 0, matchedFiles: []),
-                completionEvent: .searchCompleted(description: "搜索文件：\"\(query)\"", resultCount: 0)
+                completionEvent: .searchCompleted(description: String(format: String(localized: "tool.progress.search_files"), query), resultCount: 0)
             )
         }
 
@@ -1104,7 +1105,7 @@ final class AgentToolProvider {
             isError: false,
             changedPaths: [],
             metadata: .searchResult(query: query, matchCount: matchingFileCount, matchedFiles: matchedFiles),
-            completionEvent: .searchCompleted(description: "搜索文件：\"\(query)\"", resultCount: matchingFileCount)
+            completionEvent: .searchCompleted(description: String(format: String(localized: "tool.progress.search_files"), query), resultCount: matchingFileCount)
         )
     }
 
@@ -1206,7 +1207,7 @@ final class AgentToolProvider {
                 isError: false,
                 changedPaths: [],
                 metadata: .searchResult(query: "/\(pattern)/", matchCount: 0, matchedFiles: []),
-                completionEvent: .searchCompleted(description: "正则搜索：/\(pattern)/", resultCount: 0)
+                completionEvent: .searchCompleted(description: String(format: String(localized: "tool.progress.grep_files"), pattern), resultCount: 0)
             )
         }
 
@@ -1217,7 +1218,7 @@ final class AgentToolProvider {
             isError: false,
             changedPaths: [],
             metadata: .searchResult(query: "/\(pattern)/", matchCount: matchingFileCount, matchedFiles: matchedFiles),
-            completionEvent: .searchCompleted(description: "正则搜索：/\(pattern)/", resultCount: matchingFileCount)
+            completionEvent: .searchCompleted(description: String(format: String(localized: "tool.progress.grep_files"), pattern), resultCount: matchingFileCount)
         )
     }
 
@@ -1286,7 +1287,7 @@ final class AgentToolProvider {
             isError: false,
             changedPaths: [],
             metadata: .searchResult(query: pattern, matchCount: sorted.count, matchedFiles: sorted),
-            completionEvent: .searchCompleted(description: "查找文件：\(pattern)", resultCount: sorted.count)
+            completionEvent: .searchCompleted(description: String(format: String(localized: "tool.progress.glob_files"), pattern), resultCount: sorted.count)
         )
     }
 
