@@ -46,10 +46,20 @@ final class ProjectWorkspaceViewController: UIViewController {
     private var chatNavigationController: UINavigationController?
     private var webLoadingCover: UIView?
     private let webServer: LocalWebServer
+    private let doufuBridge: DoufuBridge
 
     private lazy var webView: WKWebView = {
         let configuration = WKWebViewConfiguration()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
+        // Per-project data store: IndexedDB, cookies, cache are isolated per project
+        // and persist independently of git checkpoints.
+        let projectID = projectURL.lastPathComponent
+        if let storeID = UUID(uuidString: String(projectID.dropFirst("project-".count))) {
+            configuration.websiteDataStore = WKWebsiteDataStore(forIdentifier: storeID)
+        }
+        // Doufu Bridge (fetch proxy + localStorage persistence) — must be first
+        doufuBridge.register(on: configuration)
+        // JS error capture
         let script = WKUserScript(
             source: jsErrorBridgeScriptSource(),
             injectionTime: .atDocumentStart,
@@ -175,6 +185,7 @@ final class ProjectWorkspaceViewController: UIViewController {
         self.projectURL = projectURL
         self.isNewlyCreated = isNewlyCreated
         self.webServer = LocalWebServer(projectURL: projectURL)
+        self.doufuBridge = DoufuBridge(projectURL: projectURL)
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -186,6 +197,7 @@ final class ProjectWorkspaceViewController: UIViewController {
     deinit {
         autoCollapseWorkItem?.cancel()
         webServer.stop()
+        doufuBridge.unregister(from: webView.configuration)
         webView.configuration.userContentController.removeScriptMessageHandler(forName: jsErrorHandlerName)
     }
 
@@ -648,6 +660,12 @@ final class ProjectWorkspaceViewController: UIViewController {
         }
 
         let chatController = ProjectChatViewController(projectName: projectName, projectURL: projectURL)
+        chatController.validationServerBaseURL = webServer.baseURL
+        // Use a temp bridge for validation so localStorage writes don't pollute real user data.
+        let tempStorageDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("doufu_validation", isDirectory: true)
+            .appendingPathComponent(projectURL.lastPathComponent, isDirectory: true)
+        chatController.validationBridge = DoufuBridge(projectURL: projectURL, storageDirectoryOverride: tempStorageDir)
         chatController.onProjectFilesUpdated = { [weak self] in
             guard let self else { return }
             self.hasProjectBeenModified = true

@@ -167,6 +167,8 @@ final class ProjectChatService {
         executionOptions: ModelExecutionOptions,
         confirmationHandler: ToolConfirmationHandler? = nil,
         permissionMode: ToolPermissionMode = .standard,
+        validationServerBaseURL: URL? = nil,
+        validationBridge: DoufuBridge? = nil,
         onStreamedText: (@MainActor (String) -> Void)? = nil,
         onProgress: (@MainActor (ToolProgressEvent) -> Void)? = nil
     ) async throws -> ResultPayload {
@@ -180,6 +182,8 @@ final class ProjectChatService {
             executionOptions: executionOptions,
             confirmationHandler: confirmationHandler,
             permissionMode: permissionMode,
+            validationServerBaseURL: validationServerBaseURL,
+            validationBridge: validationBridge,
             onStreamedText: onStreamedText,
             onProgress: onProgress
         )

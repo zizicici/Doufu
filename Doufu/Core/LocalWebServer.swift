@@ -9,29 +9,53 @@ import Foundation
 import Network
 
 /// A lightweight HTTP server that serves static files from a project directory
-/// over localhost. This enables ES Modules, fetch(), Service Workers, and other
-/// features that require an HTTP origin instead of file://.
+/// over localhost. Also provides a reverse proxy endpoint (`/__doufu_proxy__`)
+/// so that web apps can make cross-origin requests through the host app,
+/// bypassing CORS restrictions transparently.
 final class LocalWebServer: @unchecked Sendable {
 
     private let projectURL: URL
+    private let preferredPort: UInt16
     private var listener: NWListener?
     private let queue = DispatchQueue(label: "com.doufu.localwebserver", qos: .userInitiated)
+    private let urlSession: URLSession
     private(set) var port: UInt16 = 0
 
     init(projectURL: URL) {
         self.projectURL = projectURL
+        self.preferredPort = Self.stablePort(for: projectURL.lastPathComponent)
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 30
+        self.urlSession = URLSession(configuration: config)
+    }
+
+    /// Derive a stable port (10000–59999) from the project ID so that
+    /// the localhost origin stays the same across launches, preserving
+    /// IndexedDB and other origin-keyed browser storage.
+    private static func stablePort(for projectID: String) -> UInt16 {
+        var hash: UInt64 = 5381
+        for byte in projectID.utf8 {
+            hash = hash &* 33 &+ UInt64(byte)
+        }
+        return UInt16(10000 + (hash % 50000))
     }
 
     deinit {
         stop()
     }
 
-    /// Start the server on a random available port.
-    /// Returns the port number.
     @discardableResult
     func start() throws -> UInt16 {
+        // Try the stable preferred port first; fall back to any available port.
+        if let p = try? startListener(on: NWEndpoint.Port(rawValue: preferredPort)!) {
+            return p
+        }
+        return try startListener(on: .any)
+    }
+
+    private func startListener(on requestedPort: NWEndpoint.Port) throws -> UInt16 {
         let parameters = NWParameters.tcp
-        let listener = try NWListener(using: parameters, on: .any)
+        let listener = try NWListener(using: parameters, on: requestedPort)
 
         listener.stateUpdateHandler = { [weak self] state in
             if case .ready = state, let port = self?.listener?.port?.rawValue {
@@ -46,7 +70,6 @@ final class LocalWebServer: @unchecked Sendable {
         listener.start(queue: queue)
         self.listener = listener
 
-        // Wait briefly for the listener to become ready and get its port.
         let deadline = Date().addingTimeInterval(2)
         while port == 0, Date() < deadline {
             Thread.sleep(forTimeInterval: 0.01)
@@ -80,30 +103,71 @@ final class LocalWebServer: @unchecked Sendable {
         }
     }
 
+    // MARK: - Parsed HTTP Request
+
+    private struct HTTPRequest {
+        let method: String
+        let path: String
+        let query: String? // raw query string after '?'
+        let headers: [String: String]
+        let body: Data?
+    }
+
     // MARK: - Connection Handling
 
     private func handleConnection(_ connection: NWConnection) {
         connection.start(queue: queue)
-        receiveRequest(on: connection)
+        receiveFullRequest(on: connection, accumulated: Data())
     }
 
-    private func receiveRequest(on connection: NWConnection) {
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
-            guard let self, let data, error == nil else {
-                connection.cancel()
+    /// Receives data until we have a complete HTTP request (headers + body based on Content-Length).
+    private func receiveFullRequest(on connection: NWConnection, accumulated: Data) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 131072) { [weak self] data, _, isComplete, error in
+            guard let self else { connection.cancel(); return }
+            guard let data, error == nil else { connection.cancel(); return }
+
+            var buffer = accumulated
+            buffer.append(data)
+
+            // Check if we have the full headers
+            guard let headerEndRange = buffer.range(of: Data("\r\n\r\n".utf8)) else {
+                if isComplete {
+                    connection.cancel()
+                } else {
+                    self.receiveFullRequest(on: connection, accumulated: buffer)
+                }
                 return
             }
 
-            if let requestString = String(data: data, encoding: .utf8) {
-                let response = self.handleHTTPRequest(requestString)
-                self.sendResponse(response, on: connection)
-            } else {
-                connection.cancel()
+            let headerData = buffer[buffer.startIndex..<headerEndRange.lowerBound]
+            let bodyStart = headerEndRange.upperBound
+            let currentBody = buffer[bodyStart...]
+
+            // Parse Content-Length to know if we need more body data
+            let headerString = String(data: Data(headerData), encoding: .utf8) ?? ""
+            let contentLength = self.parseContentLength(from: headerString)
+            let bodyNeeded = contentLength - currentBody.count
+
+            if bodyNeeded > 0 && !isComplete {
+                // Need more body data
+                self.receiveFullRequest(on: connection, accumulated: buffer)
+                return
             }
 
-            if isComplete {
-                connection.cancel()
+            // We have enough data — parse and handle
+            let request = self.parseHTTPRequest(headerString: headerString, body: Data(currentBody))
+            self.routeRequest(request, on: connection)
+        }
+    }
+
+    private func routeRequest(_ request: HTTPRequest, on connection: NWConnection) {
+        if request.path == "/__doufu_proxy__" {
+            handleProxyRequest(request) { [weak self] response in
+                self?.sendResponse(response, on: connection)
             }
+        } else {
+            let response = handleStaticFileRequest(request)
+            sendResponse(response, on: connection)
         }
     }
 
@@ -113,67 +177,171 @@ final class LocalWebServer: @unchecked Sendable {
         })
     }
 
-    // MARK: - HTTP Parsing & Response
+    // MARK: - HTTP Parsing
 
-    private func handleHTTPRequest(_ request: String) -> Data {
-        // Parse the request line: "GET /path HTTP/1.1"
-        let lines = request.components(separatedBy: "\r\n")
-        guard let requestLine = lines.first else {
-            return buildResponse(statusCode: 400, statusText: "Bad Request", body: "Bad Request".data(using: .utf8)!, contentType: "text/plain")
+    private func parseContentLength(from headerString: String) -> Int {
+        for line in headerString.components(separatedBy: "\r\n") {
+            let parts = line.split(separator: ":", maxSplits: 1)
+            if parts.count == 2, parts[0].trimmingCharacters(in: .whitespaces).lowercased() == "content-length" {
+                return Int(parts[1].trimmingCharacters(in: .whitespaces)) ?? 0
+            }
+        }
+        return 0
+    }
+
+    private func parseHTTPRequest(headerString: String, body: Data) -> HTTPRequest {
+        let lines = headerString.components(separatedBy: "\r\n")
+        let requestLineParts = (lines.first ?? "").split(separator: " ", maxSplits: 2)
+
+        let method = requestLineParts.count > 0 ? String(requestLineParts[0]) : "GET"
+        let rawPath = requestLineParts.count > 1 ? String(requestLineParts[1]) : "/"
+
+        var path = rawPath
+        var query: String?
+        if let qIndex = rawPath.firstIndex(of: "?") {
+            path = String(rawPath[rawPath.startIndex..<qIndex])
+            query = String(rawPath[rawPath.index(after: qIndex)...])
         }
 
-        let parts = requestLine.split(separator: " ")
-        guard parts.count >= 2, parts[0] == "GET" else {
-            return buildResponse(statusCode: 405, statusText: "Method Not Allowed", body: "Method Not Allowed".data(using: .utf8)!, contentType: "text/plain")
+        var headers: [String: String] = [:]
+        for line in lines.dropFirst() {
+            let parts = line.split(separator: ":", maxSplits: 1)
+            if parts.count == 2 {
+                let key = parts[0].trimmingCharacters(in: .whitespaces)
+                let value = parts[1].trimmingCharacters(in: .whitespaces)
+                headers[key] = value
+            }
         }
 
-        var path = String(parts[1])
+        return HTTPRequest(
+            method: method,
+            path: path,
+            query: query,
+            headers: headers,
+            body: body.isEmpty ? nil : body
+        )
+    }
 
-        // Strip query string
-        if let queryIndex = path.firstIndex(of: "?") {
-            path = String(path[path.startIndex..<queryIndex])
+    private func parseQueryParam(named name: String, from query: String?) -> String? {
+        guard let query else { return nil }
+        for pair in query.components(separatedBy: "&") {
+            let kv = pair.split(separator: "=", maxSplits: 1)
+            if kv.count == 2, kv[0] == name {
+                return String(kv[1]).removingPercentEncoding
+            }
+        }
+        return nil
+    }
+
+    // MARK: - Proxy
+
+    private static let skipRequestHeaders: Set<String> = [
+        "host", "origin", "referer", "connection", "accept-encoding"
+    ]
+
+    private static let skipResponseHeaders: Set<String> = [
+        "content-encoding", "transfer-encoding", "content-length", "connection"
+    ]
+
+    private func handleProxyRequest(_ request: HTTPRequest, completion: @escaping (Data) -> Void) {
+        // Extract target URL from query: /__doufu_proxy__?url=<encoded>
+        guard let targetURLString = parseQueryParam(named: "url", from: request.query),
+              let targetURL = URL(string: targetURLString) else {
+            completion(buildResponse(
+                statusCode: 400,
+                statusText: "Bad Request",
+                body: Data("Missing or invalid 'url' parameter".utf8),
+                contentType: "text/plain"
+            ))
+            return
         }
 
-        // URL-decode the path
-        path = path.removingPercentEncoding ?? path
+        var urlRequest = URLRequest(url: targetURL)
+        urlRequest.httpMethod = request.method
 
-        // Default to index.html
-        if path == "/" {
-            path = "/index.html"
+        // Forward request headers (skip internal/browser ones)
+        for (key, value) in request.headers {
+            guard !Self.skipRequestHeaders.contains(key.lowercased()) else { continue }
+            urlRequest.setValue(value, forHTTPHeaderField: key)
+        }
+        urlRequest.httpBody = request.body
+
+        urlSession.dataTask(with: urlRequest) { [weak self] data, response, error in
+            guard let self else { return }
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                let errorMessage = error?.localizedDescription ?? "Proxy request failed"
+                completion(self.buildResponse(
+                    statusCode: 502,
+                    statusText: "Bad Gateway",
+                    body: Data(errorMessage.utf8),
+                    contentType: "text/plain"
+                ))
+                return
+            }
+
+            let responseBody = data ?? Data()
+
+            // Build raw HTTP response, forwarding status and headers
+            let statusText = HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
+            var header = "HTTP/1.1 \(httpResponse.statusCode) \(statusText)\r\n"
+
+            for (key, value) in httpResponse.allHeaderFields {
+                let keyStr = String(describing: key)
+                guard !Self.skipResponseHeaders.contains(keyStr.lowercased()) else { continue }
+                header += "\(keyStr): \(value)\r\n"
+            }
+            header += "Content-Length: \(responseBody.count)\r\n"
+            header += "Access-Control-Allow-Origin: *\r\n"
+            header += "Connection: close\r\n"
+            header += "\r\n"
+
+            var responseData = Data(header.utf8)
+            responseData.append(responseBody)
+            completion(responseData)
+        }.resume()
+    }
+
+    // MARK: - Static File Serving
+
+    private func handleStaticFileRequest(_ request: HTTPRequest) -> Data {
+        guard request.method == "GET" || request.method == "HEAD" else {
+            return buildResponse(statusCode: 405, statusText: "Method Not Allowed",
+                                 body: Data("Method Not Allowed".utf8), contentType: "text/plain")
         }
 
-        // Resolve the file path, preventing directory traversal.
+        var path = request.path.removingPercentEncoding ?? request.path
+        if path == "/" { path = "/index.html" }
+
+        // Prevent directory traversal
         let resolved = projectURL.appendingPathComponent(path).standardizedFileURL
         let projectPath = projectURL.standardizedFileURL.path
         let resolvedPath = resolved.path
-
         let prefix = projectPath.hasSuffix("/") ? projectPath : projectPath + "/"
+
         guard resolvedPath == projectPath || resolvedPath.hasPrefix(prefix) else {
-            return buildResponse(statusCode: 403, statusText: "Forbidden", body: "Forbidden".data(using: .utf8)!, contentType: "text/plain")
+            return buildResponse(statusCode: 403, statusText: "Forbidden",
+                                 body: Data("Forbidden".utf8), contentType: "text/plain")
         }
 
-        // If it's a directory, try index.html inside it
+        // Directory → index.html
         var isDir: ObjCBool = false
         let exists = FileManager.default.fileExists(atPath: resolvedPath, isDirectory: &isDir)
+        let finalURL = (exists && isDir.boolValue)
+            ? resolved.appendingPathComponent("index.html")
+            : resolved
 
-        let finalURL: URL
-        if exists && isDir.boolValue {
-            finalURL = resolved.appendingPathComponent("index.html")
-        } else {
-            finalURL = resolved
-        }
-
-        guard FileManager.default.fileExists(atPath: finalURL.path) else {
-            return buildResponse(statusCode: 404, statusText: "Not Found", body: "Not Found".data(using: .utf8)!, contentType: "text/plain")
-        }
-
-        guard let fileData = try? Data(contentsOf: finalURL) else {
-            return buildResponse(statusCode: 500, statusText: "Internal Server Error", body: "Read Error".data(using: .utf8)!, contentType: "text/plain")
+        guard FileManager.default.fileExists(atPath: finalURL.path),
+              let fileData = try? Data(contentsOf: finalURL) else {
+            return buildResponse(statusCode: 404, statusText: "Not Found",
+                                 body: Data("Not Found".utf8), contentType: "text/plain")
         }
 
         let contentType = mimeType(for: finalURL.pathExtension)
         return buildResponse(statusCode: 200, statusText: "OK", body: fileData, contentType: contentType)
     }
+
+    // MARK: - Response Builder
 
     private func buildResponse(statusCode: Int, statusText: String, body: Data, contentType: String) -> Data {
         var header = "HTTP/1.1 \(statusCode) \(statusText)\r\n"
@@ -184,10 +352,12 @@ final class LocalWebServer: @unchecked Sendable {
         header += "Connection: close\r\n"
         header += "\r\n"
 
-        var response = header.data(using: .utf8)!
+        var response = Data(header.utf8)
         response.append(body)
         return response
     }
+
+    // MARK: - MIME Types
 
     private func mimeType(for ext: String) -> String {
         switch ext.lowercased() {

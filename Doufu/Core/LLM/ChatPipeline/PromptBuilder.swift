@@ -42,6 +42,14 @@ final class PromptBuilder {
         - **Web**: `web_search` to find documentation or examples; `web_fetch` to read a specific page.
         - **Validate**: `validate_code` to check HTML/JS files for errors by loading them in a hidden browser. Always validate after writing or editing HTML/JS files. If errors are found, fix them with `edit_file` and validate again.
 
+        ## Doufu Runtime Environment
+        Pages run inside a native iOS app (WKWebView served via localhost). The runtime provides these transparent enhancements — you do NOT need any special API:
+        - **fetch()**: Cross-origin requests work without CORS issues. Just use standard `fetch('https://...')` — the app automatically proxies them through the native network stack.
+        - **localStorage**: `localStorage.setItem/getItem/removeItem/clear` all work normally AND persist outside the browser — data survives cache clears and reinstalls. Use it confidently for app data storage.
+        - **IndexedDB**: Fully supported and persistent. Each project has an isolated data store, so databases won't conflict between projects. Use it for structured or large-volume data (e.g. offline records, media caches).
+
+        Because of these, you can freely `fetch()` any external API and use `localStorage` / `IndexedDB` for persistent data without worrying about CORS or data loss.
+
         ## Mobile Web Guidelines
         The default target device is an iPhone in portrait orientation. Follow these rules unless the user explicitly requests otherwise:
         - Mobile-first layout: default to a single column; avoid desktop-style multi-column layouts.

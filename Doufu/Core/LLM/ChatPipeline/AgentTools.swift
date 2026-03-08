@@ -106,6 +106,8 @@ final class AgentToolProvider {
     weak var confirmationHandler: ToolConfirmationHandler?
     var permissionMode: ToolPermissionMode = .standard
     var codeValidator: CodeValidator?
+    var validationServerBaseURL: URL?
+    var validationBridge: DoufuBridge?
 
     /// Tools the user has already approved in this session (for `.confirmOnce` tier).
     private var approvedOnceTools: Set<String> = []
@@ -1422,10 +1424,19 @@ final class AgentToolProvider {
         }
 
         let normalizedPath = normalizeRelativePath(path)
-        let result = await validator.validate(
-            entryFileURL: resolved,
-            allowingReadAccessTo: projectURL
-        )
+        let result: CodeValidator.ValidationResult
+        if let serverBase = validationServerBaseURL {
+            result = await validator.validate(
+                relativePath: normalizedPath,
+                serverBaseURL: serverBase,
+                bridge: validationBridge
+            )
+        } else {
+            result = await validator.validate(
+                entryFileURL: resolved,
+                allowingReadAccessTo: projectURL
+            )
+        }
 
         if let onProgress {
             await onProgress(.codeValidated(path: normalizedPath, errorCount: result.errors.count))

@@ -397,6 +397,13 @@ final class AppProjectStore {
         - Prefer system-like typography and restrained visual decoration.
         - Keep contrast and hierarchy clear without heavy borders/shadows.
 
+        ## Doufu Runtime
+        The app serves pages via a local HTTP server. Standard web APIs are transparently enhanced:
+        - `fetch()`: Cross-origin requests are automatically proxied through the host app. No CORS issues — just use `fetch('https://...')` normally.
+        - `localStorage`: Persisted outside the browser via the host app. Data survives cache clears. Use it for any app data (settings, records, etc.).
+        - `IndexedDB`: Fully supported and persistent. Each project has its own isolated data store. Use it for structured or large-volume data.
+        No special SDK or import is needed — write standard JavaScript.
+
         ## Editing guidance
         - Change the minimum necessary files for each request.
         - Keep the app fully runnable as static `html/css/js`.
@@ -413,9 +420,11 @@ final class AppProjectStore {
         - Created At: \(isoFormatter.string(from: now))
 
         ## Architecture
-        - Runtime: Static web app (html/css/js) rendered in WKWebView.
+        - Runtime: Static web app (html/css/js) served via localhost HTTP server in WKWebView.
         - Default device target: iPhone portrait.
         - Key constraints are defined in AGENTS.md.
+        - fetch() is CORS-free (proxied through host app).
+        - localStorage is natively persisted (survives cache clears).
 
         ## Core Files
         - index.html: App shell and semantic structure.

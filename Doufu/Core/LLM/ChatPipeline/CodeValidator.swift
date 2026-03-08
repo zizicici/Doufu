@@ -63,16 +63,37 @@ final class CodeValidator: NSObject {
     private var continuation: CheckedContinuation<ValidationResult, Never>?
     private var timeoutWorkItem: DispatchWorkItem?
     private var webView: WKWebView?
+    private var activeBridge: DoufuBridge?
 
-    private let validationTimeout: TimeInterval = 3.0
+    private let validationTimeout: TimeInterval = 5.0
 
+    /// Validate by loading through the project's local HTTP server (preferred).
+    /// This matches the real runtime environment: ES Modules, fetch proxy, etc.
+    func validate(relativePath: String, serverBaseURL: URL, bridge: DoufuBridge?) async -> ValidationResult {
+        let pageURL = serverBaseURL.appendingPathComponent(relativePath)
+        return await runValidation(url: pageURL, bridge: bridge)
+    }
+
+    /// Fallback: validate by loading a file:// URL directly.
     func validate(entryFileURL: URL, allowingReadAccessTo directoryURL: URL) async -> ValidationResult {
+        return await runValidation(fileURL: entryFileURL, readAccessURL: directoryURL, bridge: nil)
+    }
+
+    private func runValidation(
+        url: URL? = nil,
+        fileURL: URL? = nil,
+        readAccessURL: URL? = nil,
+        bridge: DoufuBridge?
+    ) async -> ValidationResult {
         cleanup()
         collectedErrors = []
         collectedConsole = []
 
         let config = WKWebViewConfiguration()
         config.defaultWebpagePreferences.allowsContentJavaScript = true
+
+        // Inject the Doufu bridge so fetch proxy + localStorage work during validation
+        bridge?.register(on: config)
 
         let bridgeScript = WKUserScript(
             source: validatorBridgeScript(),
@@ -87,8 +108,13 @@ final class CodeValidator: NSObject {
         let wv = WKWebView(frame: CGRect(x: 0, y: 0, width: 375, height: 667), configuration: config)
         wv.navigationDelegate = self
         self.webView = wv
+        self.activeBridge = bridge
 
-        wv.loadFileURL(entryFileURL, allowingReadAccessTo: directoryURL)
+        if let url {
+            wv.load(URLRequest(url: url))
+        } else if let fileURL, let readAccessURL {
+            wv.loadFileURL(fileURL, allowingReadAccessTo: readAccessURL)
+        }
 
         return await withCheckedContinuation { cont in
             self.continuation = cont
@@ -116,6 +142,8 @@ final class CodeValidator: NSObject {
         if let wv = webView {
             wv.stopLoading()
             wv.navigationDelegate = nil
+            activeBridge?.unregister(from: wv.configuration)
+            activeBridge = nil
             let controller = wv.configuration.userContentController
             controller.removeScriptMessageHandler(forName: Self.errorHandlerName)
             controller.removeScriptMessageHandler(forName: Self.consoleHandlerName)

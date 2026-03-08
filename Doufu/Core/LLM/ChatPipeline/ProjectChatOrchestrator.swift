@@ -58,6 +58,8 @@ final class ProjectChatOrchestrator {
         executionOptions: ProjectChatService.ModelExecutionOptions,
         confirmationHandler: ToolConfirmationHandler? = nil,
         permissionMode: ToolPermissionMode = .standard,
+        validationServerBaseURL: URL? = nil,
+        validationBridge: DoufuBridge? = nil,
         onStreamedText: (@MainActor (String) -> Void)? = nil,
         onProgress: (@MainActor (ToolProgressEvent) -> Void)? = nil
     ) async throws -> ProjectChatService.ResultPayload {
@@ -73,6 +75,8 @@ final class ProjectChatOrchestrator {
         toolProvider.confirmationHandler = confirmationHandler
         toolProvider.permissionMode = permissionMode
         toolProvider.codeValidator = await CodeValidator()
+        toolProvider.validationServerBaseURL = validationServerBaseURL
+        toolProvider.validationBridge = validationBridge
 
         // Create git checkpoint before agent loop starts
         createCheckpointBeforeAgentLoop(projectURL: projectURL, userMessage: trimmedMessage)

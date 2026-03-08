@@ -74,6 +74,11 @@ final class ProjectChatViewController: UIViewController {
     private var selectedAnthropicThinkingEnabledByModelID: [String: Bool] = [:]
     private var selectedGeminiThinkingEnabledByModelID: [String: Bool] = [:]
     private var toolPermissionMode: ToolPermissionMode = .standard
+
+    /// Server base URL for code validation (uses localhost instead of file://).
+    var validationServerBaseURL: URL?
+    /// A temporary bridge whose storage is isolated from real user data.
+    var validationBridge: DoufuBridge?
     private var modelRefreshTask: Task<Void, Never>?
     private let inputMinHeight: CGFloat = 38
     private let inputMaxHeight: CGFloat = 120
@@ -1681,6 +1686,8 @@ final class ProjectChatViewController: UIViewController {
                     executionOptions: requestExecutionOptions,
                     confirmationHandler: self,
                     permissionMode: toolPermissionMode,
+                    validationServerBaseURL: validationServerBaseURL,
+                    validationBridge: validationBridge,
                     onStreamedText: { [weak self] chunk in
                         guard let self else {
                             return
