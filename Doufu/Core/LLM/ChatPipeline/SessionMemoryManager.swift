@@ -35,7 +35,9 @@ final class SessionMemoryManager {
     func buildHistoryInputMessages(from historyTurns: [ProjectChatService.ChatTurn]) -> [ResponseInputMessage] {
         let turns = Array(historyTurns.suffix(configuration.maxHistoryTurns))
         guard turns.count > configuration.maxHistoryTurnsDirectlyIncluded else {
-            return turns.map { ResponseInputMessage(role: $0.role.rawValue, text: $0.text) }
+            return turns.map {
+                ResponseInputMessage(role: $0.role.rawValue, text: $0.text, sourceTurnID: $0.id)
+            }
         }
 
         let olderTurns = Array(turns.dropLast(configuration.maxHistoryTurnsDirectlyIncluded))
@@ -52,7 +54,9 @@ final class SessionMemoryManager {
             items.append(ResponseInputMessage(role: "user", text: summaryMessage))
         }
 
-        items.append(contentsOf: recentTurns.map { ResponseInputMessage(role: $0.role.rawValue, text: $0.text) })
+        items.append(contentsOf: recentTurns.map {
+            ResponseInputMessage(role: $0.role.rawValue, text: $0.text, sourceTurnID: $0.id)
+        })
         return items
     }
 

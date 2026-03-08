@@ -271,7 +271,7 @@ final class GeminiProvider: LLMProviderAdapter {
         }
 
         let stopReason: AgentStopReason = toolCalls.isEmpty ? .endTurn : .toolUse
-        return AgentLLMResponse(textContent: textContent, toolCalls: toolCalls, usage: usage, stopReason: stopReason)
+        return AgentLLMResponse(textContent: textContent, toolCalls: toolCalls, usage: usage, stopReason: stopReason, thinkingContent: nil)
     }
 
     // MARK: - Build Contents
@@ -327,10 +327,10 @@ final class GeminiProvider: LLMProviderAdapter {
 
     private func geminiThinkingBudget(for effort: ResponsesReasoning.Effort) -> Int {
         switch effort {
-        case .low: return 256
-        case .medium: return 512
-        case .high: return 1_024
-        case .xhigh: return 2_048
+        case .low: return 2_048
+        case .medium: return 4_096
+        case .high: return 8_192
+        case .xhigh: return 16_384
         }
     }
 

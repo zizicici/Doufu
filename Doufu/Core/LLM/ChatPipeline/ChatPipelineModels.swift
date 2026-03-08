@@ -95,9 +95,17 @@ struct ResponsesReasoning: Encodable {
 struct ResponseInputMessage: Encodable {
     let role: String
     let content: [ResponseInputContent]
+    /// Optional ID of the originating ChatTurn — used to correlate history entries
+    /// back to their tool summaries. Not encoded into the API request.
+    let sourceTurnID: String?
 
-    init(role: String, text: String) {
+    private enum CodingKeys: String, CodingKey {
+        case role, content
+    }
+
+    init(role: String, text: String, sourceTurnID: String? = nil) {
         self.role = role
+        self.sourceTurnID = sourceTurnID
         let normalizedRole = role.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let contentType = normalizedRole == "assistant" ? "output_text" : "input_text"
         content = [ResponseInputContent(type: contentType, text: text)]
@@ -330,6 +338,8 @@ struct AgentLLMResponse {
     let toolCalls: [AgentToolCall]
     let usage: ResponsesUsage?
     let stopReason: AgentStopReason
+    /// Extended thinking content from models that support it (e.g. Claude with thinking enabled).
+    let thinkingContent: String?
 }
 
 enum AgentConversationItem {

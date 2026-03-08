@@ -1286,12 +1286,12 @@ final class ProjectChatViewController: UIViewController {
             }
             switch message.role {
             case .user:
-                return .init(role: .user, text: normalizedText)
+                return .init(id: message.id.uuidString, role: .user, text: normalizedText)
             case .assistant:
                 if message.isProgress {
                     return nil
                 }
-                return .init(role: .assistant, text: normalizedText, toolSummary: message.toolSummary)
+                return .init(id: message.id.uuidString, role: .assistant, text: normalizedText, toolSummary: message.toolSummary)
             case .system:
                 return nil
             }
@@ -1680,11 +1680,11 @@ final class ProjectChatViewController: UIViewController {
                         }
                         self.updateStreamedProgress(chunk)
                     },
-                    onProgress: { [weak self] phaseText in
+                    onProgress: { [weak self] event in
                         guard let self else {
                             return
                         }
-                        self.appendProgressMessageIfNeeded(phaseText)
+                        self.handleToolProgressEvent(event)
                     }
                 )
 
@@ -1819,16 +1819,35 @@ extension ProjectChatViewController: UITextViewDelegate {
 // MARK: - ToolConfirmationHandler
 
 extension ProjectChatViewController: ToolConfirmationHandler {
-    func confirmDestructiveAction(description: String) async -> Bool {
+    func confirmToolAction(
+        toolName: String,
+        tier: ToolPermissionTier,
+        description: String
+    ) async -> Bool {
         await withCheckedContinuation { continuation in
+            let title: String
+            let allowStyle: UIAlertAction.Style
+            switch tier {
+            case .autoAllow:
+                // Should never be called for autoAllow, but handle gracefully
+                continuation.resume(returning: true)
+                return
+            case .confirmOnce:
+                title = String(localized: "tool.confirm.title")
+                allowStyle = .default
+            case .alwaysConfirm:
+                title = String(localized: "tool.confirm.title.destructive")
+                allowStyle = .destructive
+            }
+
             let alert = UIAlertController(
-                title: String(localized: "tool.confirm.title"),
+                title: title,
                 message: description,
                 preferredStyle: .alert
             )
             alert.addAction(UIAlertAction(
                 title: String(localized: "tool.confirm.allow"),
-                style: .destructive
+                style: allowStyle
             ) { _ in
                 continuation.resume(returning: true)
             })
@@ -1840,5 +1859,34 @@ extension ProjectChatViewController: ToolConfirmationHandler {
             })
             self.present(alert, animated: true)
         }
+    }
+}
+
+// MARK: - Tool Progress Events
+
+extension ProjectChatViewController {
+    func handleToolProgressEvent(_ event: ToolProgressEvent) {
+        // For structured events, display the rich text; for simple text, pass through
+        let displayText: String
+        switch event {
+        case let .fileRead(path, lineCount, preview):
+            let previewLines = preview.components(separatedBy: .newlines).prefix(3)
+            let previewText = previewLines.joined(separator: "\n")
+            displayText = "已读取：\(path)（\(lineCount) 行）\n```\n\(previewText)\n```"
+        case let .fileEdited(path, applied, total, diffPreview):
+            displayText = "已编辑：\(path)（\(applied)/\(total) 成功）\n\(diffPreview)"
+        case let .searchCompleted(desc, count):
+            displayText = "\(desc)（\(count) 个结果）"
+        case let .thinking(content):
+            // Show a truncated preview of the thinking content — full content
+            // is available as a collapsible area if the UI supports it.
+            let truncated = content.count > 200
+                ? String(content.prefix(200)) + "…"
+                : content
+            displayText = "💭 \(truncated)"
+        default:
+            displayText = event.displayText
+        }
+        appendProgressMessageIfNeeded(displayText)
     }
 }

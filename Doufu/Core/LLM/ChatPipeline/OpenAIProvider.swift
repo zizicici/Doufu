@@ -275,7 +275,8 @@ final class OpenAIProvider: LLMProviderAdapter {
             let stopReason: AgentStopReason = toolCalls.isEmpty ? .endTurn : .toolUse
             return AgentLLMResponse(
                 textContent: streamedText, toolCalls: toolCalls,
-                usage: usage, stopReason: stopReason
+                usage: usage, stopReason: stopReason,
+                thinkingContent: nil
             )
         }
     }

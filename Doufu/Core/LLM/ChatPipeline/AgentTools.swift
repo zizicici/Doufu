@@ -7,8 +7,80 @@
 
 import Foundation
 
+// MARK: - Tool Permission Model
+
+/// Permission tier for tool execution.
+enum ToolPermissionTier {
+    /// Read-only operations — never prompt the user.
+    case autoAllow
+    /// Mutating but recoverable operations (write, edit, move).
+    /// Prompts on first use of each tool name in the session, then auto-allows.
+    case confirmOnce
+    /// Destructive or external operations (delete, web requests).
+    /// Always prompts the user.
+    case alwaysConfirm
+}
+
+/// Structured progress event emitted during tool execution.
+enum ToolProgressEvent {
+    /// A simple text description (fallback / thinking phase).
+    case text(String)
+    /// About to read a file.
+    case readingFile(path: String)
+    /// File read completed — includes a content preview.
+    case fileRead(path: String, lineCount: Int, preview: String)
+    /// About to write/create a file.
+    case writingFile(path: String, isNew: Bool)
+    /// File write completed.
+    case fileWritten(path: String, characterCount: Int)
+    /// About to apply edits to a file.
+    case editingFile(path: String, editCount: Int)
+    /// Edit completed — includes a diff-like summary.
+    case fileEdited(path: String, appliedCount: Int, totalCount: Int, diffPreview: String)
+    /// About to delete a file.
+    case deletingFile(path: String)
+    /// Listing a directory.
+    case listingDirectory(path: String)
+    /// Running a search/grep — includes result count when done.
+    case searching(description: String)
+    case searchCompleted(description: String, resultCount: Int)
+    /// Web operations.
+    case webActivity(description: String)
+    /// Parallel batch of read-only operations.
+    case parallelBatch(count: Int, descriptions: [String])
+    /// Extended thinking content from the model (e.g. Claude thinking blocks).
+    case thinking(content: String)
+}
+
+extension ToolProgressEvent {
+    /// Render a short Chinese text suitable for the progress UI.
+    var displayText: String {
+        switch self {
+        case let .text(s):                            return s
+        case let .readingFile(path):                  return "读取文件：\(path)"
+        case let .fileRead(path, lines, _):           return "已读取：\(path)（\(lines) 行）"
+        case let .writingFile(path, isNew):            return isNew ? "创建文件：\(path)" : "写入文件：\(path)"
+        case let .fileWritten(path, chars):           return "已写入：\(path)（\(chars) 字符）"
+        case let .editingFile(path, count):           return "编辑文件：\(path)（\(count) 处修改）"
+        case let .fileEdited(path, applied, total, _): return "已编辑：\(path)（\(applied)/\(total) 成功）"
+        case let .deletingFile(path):                 return "删除文件：\(path)"
+        case let .listingDirectory(path):             return "浏览目录：\(path)"
+        case let .searching(desc):                    return desc
+        case let .searchCompleted(desc, count):       return "\(desc)（\(count) 个结果）"
+        case let .webActivity(desc):                  return desc
+        case let .parallelBatch(count, _):            return "并行执行 \(count) 个读取操作..."
+        case .thinking:                               return "正在深度思考..."
+        }
+    }
+}
+
 protocol ToolConfirmationHandler: AnyObject {
-    @MainActor func confirmDestructiveAction(description: String) async -> Bool
+    /// Ask the user to confirm a tool action.  `tier` indicates the severity.
+    @MainActor func confirmToolAction(
+        toolName: String,
+        tier: ToolPermissionTier,
+        description: String
+    ) async -> Bool
 }
 
 final class AgentToolProvider {
@@ -16,9 +88,49 @@ final class AgentToolProvider {
     private let configuration: ProjectChatConfiguration
     weak var confirmationHandler: ToolConfirmationHandler?
 
+    /// Tools the user has already approved in this session (for `.confirmOnce` tier).
+    private var approvedOnceTools: Set<String> = []
+
     init(projectURL: URL, configuration: ProjectChatConfiguration = .default) {
         self.projectURL = projectURL
         self.configuration = configuration
+    }
+
+    // MARK: - Permission Tier Mapping
+
+    static func permissionTier(for toolName: String) -> ToolPermissionTier {
+        switch toolName {
+        case "read_file", "list_directory", "search_files", "grep_files", "glob_files":
+            return .autoAllow
+        case "write_file", "edit_file", "move_file", "revert_file":
+            return .confirmOnce
+        case "delete_file", "web_search", "web_fetch":
+            return .alwaysConfirm
+        default:
+            return .alwaysConfirm
+        }
+    }
+
+    /// Check permission for a tool action.  Returns `true` if the action is allowed.
+    private func checkPermission(toolName: String, description: String) async -> Bool {
+        let tier = Self.permissionTier(for: toolName)
+        switch tier {
+        case .autoAllow:
+            return true
+        case .confirmOnce:
+            if approvedOnceTools.contains(toolName) { return true }
+            guard let handler = confirmationHandler else { return true }
+            let approved = await handler.confirmToolAction(
+                toolName: toolName, tier: tier, description: description
+            )
+            if approved { approvedOnceTools.insert(toolName) }
+            return approved
+        case .alwaysConfirm:
+            guard let handler = confirmationHandler else { return true }
+            return await handler.confirmToolAction(
+                toolName: toolName, tier: tier, description: description
+            )
+        }
     }
 
     // MARK: - Tool Definitions
@@ -309,16 +421,47 @@ final class AgentToolProvider {
         )
     }
 
+    // MARK: - Tool Result Metadata
+
+    /// Structured metadata attached to a tool execution result.
+    /// Enables the UI layer to render rich information (diffs, file stats, etc.).
+    enum ToolResultMetadata {
+        /// File read — includes line count and byte size.
+        case fileRead(path: String, lineCount: Int, sizeBytes: Int64)
+        /// File written or created.
+        case fileWritten(path: String, isNew: Bool, sizeBytes: Int64)
+        /// File edited with a unified-diff-style preview.
+        case fileEdited(path: String, editCount: Int, diffPreview: String)
+        /// File deleted.
+        case fileDeleted(path: String, sizeBytes: Int64)
+        /// File moved / renamed.
+        case fileMoved(source: String, destination: String)
+        /// File reverted to its original content.
+        case fileReverted(path: String)
+        /// Directory listing.
+        case directoryListed(path: String, entryCount: Int, directories: Int, files: Int)
+        /// Search / grep / glob results.
+        case searchResult(query: String, matchCount: Int, matchedFiles: [String])
+        /// Web search or fetch.
+        case webResult(url: String?, statusCode: Int?)
+    }
+
     // MARK: - Tool Execution
 
     struct ToolExecutionResult {
         let output: String
         let isError: Bool
         let changedPaths: [String]
-        var metadata: [String: String] = [:]
+        /// Structured metadata for UI rendering (diff preview, file stats, etc.).
+        var metadata: ToolResultMetadata?
+        /// Structured progress event emitted after execution completes.
+        var completionEvent: ToolProgressEvent?
     }
 
-    func execute(toolCall: AgentToolCall) async -> ToolExecutionResult {
+    func execute(
+        toolCall: AgentToolCall,
+        onProgress: (@MainActor (ToolProgressEvent) -> Void)? = nil
+    ) async -> ToolExecutionResult {
         if Task.isCancelled {
             return ToolExecutionResult(output: "Operation cancelled.", isError: true, changedPaths: [])
         }
@@ -327,28 +470,52 @@ final class AgentToolProvider {
 
         switch toolCall.name {
         case "read_file":
+            let path = (args["path"] as? String) ?? "?"
+            if let onProgress { await onProgress(.readingFile(path: path)) }
             return executeReadFile(args: args)
         case "write_file":
+            let path = (args["path"] as? String) ?? "?"
+            let isNew = !FileManager.default.fileExists(
+                atPath: resolveSafePath(path)?.path ?? ""
+            )
+            if let onProgress { await onProgress(.writingFile(path: path, isNew: isNew)) }
             return await executeWriteFile(args: args)
         case "edit_file":
-            return executeEditFile(args: args)
+            let path = (args["path"] as? String) ?? "?"
+            let editCount = (args["edits"] as? [Any])?.count ?? 0
+            if let onProgress { await onProgress(.editingFile(path: path, editCount: editCount)) }
+            return await executeEditFile(args: args)
         case "delete_file":
+            let path = (args["path"] as? String) ?? "?"
+            if let onProgress { await onProgress(.deletingFile(path: path)) }
             return await executeDeleteFile(args: args)
         case "move_file":
             return await executeMoveFile(args: args)
         case "revert_file":
             return executeRevertFile(args: args)
         case "list_directory":
+            let path = (args["path"] as? String) ?? "."
+            if let onProgress { await onProgress(.listingDirectory(path: path)) }
             return executeListDirectory(args: args)
         case "search_files":
+            let query = (args["query"] as? String) ?? "?"
+            if let onProgress { await onProgress(.searching(description: "搜索文件：\"\(query)\"")) }
             return executeSearchFiles(args: args)
         case "grep_files":
+            let pattern = (args["pattern"] as? String) ?? "?"
+            if let onProgress { await onProgress(.searching(description: "正则搜索：/\(pattern)/")) }
             return executeGrepFiles(args: args)
         case "glob_files":
+            let pattern = (args["pattern"] as? String) ?? "?"
+            if let onProgress { await onProgress(.searching(description: "查找文件：\(pattern)")) }
             return executeGlobFiles(args: args)
         case "web_search":
+            let query = (args["query"] as? String) ?? "?"
+            if let onProgress { await onProgress(.webActivity(description: "搜索网页：\"\(query)\"")) }
             return await executeWebSearch(args: args)
         case "web_fetch":
+            let url = (args["url"] as? String) ?? "?"
+            if let onProgress { await onProgress(.webActivity(description: "获取网页：\(url)")) }
             return await executeWebFetch(args: args)
         default:
             return ToolExecutionResult(
@@ -390,15 +557,16 @@ final class AgentToolProvider {
             ? "\n\n[Note: File truncated at \(configuration.maxBytesPerContextFile) bytes. Total size: \(data.count) bytes]"
             : ""
 
-        var metadata: [String: String] = [
-            "size_bytes": "\(data.count)",
-            "lines": "\(lineCount)",
-        ]
-        if isTruncated {
-            metadata["truncated"] = "true"
-        }
+        let previewLines = content.components(separatedBy: .newlines).prefix(5)
+        let preview = previewLines.joined(separator: "\n")
 
-        return ToolExecutionResult(output: content + truncationNote, isError: false, changedPaths: [], metadata: metadata)
+        return ToolExecutionResult(
+            output: content + truncationNote,
+            isError: false,
+            changedPaths: [],
+            metadata: .fileRead(path: normalizeRelativePath(path), lineCount: lineCount, sizeBytes: Int64(data.count)),
+            completionEvent: .fileRead(path: path, lineCount: lineCount, preview: preview)
+        )
     }
 
     // MARK: - Write File
@@ -418,31 +586,30 @@ final class AgentToolProvider {
         let normalizedPath = normalizeRelativePath(path)
         let fileExists = FileManager.default.fileExists(atPath: resolved.path)
 
-        // Confirm overwrite of existing files
-        if fileExists, let handler = confirmationHandler {
-            let approved = await handler.confirmDestructiveAction(
-                description: String(
-                    format: String(localized: "tool.confirm.overwrite_file"),
-                    normalizedPath
-                )
+        // Permission check (confirmOnce for write_file; overwriting existing files mentioned in description)
+        let description = fileExists
+            ? String(format: String(localized: "tool.confirm.overwrite_file"), normalizedPath)
+            : String(format: String(localized: "tool.confirm.create_file"), normalizedPath)
+        let approved = await checkPermission(toolName: "write_file", description: description)
+        if !approved {
+            return ToolExecutionResult(
+                output: "User denied writing \(normalizedPath)",
+                isError: true,
+                changedPaths: []
             )
-            if !approved {
-                return ToolExecutionResult(
-                    output: "User denied overwriting \(normalizedPath)",
-                    isError: true,
-                    changedPaths: []
-                )
-            }
         }
 
         do {
             let directoryURL = resolved.deletingLastPathComponent()
             try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
             try content.write(to: resolved, atomically: true, encoding: .utf8)
+            let writtenSize = (try? Data(contentsOf: resolved).count) ?? content.utf8.count
             return ToolExecutionResult(
                 output: "Successfully wrote \(content.count) characters to \(normalizedPath)",
                 isError: false,
-                changedPaths: [normalizedPath]
+                changedPaths: [normalizedPath],
+                metadata: .fileWritten(path: normalizedPath, isNew: !fileExists, sizeBytes: Int64(writtenSize)),
+                completionEvent: .fileWritten(path: normalizedPath, characterCount: content.count)
             )
         } catch {
             return ToolExecutionResult(
@@ -455,7 +622,7 @@ final class AgentToolProvider {
 
     // MARK: - Edit File
 
-    private func executeEditFile(args: [String: Any]) -> ToolExecutionResult {
+    private func executeEditFile(args: [String: Any]) async -> ToolExecutionResult {
         guard let path = args["path"] as? String else {
             return ToolExecutionResult(output: "Missing required parameter: path", isError: true, changedPaths: [])
         }
@@ -468,6 +635,20 @@ final class AgentToolProvider {
         }
 
         let normalizedPath = normalizeRelativePath(path)
+
+        // Permission check
+        let description = String(
+            format: String(localized: "tool.confirm.edit_file"),
+            normalizedPath, edits.count
+        )
+        let approved = await checkPermission(toolName: "edit_file", description: description)
+        if !approved {
+            return ToolExecutionResult(
+                output: "User denied editing \(normalizedPath)",
+                isError: true,
+                changedPaths: []
+            )
+        }
 
         guard FileManager.default.fileExists(atPath: resolved.path) else {
             return ToolExecutionResult(output: "File not found: \(normalizedPath)", isError: true, changedPaths: [])
@@ -491,33 +672,27 @@ final class AgentToolProvider {
                 continue
             }
 
-            guard let range = content.range(of: oldText) else {
-                // Fallback: try whitespace-normalized matching
-                if let fuzzyResult = fuzzyMatch(oldText: oldText, in: content) {
-                    let lineNumber = content[..<fuzzyResult.lowerBound].components(separatedBy: .newlines).count
-                    content.replaceSubrange(fuzzyResult, with: newText)
-                    successCount += 1
-                    editDetails.append("Edit \(index + 1): applied with whitespace normalization at line \(lineNumber)")
-                    continue
-                }
-
-                let preview = oldText.count > 80 ? String(oldText.prefix(80)) + "..." : oldText
-                failures.append("Edit \(index + 1): old_text not found: \"\(preview)\"")
-                continue
-            }
-
-            // Check for ambiguous matches — reject if old_text appears more than once
-            let afterFirst = content[range.upperBound...]
-            if afterFirst.range(of: oldText) != nil {
+            let matchResult = findEditMatch(oldText: oldText, in: content)
+            switch matchResult {
+            case let .exact(range):
+                let lineNumber = content[..<range.lowerBound].components(separatedBy: .newlines).count
+                content.replaceSubrange(range, with: newText)
+                successCount += 1
+                editDetails.append("Edit \(index + 1): replaced at line \(lineNumber)")
+            case let .fuzzy(range, strategy):
+                let lineNumber = content[..<range.lowerBound].components(separatedBy: .newlines).count
+                content.replaceSubrange(range, with: newText)
+                successCount += 1
+                editDetails.append("Edit \(index + 1): applied with \(strategy) at line \(lineNumber)")
+            case .ambiguous:
                 let preview = oldText.count > 80 ? String(oldText.prefix(80)) + "..." : oldText
                 failures.append("Edit \(index + 1): old_text matches multiple locations. Please provide more surrounding context to ensure a unique match: \"\(preview)\"")
-                continue
+            case let .notFound(hint):
+                let preview = oldText.count > 80 ? String(oldText.prefix(80)) + "..." : oldText
+                var message = "Edit \(index + 1): old_text not found: \"\(preview)\""
+                if let hint { message += "\n  Hint: \(hint)" }
+                failures.append(message)
             }
-
-            let lineNumber = content[..<range.lowerBound].components(separatedBy: .newlines).count
-            content.replaceSubrange(range, with: newText)
-            successCount += 1
-            editDetails.append("Edit \(index + 1): replaced at line \(lineNumber)")
         }
 
         if successCount > 0 {
@@ -541,15 +716,21 @@ final class AgentToolProvider {
             resultLines.append(contentsOf: failures)
         }
 
+        let diffPreview = editDetails.joined(separator: "\n")
+
         return ToolExecutionResult(
             output: resultLines.joined(separator: "\n"),
             isError: successCount == 0,
             changedPaths: successCount > 0 ? [normalizedPath] : [],
-            metadata: [
-                "edits_applied": "\(successCount)",
-                "edits_total": "\(edits.count)",
-                "edits_failed": "\(failures.count)",
-            ]
+            metadata: successCount > 0
+                ? .fileEdited(path: normalizedPath, editCount: successCount, diffPreview: diffPreview)
+                : nil,
+            completionEvent: .fileEdited(
+                path: normalizedPath,
+                appliedCount: successCount,
+                totalCount: edits.count,
+                diffPreview: diffPreview
+            )
         )
     }
 
@@ -576,21 +757,17 @@ final class AgentToolProvider {
             return ToolExecutionResult(output: "Cannot delete directories, only files: \(normalizedPath)", isError: true, changedPaths: [])
         }
 
-        // Always confirm file deletion
-        if let handler = confirmationHandler {
-            let approved = await handler.confirmDestructiveAction(
-                description: String(
-                    format: String(localized: "tool.confirm.delete_file"),
-                    normalizedPath
-                )
+        let fileSizeBytes = Int64((try? FileManager.default.attributesOfItem(atPath: resolved.path)[.size] as? Int) ?? 0)
+
+        // Always confirm file deletion (alwaysConfirm tier)
+        let description = String(format: String(localized: "tool.confirm.delete_file"), normalizedPath)
+        let approved = await checkPermission(toolName: "delete_file", description: description)
+        if !approved {
+            return ToolExecutionResult(
+                output: "User denied deleting \(normalizedPath)",
+                isError: true,
+                changedPaths: []
             )
-            if !approved {
-                return ToolExecutionResult(
-                    output: "User denied deleting \(normalizedPath)",
-                    isError: true,
-                    changedPaths: []
-                )
-            }
         }
 
         do {
@@ -598,7 +775,8 @@ final class AgentToolProvider {
             return ToolExecutionResult(
                 output: "Successfully deleted \(normalizedPath)",
                 isError: false,
-                changedPaths: [normalizedPath]
+                changedPaths: [normalizedPath],
+                metadata: .fileDeleted(path: normalizedPath, sizeBytes: fileSizeBytes)
             )
         } catch {
             return ToolExecutionResult(
@@ -637,20 +815,17 @@ final class AgentToolProvider {
             return ToolExecutionResult(output: "Destination already exists: \(normalizedDest)", isError: true, changedPaths: [])
         }
 
-        if let handler = confirmationHandler {
-            let approved = await handler.confirmDestructiveAction(
-                description: String(
-                    format: String(localized: "tool.confirm.move_file"),
-                    normalizedSource, normalizedDest
-                )
+        let description = String(
+            format: String(localized: "tool.confirm.move_file"),
+            normalizedSource, normalizedDest
+        )
+        let approved = await checkPermission(toolName: "move_file", description: description)
+        if !approved {
+            return ToolExecutionResult(
+                output: "User denied moving \(normalizedSource) to \(normalizedDest)",
+                isError: true,
+                changedPaths: []
             )
-            if !approved {
-                return ToolExecutionResult(
-                    output: "User denied moving \(normalizedSource) to \(normalizedDest)",
-                    isError: true,
-                    changedPaths: []
-                )
-            }
         }
 
         do {
@@ -660,7 +835,8 @@ final class AgentToolProvider {
             return ToolExecutionResult(
                 output: "Successfully moved \(normalizedSource) to \(normalizedDest)",
                 isError: false,
-                changedPaths: [normalizedSource, normalizedDest]
+                changedPaths: [normalizedSource, normalizedDest],
+                metadata: .fileMoved(source: normalizedSource, destination: normalizedDest)
             )
         } catch {
             return ToolExecutionResult(
@@ -704,7 +880,8 @@ final class AgentToolProvider {
             return ToolExecutionResult(
                 output: "Successfully reverted \(normalizedPath) to its checkpoint state.",
                 isError: false,
-                changedPaths: [normalizedPath]
+                changedPaths: [normalizedPath],
+                metadata: .fileReverted(path: normalizedPath)
             )
         } catch {
             return ToolExecutionResult(
@@ -768,15 +945,12 @@ final class AgentToolProvider {
         let header = path.isEmpty ? "Project root:" : "\(path)/:"
         let dirCount = sorted.prefix(200).filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }.count
         let fileCount = sorted.prefix(200).count - dirCount
+        let displayPath = path.isEmpty ? "." : path
         return ToolExecutionResult(
             output: header + "\n" + lines.joined(separator: "\n"),
             isError: false,
             changedPaths: [],
-            metadata: [
-                "total_entries": "\(sorted.count)",
-                "files": "\(fileCount)",
-                "directories": "\(dirCount)",
-            ]
+            metadata: .directoryListed(path: displayPath, entryCount: sorted.count, directories: dirCount, files: fileCount)
         )
     }
 
@@ -863,20 +1037,19 @@ final class AgentToolProvider {
                 output: "No matches found for \"\(query)\" in \(filesSearched) files searched.",
                 isError: false,
                 changedPaths: [],
-                metadata: ["files_searched": "\(filesSearched)", "matches": "0"]
+                metadata: .searchResult(query: query, matchCount: 0, matchedFiles: []),
+                completionEvent: .searchCompleted(description: "搜索文件：\"\(query)\"", resultCount: 0)
             )
         }
 
-        let matchingFileCount = results.filter { !$0.hasPrefix("  ") }.count
+        let matchedFiles = results.filter { !$0.hasPrefix("  ") }
+        let matchingFileCount = matchedFiles.count
         return ToolExecutionResult(
             output: "Search results for \"\(query)\":\n" + results.joined(separator: "\n"),
             isError: false,
             changedPaths: [],
-            metadata: [
-                "files_searched": "\(filesSearched)",
-                "files_matched": "\(matchingFileCount)",
-                "limit_reached": filesSearched >= maxFilesToSearch || results.count >= maxResults ? "true" : "false",
-            ]
+            metadata: .searchResult(query: query, matchCount: matchingFileCount, matchedFiles: matchedFiles),
+            completionEvent: .searchCompleted(description: "搜索文件：\"\(query)\"", resultCount: matchingFileCount)
         )
     }
 
@@ -977,20 +1150,19 @@ final class AgentToolProvider {
                 output: "No matches found for /\(pattern)/ in \(filesSearched) files searched.",
                 isError: false,
                 changedPaths: [],
-                metadata: ["files_searched": "\(filesSearched)", "matches": "0"]
+                metadata: .searchResult(query: "/\(pattern)/", matchCount: 0, matchedFiles: []),
+                completionEvent: .searchCompleted(description: "正则搜索：/\(pattern)/", resultCount: 0)
             )
         }
 
-        let matchingFileCount = results.filter { !$0.hasPrefix("  ") }.count
+        let matchedFiles = results.filter { !$0.hasPrefix("  ") }
+        let matchingFileCount = matchedFiles.count
         return ToolExecutionResult(
             output: "Grep results for /\(pattern)/:\n" + results.joined(separator: "\n"),
             isError: false,
             changedPaths: [],
-            metadata: [
-                "files_searched": "\(filesSearched)",
-                "files_matched": "\(matchingFileCount)",
-                "limit_reached": filesSearched >= maxFilesToSearch || results.count >= maxResults ? "true" : "false",
-            ]
+            metadata: .searchResult(query: "/\(pattern)/", matchCount: matchingFileCount, matchedFiles: matchedFiles),
+            completionEvent: .searchCompleted(description: "正则搜索：/\(pattern)/", resultCount: matchingFileCount)
         )
     }
 
@@ -1043,7 +1215,7 @@ final class AgentToolProvider {
                 output: "No files matching \"\(pattern)\" found.",
                 isError: false,
                 changedPaths: [],
-                metadata: ["matches": "0"]
+                metadata: .searchResult(query: pattern, matchCount: 0, matchedFiles: [])
             )
         }
 
@@ -1058,10 +1230,8 @@ final class AgentToolProvider {
             output: output,
             isError: false,
             changedPaths: [],
-            metadata: [
-                "matches": "\(sorted.count)",
-                "limit_reached": matches.count >= maxResults ? "true" : "false",
-            ]
+            metadata: .searchResult(query: pattern, matchCount: sorted.count, matchedFiles: sorted),
+            completionEvent: .searchCompleted(description: "查找文件：\(pattern)", resultCount: sorted.count)
         )
     }
 
@@ -1139,7 +1309,8 @@ final class AgentToolProvider {
             return ToolExecutionResult(
                 output: lines.joined(separator: "\n"),
                 isError: false,
-                changedPaths: []
+                changedPaths: [],
+                metadata: .webResult(url: nil, statusCode: nil)
             )
         case let .failure(error):
             return ToolExecutionResult(output: "Web search failed: \(error.message)", isError: true, changedPaths: [])
@@ -1160,7 +1331,8 @@ final class AgentToolProvider {
             return ToolExecutionResult(
                 output: "Content from \(urlString):\n\n\(content)",
                 isError: false,
-                changedPaths: []
+                changedPaths: [],
+                metadata: .webResult(url: urlString, statusCode: 200)
             )
         case let .failure(error):
             return ToolExecutionResult(output: "Web fetch failed: \(error.message)", isError: true, changedPaths: [])
@@ -1227,11 +1399,84 @@ final class AgentToolProvider {
         return try? NSRegularExpression(pattern: combined, options: [.caseInsensitive])
     }
 
-    /// Try whitespace-normalized matching when exact match fails.
-    /// Collapses all whitespace (spaces, tabs) in both the search text and content
-    /// to single spaces, then looks for a unique match. Returns the range in the
-    /// original content if exactly one match is found.
-    private func fuzzyMatch(oldText: String, in content: String) -> Range<String.Index>? {
+    // MARK: - Multi-Level Edit Matching
+
+    private enum EditMatchResult {
+        case exact(Range<String.Index>)
+        case fuzzy(Range<String.Index>, strategy: String)
+        case ambiguous
+        case notFound(hint: String?)
+    }
+
+    /// Attempt to match `oldText` in `content` using a series of increasingly
+    /// tolerant strategies. Returns a categorized result.
+    private func findEditMatch(oldText: String, in content: String) -> EditMatchResult {
+        // Level 0: Exact match
+        let exactRanges = content.ranges(of: oldText)
+        if exactRanges.count == 1 {
+            return .exact(exactRanges[0])
+        }
+        if exactRanges.count > 1 {
+            return .ambiguous
+        }
+
+        // Level 1: Line-based indentation-normalized match
+        // Handles tab-vs-spaces and different indentation depths
+        if let result = lineBasedIndentMatch(oldText: oldText, in: content) {
+            switch result.count {
+            case 1: return .fuzzy(result[0], strategy: "indentation normalization")
+            default: return .ambiguous
+            }
+        }
+
+        // Level 2: Whitespace-normalized match (collapses all runs of spaces/tabs)
+        if let result = whitespaceNormalizedMatch(oldText: oldText, in: content) {
+            switch result.count {
+            case 1: return .fuzzy(result[0], strategy: "whitespace normalization")
+            default: return .ambiguous
+            }
+        }
+
+        // Level 3: Trimmed-line match (trim each line then compare)
+        if let result = trimmedLineMatch(oldText: oldText, in: content) {
+            switch result.count {
+            case 1: return .fuzzy(result[0], strategy: "line-trimmed matching")
+            default: return .ambiguous
+            }
+        }
+
+        // All strategies failed — produce a helpful hint
+        let hint = findNearestMatchHint(oldText: oldText, in: content)
+        return .notFound(hint: hint)
+    }
+
+    /// Normalize each line's leading whitespace to a canonical form, then match.
+    /// This catches indentation differences (2 spaces vs 4 spaces, tabs vs spaces).
+    private func lineBasedIndentMatch(oldText: String, in content: String) -> [Range<String.Index>]? {
+        let normalizeIndent: (String) -> String = { text in
+            text.split(separator: "\n", omittingEmptySubsequences: false).map { line in
+                let stripped = line.drop(while: { $0 == " " || $0 == "\t" })
+                let indentLevel = line.count - stripped.count
+                // Normalize: every 1+ whitespace chars at start → that many single spaces
+                // But collapse tab = 4 spaces equivalent
+                let tabExpanded = line.prefix(while: { $0 == " " || $0 == "\t" })
+                    .reduce(0) { $0 + ($1 == "\t" ? 4 : 1) }
+                return String(repeating: " ", count: tabExpanded) + stripped
+            }.joined(separator: "\n")
+        }
+
+        let normalizedOld = normalizeIndent(oldText)
+        let normalizedContent = normalizeIndent(content)
+
+        let ranges = normalizedContent.ranges(of: normalizedOld)
+        guard !ranges.isEmpty else { return nil }
+
+        // Map ranges back to original content via line offsets
+        return mapNormalizedRanges(ranges, normalizedContent: normalizedContent, originalContent: content)
+    }
+
+    /// Collapse all runs of spaces/tabs to single space, then match.
+    private func whitespaceNormalizedMatch(oldText: String, in content: String) -> [Range<String.Index>]? {
         let normalizeWS: (String) -> String = { text in
             text.replacingOccurrences(of: "[ \\t]+", with: " ", options: .regularExpression)
         }
@@ -1239,55 +1484,169 @@ final class AgentToolProvider {
         let normalizedOld = normalizeWS(oldText)
         let normalizedContent = normalizeWS(content)
 
-        // Find the match in the normalized content
-        guard let normalizedRange = normalizedContent.range(of: normalizedOld) else {
-            return nil
+        let ranges = normalizedContent.ranges(of: normalizedOld)
+        guard !ranges.isEmpty else { return nil }
+
+        return mapNormalizedRanges(ranges, normalizedContent: normalizedContent, originalContent: content)
+    }
+
+    /// Trim each line, then match. Most aggressive whitespace strategy.
+    private func trimmedLineMatch(oldText: String, in content: String) -> [Range<String.Index>]? {
+        let trimLines: (String) -> String = { text in
+            text.split(separator: "\n", omittingEmptySubsequences: false)
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .joined(separator: "\n")
         }
 
-        // Ensure uniqueness — reject if there's a second match
-        let afterFirst = normalizedContent[normalizedRange.upperBound...]
-        if afterFirst.range(of: normalizedOld) != nil {
-            return nil
+        let normalizedOld = trimLines(oldText)
+        let normalizedContent = trimLines(content)
+
+        let ranges = normalizedContent.ranges(of: normalizedOld)
+        guard !ranges.isEmpty else { return nil }
+
+        return mapNormalizedRanges(ranges, normalizedContent: normalizedContent, originalContent: content)
+    }
+
+    /// Map ranges found in normalized content back to the original content using
+    /// line-level mapping. All normalization strategies preserve line count, so we
+    /// find which lines the normalized range spans and return the corresponding
+    /// whole-line range in the original content.
+    private func mapNormalizedRanges(
+        _ ranges: [Range<String.Index>],
+        normalizedContent: String,
+        originalContent: String
+    ) -> [Range<String.Index>] {
+        let normLines = normalizedContent.split(separator: "\n", omittingEmptySubsequences: false)
+        let origLines = originalContent.split(separator: "\n", omittingEmptySubsequences: false)
+        guard normLines.count == origLines.count else { return [] }
+
+        // Build character offset → line number map for normalized content
+        var normLineStarts: [Int] = []
+        var offset = 0
+        for line in normLines {
+            normLineStarts.append(offset)
+            offset += line.count + 1  // +1 for \n
         }
 
-        // Map the normalized range back to original content by character offset
-        let normalizedPrefix = normalizedContent[normalizedContent.startIndex..<normalizedRange.lowerBound]
-        let normalizedMatch = normalizedContent[normalizedRange]
-        let startOffset = normalizedPrefix.count
-        let matchLength = normalizedMatch.count
-
-        // Walk the original content to find the corresponding range
-        // The normalized prefix has `startOffset` characters; find where those
-        // characters start in the original by scanning non-collapsed characters
-        var origIndex = content.startIndex
-        var normCount = 0
-        while origIndex < content.endIndex, normCount < startOffset {
-            origIndex = content.index(after: origIndex)
-            let normalizedUpTo = normalizeWS(String(content[content.startIndex..<origIndex]))
-            normCount = normalizedUpTo.count
+        // Build character offsets for original content lines
+        var origLineStarts: [Int] = []
+        offset = 0
+        for line in origLines {
+            origLineStarts.append(offset)
+            offset += line.count + 1
         }
-        let matchStart = origIndex
 
-        // Find the end
-        while origIndex < content.endIndex {
-            origIndex = content.index(after: origIndex)
-            let normalizedUpTo = normalizeWS(String(content[content.startIndex..<origIndex]))
-            if normalizedUpTo.count >= startOffset + matchLength {
-                break
+        var result: [Range<String.Index>] = []
+        for range in ranges {
+            let normStartOffset = normalizedContent.distance(from: normalizedContent.startIndex, to: range.lowerBound)
+            let normEndOffset = normalizedContent.distance(from: normalizedContent.startIndex, to: range.upperBound)
+
+            // Find which lines the match spans
+            let startLine = normLineStarts.lastIndex(where: { $0 <= normStartOffset }) ?? 0
+            let endLine = normLineStarts.lastIndex(where: { $0 <= max(normStartOffset, normEndOffset - 1) }) ?? (normLines.count - 1)
+
+            // Map to original: take the full span of these lines in the original
+            let origStart = origLineStarts[startLine]
+            let origEnd: Int
+            if endLine + 1 < origLineStarts.count {
+                // End at the end of endLine (not including the trailing \n if the
+                // normalized match didn't include it)
+                let normMatchIncludesTrailingNewline = normEndOffset > normLineStarts[endLine] + normLines[endLine].count
+                if normMatchIncludesTrailingNewline {
+                    origEnd = origLineStarts[endLine] + origLines[endLine].count + 1
+                } else {
+                    origEnd = origLineStarts[endLine] + origLines[endLine].count
+                }
+            } else {
+                origEnd = originalContent.count
+            }
+
+            guard origStart < origEnd, origEnd <= originalContent.count else { continue }
+
+            let origStartIndex = originalContent.index(originalContent.startIndex, offsetBy: origStart)
+            let origEndIndex = originalContent.index(originalContent.startIndex, offsetBy: min(origEnd, originalContent.count))
+            result.append(origStartIndex..<origEndIndex)
+        }
+
+        return result
+    }
+
+    /// When all matching strategies fail, find the most similar region in the content
+    /// and return a hint string like "Most similar text found at line 42".
+    private func findNearestMatchHint(oldText: String, in content: String) -> String? {
+        let oldLines = oldText.split(separator: "\n", omittingEmptySubsequences: false)
+        guard let firstLine = oldLines.first else { return nil }
+
+        let trimmedFirst = firstLine.trimmingCharacters(in: .whitespaces)
+        guard trimmedFirst.count >= 5 else { return nil }  // too short to search meaningfully
+
+        let contentLines = content.components(separatedBy: .newlines)
+
+        // Search for the first line of oldText in the content (trimmed comparison)
+        var bestLine: Int?
+        var bestScore = 0
+
+        for (lineNum, contentLine) in contentLines.enumerated() {
+            let trimmedContent = contentLine.trimmingCharacters(in: .whitespaces)
+            if trimmedContent == trimmedFirst {
+                // Exact line match — check how many subsequent lines also match
+                var matchCount = 1
+                for j in 1..<oldLines.count {
+                    let oldTrimmed = oldLines[j].trimmingCharacters(in: .whitespaces)
+                    let contentIdx = lineNum + j
+                    guard contentIdx < contentLines.count else { break }
+                    let contentTrimmed = contentLines[contentIdx].trimmingCharacters(in: .whitespaces)
+                    if oldTrimmed == contentTrimmed {
+                        matchCount += 1
+                    } else {
+                        break
+                    }
+                }
+                if matchCount > bestScore {
+                    bestScore = matchCount
+                    bestLine = lineNum + 1  // 1-based
+                }
+            } else if trimmedContent.contains(trimmedFirst) || trimmedFirst.contains(trimmedContent) {
+                // Partial match
+                if bestScore == 0 {
+                    bestLine = lineNum + 1
+                }
             }
         }
-        let matchEnd = origIndex
 
-        guard matchStart < matchEnd, matchEnd <= content.endIndex else {
-            return nil
+        guard let line = bestLine else { return nil }
+
+        if bestScore > 0 && bestScore < oldLines.count {
+            let mismatchLine = line + bestScore
+            let mismatchLineContent = mismatchLine <= contentLines.count
+                ? contentLines[mismatchLine - 1].trimmingCharacters(in: .whitespaces) : "?"
+            let preview = mismatchLineContent.count > 60
+                ? String(mismatchLineContent.prefix(60)) + "..." : mismatchLineContent
+            return "First \(bestScore)/\(oldLines.count) lines match starting at line \(line). Mismatch at line \(mismatchLine): \"\(preview)\""
         }
 
-        return matchStart..<matchEnd
+        return "Most similar text found near line \(line). Please use read_file to check the current content."
     }
 
     private func formattedByteCount(_ bytes: Int) -> String {
         if bytes < 1024 { return "\(bytes) B" }
         if bytes < 1_048_576 { return "\(bytes / 1024) KB" }
         return String(format: "%.1f MB", Double(bytes) / 1_048_576)
+    }
+}
+
+// MARK: - String Ranges Extension
+
+private extension String {
+    /// Find all non-overlapping ranges of `substring` in this string.
+    func ranges(of substring: String) -> [Range<String.Index>] {
+        var result: [Range<String.Index>] = []
+        var searchStart = startIndex
+        while searchStart < endIndex,
+              let range = self.range(of: substring, range: searchStart..<endIndex) {
+            result.append(range)
+            searchStart = range.upperBound
+        }
+        return result
     }
 }

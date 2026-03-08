@@ -58,7 +58,7 @@ final class ProjectChatOrchestrator {
         executionOptions: ProjectChatService.ModelExecutionOptions,
         confirmationHandler: ToolConfirmationHandler? = nil,
         onStreamedText: (@MainActor (String) -> Void)? = nil,
-        onProgress: (@MainActor (String) -> Void)? = nil
+        onProgress: (@MainActor (ToolProgressEvent) -> Void)? = nil
     ) async throws -> ProjectChatService.ResultPayload {
         let trimmedMessage = userMessage.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedMessage.isEmpty else {
@@ -89,19 +89,24 @@ final class ProjectChatOrchestrator {
         var conversation: [AgentConversationItem] = []
 
         // Add history turns (include tool summaries so the model knows what happened)
+        // Build an ID→toolSummary lookup from the normalized history for fast matching
+        let toolSummaryByID: [String: String] = normalizedHistory.reduce(into: [:]) { map, turn in
+            if turn.role == .assistant, let summary = turn.toolSummary, !summary.isEmpty {
+                map[turn.id] = summary
+            }
+        }
         let historyItems = memoryManager.buildHistoryInputMessages(from: normalizedHistory)
-        for (index, item) in historyItems.enumerated() {
+        for item in historyItems {
             let role = item.role.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             let text = item.content.map(\.text).joined(separator: "\n")
             if role == "user" {
                 conversation.append(.userMessage(text))
             } else if role == "assistant" {
-                // Find the matching history turn to get tool summary
-                let matchingTurn = normalizedHistory.first(where: { turn in
-                    turn.role == .assistant && turn.text.trimmingCharacters(in: .whitespacesAndNewlines) == text.trimmingCharacters(in: .whitespacesAndNewlines)
-                })
                 var assistantText = text
-                if let summary = matchingTurn?.toolSummary, !summary.isEmpty {
+                // Use the turn ID embedded in the ResponseInputMessage to look up
+                // the tool summary instead of fragile text comparison
+                if let turnID = item.sourceTurnID,
+                   let summary = toolSummaryByID[turnID], !summary.isEmpty {
                     assistantText += "\n\n<tool-activity>\n\(summary)\n</tool-activity>"
                 }
                 conversation.append(.assistantMessage(text: assistantText, toolCalls: []))
@@ -118,12 +123,13 @@ final class ProjectChatOrchestrator {
 
         // Agent loop
         var allChangedPaths: [String] = []
+        var allToolMetadata: [AgentToolProvider.ToolResultMetadata] = []
         var accumulatedText = ""
         var totalToolCalls = 0
         var toolActivityLog: [String] = []
 
         if let onProgress {
-            await onProgress("正在思考...")
+            await onProgress(.text("正在思考..."))
         }
 
         let budgetWarningThreshold = Int(Double(configuration.maxAgentIterations) * 0.8)
@@ -152,7 +158,7 @@ final class ProjectChatOrchestrator {
                 }
             }
 
-            compactConversationIfNeeded(&conversation)
+            compactConversationIfNeeded(&conversation, credential: credential)
 
             let response = try await streamingClient.requestWithTools(
                 systemInstruction: systemPrompt,
@@ -168,6 +174,11 @@ final class ProjectChatOrchestrator {
             )
 
             let responseText = response.textContent.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
+
+            // Emit extended thinking content if present
+            if let thinking = response.thinkingContent, !thinking.isEmpty, let onProgress {
+                await onProgress(.thinking(content: thinking))
+            }
 
             // No tool calls — check if this is a final response or a truncated one
             if response.toolCalls.isEmpty {
@@ -212,7 +223,8 @@ final class ProjectChatOrchestrator {
                     updatedMemory: updatedMemory,
                     threadMemoryUpdate: nil,
                     requestTokenUsage: await usageAccumulator.usage,
-                    toolActivitySummary: toolActivityLog.isEmpty ? nil : toolActivityLog.joined(separator: "\n")
+                    toolActivitySummary: toolActivityLog.isEmpty ? nil : toolActivityLog.joined(separator: "\n"),
+                    toolMetadata: allToolMetadata
                 )
             }
 
@@ -245,6 +257,9 @@ final class ProjectChatOrchestrator {
                     if !result.changedPaths.isEmpty {
                         mergeChangedPaths(result.changedPaths, into: &allChangedPaths)
                     }
+                    if let meta = result.metadata {
+                        allToolMetadata.append(meta)
+                    }
                     let truncatedOutput = truncateToolResult(result.output)
                     conversation.append(.toolResult(
                         callID: toolCall.id,
@@ -266,16 +281,25 @@ final class ProjectChatOrchestrator {
                 }
 
                 let toolDescription = describeToolCall(toolCall)
-                if let onProgress {
-                    await onProgress(toolDescription)
-                }
                 toolActivityLog.append(toolDescription)
 
-                let result = await toolProvider.execute(toolCall: toolCall)
+                let result = await toolProvider.execute(toolCall: toolCall, onProgress: onProgress)
 
-                // Track changed paths
+                // Emit completion event if the tool produced one, otherwise fall back to text
+                if let onProgress {
+                    if let event = result.completionEvent {
+                        await onProgress(event)
+                    } else {
+                        await onProgress(.text(toolDescription))
+                    }
+                }
+
+                // Track changed paths and metadata
                 if !result.changedPaths.isEmpty {
                     mergeChangedPaths(result.changedPaths, into: &allChangedPaths)
+                }
+                if let meta = result.metadata {
+                    allToolMetadata.append(meta)
                 }
 
                 // Add tool result to conversation (truncated to prevent context bloat)
@@ -316,7 +340,8 @@ final class ProjectChatOrchestrator {
             updatedMemory: updatedMemory,
             threadMemoryUpdate: nil,
             requestTokenUsage: await usageAccumulator.usage,
-            toolActivitySummary: toolActivityLog.isEmpty ? nil : toolActivityLog.joined(separator: "\n")
+            toolActivitySummary: toolActivityLog.isEmpty ? nil : toolActivityLog.joined(separator: "\n"),
+            toolMetadata: allToolMetadata
         )
     }
 
@@ -401,34 +426,38 @@ final class ProjectChatOrchestrator {
             + "\n\n[Output truncated at \(configuration.maxToolResultCharacters) characters]"
     }
 
-    /// Estimate the conversation size in characters (rough proxy for tokens).
-    /// When the conversation is too large, compact old tool results to keep
-    /// the context within reasonable bounds.
+    /// Compact the conversation when it approaches the model's context window.
     ///
-    /// Compaction strategy varies by tool type:
-    /// - read_file / list_directory: aggressively compacted (model can re-read)
-    /// - search_files / grep_files / glob_files / web_search: moderately compacted (re-search is expensive)
-    /// - error results: preserved as-is (diagnostic info is important)
-    private func compactConversationIfNeeded(_ conversation: inout [AgentConversationItem]) {
-        let totalChars = conversation.reduce(0) { sum, item in
-            switch item {
-            case let .userMessage(text): return sum + text.count
-            case let .assistantMessage(text, toolCalls):
-                return sum + text.count + toolCalls.reduce(0) { $0 + $1.argumentsJSON.count }
-            case let .toolResult(_, _, content, _): return sum + content.count
-            }
-        }
+    /// The budget is derived from the active model's known context window size
+    /// (via `ProjectChatConfiguration.maxConversationCharacters`), keeping a
+    /// safety margin for the system prompt and the next response.
+    ///
+    /// Compaction proceeds in four passes, each increasingly aggressive:
+    /// 1. Compact re-readable tool results (read_file, list_directory) — model can re-read.
+    /// 2. Compact search tool results — re-search is costlier but still possible.
+    /// 3. Compact all remaining large non-error tool results.
+    /// 4. Drop the oldest conversation turns (preserving the most recent N items).
+    private func compactConversationIfNeeded(
+        _ conversation: inout [AgentConversationItem],
+        credential: ProjectChatService.ProviderCredential
+    ) {
+        let maxConversationChars = configuration.maxConversationCharacters(
+            providerKind: credential.providerKind,
+            modelID: credential.modelID
+        )
 
-        // ~4 chars per token, target ~100k tokens → ~400k chars
-        let maxConversationChars = 400_000
+        var totalChars = conversationCharacterCount(conversation)
         guard totalChars > maxConversationChars else { return }
+
+        let protectedTail = configuration.compactionProtectedTailItems
+        let compactableEnd = max(0, conversation.count - protectedTail)
 
         let reReadableTools: Set<String> = ["read_file", "list_directory"]
         let searchTools: Set<String> = ["search_files", "grep_files", "glob_files", "web_search", "web_fetch"]
 
         // Pass 1: aggressively compact re-readable tool results (model can re-read)
         var excess = totalChars - maxConversationChars
-        for i in conversation.indices {
+        for i in 0..<compactableEnd {
             guard excess > 0 else { break }
             if case let .toolResult(callID, name, content, isError) = conversation[i],
                !isError, reReadableTools.contains(name), content.count > 300 {
@@ -440,7 +469,7 @@ final class ProjectChatOrchestrator {
         }
 
         // Pass 2: moderately compact search results (preserve more context)
-        for i in conversation.indices {
+        for i in 0..<compactableEnd {
             guard excess > 0 else { break }
             if case let .toolResult(callID, name, content, isError) = conversation[i],
                !isError, searchTools.contains(name), content.count > 800 {
@@ -452,7 +481,7 @@ final class ProjectChatOrchestrator {
         }
 
         // Pass 3: compact remaining large non-error results if still over budget
-        for i in conversation.indices {
+        for i in 0..<compactableEnd {
             guard excess > 0 else { break }
             if case let .toolResult(callID, name, content, isError) = conversation[i],
                !isError, content.count > 500 {
@@ -462,6 +491,44 @@ final class ProjectChatOrchestrator {
                 conversation[i] = .toolResult(callID: callID, name: name, content: truncated, isError: isError)
                 excess -= saved
             }
+        }
+
+        // Pass 4: drop oldest turns if still over budget.
+        // Find the earliest safe drop point — we only drop complete "turn groups"
+        // (user message + assistant reply + tool results) from the front, preserving
+        // the protected tail.
+        if excess > 0, compactableEnd > 0 {
+            var dropEnd = 0
+            var freedChars = 0
+
+            while dropEnd < compactableEnd, freedChars < excess {
+                freedChars += conversationItemCharCount(conversation[dropEnd])
+                dropEnd += 1
+            }
+
+            if dropEnd > 0 {
+                // Insert a summary marker so the model knows context was dropped
+                let droppedCount = dropEnd
+                let marker = AgentConversationItem.userMessage(
+                    "[System: \(droppedCount) earlier conversation items were removed to fit the context window. Use tools to re-read any files you need.]"
+                )
+                conversation.replaceSubrange(0..<dropEnd, with: [marker])
+            }
+        }
+    }
+
+    private func conversationCharacterCount(_ conversation: [AgentConversationItem]) -> Int {
+        conversation.reduce(0) { $0 + conversationItemCharCount($1) }
+    }
+
+    private func conversationItemCharCount(_ item: AgentConversationItem) -> Int {
+        switch item {
+        case let .userMessage(text):
+            return text.count
+        case let .assistantMessage(text, toolCalls):
+            return text.count + toolCalls.reduce(0) { $0 + $1.argumentsJSON.count }
+        case let .toolResult(_, _, content, _):
+            return content.count
         }
     }
 
@@ -489,7 +556,7 @@ final class ProjectChatOrchestrator {
         toolProvider: AgentToolProvider,
         totalToolCalls: inout Int,
         maxTotalToolCalls: Int,
-        onProgress: (@MainActor (String) -> Void)?,
+        onProgress: (@MainActor (ToolProgressEvent) -> Void)?,
         toolActivityLog: inout [String]
     ) async -> [(AgentToolCall, AgentToolProvider.ToolExecutionResult)] {
         // Log activity for all calls first
@@ -500,10 +567,12 @@ final class ProjectChatOrchestrator {
         }
 
         if let onProgress {
-            let summary = calls.count == 1
-                ? describeToolCall(calls[0])
-                : "并行执行 \(calls.count) 个读取操作..."
-            await onProgress(summary)
+            if calls.count == 1 {
+                await onProgress(.text(describeToolCall(calls[0])))
+            } else {
+                let descriptions = calls.map { describeToolCall($0) }
+                await onProgress(.parallelBatch(count: calls.count, descriptions: descriptions))
+            }
         }
 
         // Execute concurrently using a task group

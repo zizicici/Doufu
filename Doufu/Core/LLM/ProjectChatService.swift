@@ -26,11 +26,13 @@ final class ProjectChatService {
     }
 
     struct ChatTurn {
+        let id: String
         let role: Role
         let text: String
         let toolSummary: String?
 
-        init(role: Role, text: String, toolSummary: String? = nil) {
+        init(id: String = UUID().uuidString, role: Role, text: String, toolSummary: String? = nil) {
+            self.id = id
             self.role = role
             self.text = text
             self.toolSummary = toolSummary
@@ -122,6 +124,8 @@ final class ProjectChatService {
         let threadMemoryUpdate: ThreadMemoryUpdate?
         let requestTokenUsage: RequestTokenUsage?
         let toolActivitySummary: String?
+        /// Structured metadata from each tool execution (diff previews, file stats, etc.).
+        let toolMetadata: [AgentToolProvider.ToolResultMetadata]
     }
 
     enum ServiceError: LocalizedError {
@@ -163,7 +167,7 @@ final class ProjectChatService {
         executionOptions: ModelExecutionOptions,
         confirmationHandler: ToolConfirmationHandler? = nil,
         onStreamedText: (@MainActor (String) -> Void)? = nil,
-        onProgress: (@MainActor (String) -> Void)? = nil
+        onProgress: (@MainActor (ToolProgressEvent) -> Void)? = nil
     ) async throws -> ResultPayload {
         try await orchestrator.sendAndApply(
             userMessage: userMessage,

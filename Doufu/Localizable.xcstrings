@@ -7128,10 +7128,16 @@
     "tool.confirm.allow" : {
 
     },
+    "tool.confirm.create_file" : {
+
+    },
     "tool.confirm.delete_file" : {
 
     },
     "tool.confirm.deny" : {
+
+    },
+    "tool.confirm.edit_file" : {
 
     },
     "tool.confirm.move_file" : {
@@ -7141,6 +7147,9 @@
 
     },
     "tool.confirm.title" : {
+
+    },
+    "tool.confirm.title.destructive" : {
 
     },
     "workspace.action.discard" : {

@@ -207,6 +207,7 @@ final class AnthropicProvider: LLMProviderAdapter {
     ) async throws -> AgentLLMResponse {
         try await withAnthropicTimeout(seconds: timeoutSeconds + configuration.streamCompletionGraceSeconds) { [self] in
             var streamedText = ""
+            var thinkingText = ""
             var toolCalls: [AgentToolCall] = []
             var inputTokens: Int?
             var outputTokens: Int?
@@ -215,6 +216,8 @@ final class AnthropicProvider: LLMProviderAdapter {
             // Track in-progress content blocks by index
             // For tool_use blocks: (id, name, accumulatedInputJSON)
             var pendingToolBlocks: [Int: (id: String, name: String, inputJSON: String)] = [:]
+            // Track which block indices are thinking blocks
+            var thinkingBlockIndices: Set<Int> = []
 
             for try await rawLine in bytes.lines {
                 let line = rawLine.trimmingCharacters(in: .newlines)
@@ -248,6 +251,8 @@ final class AnthropicProvider: LLMProviderAdapter {
                         let id = contentBlock["id"] as? String ?? UUID().uuidString
                         let name = contentBlock["name"] as? String ?? ""
                         pendingToolBlocks[index] = (id: id, name: name, inputJSON: "")
+                    } else if blockType == "thinking" {
+                        thinkingBlockIndices.insert(index)
                     }
 
                 case "content_block_delta":
@@ -256,7 +261,10 @@ final class AnthropicProvider: LLMProviderAdapter {
                           let deltaType = delta["type"] as? String
                     else { continue }
 
-                    if deltaType == "text_delta", let text = delta["text"] as? String, !text.isEmpty {
+                    if deltaType == "thinking_delta", let text = delta["thinking"] as? String, !text.isEmpty {
+                        // Accumulate thinking content
+                        thinkingText.append(text)
+                    } else if deltaType == "text_delta", let text = delta["text"] as? String, !text.isEmpty {
                         streamedText.append(text)
                         if let onStreamedText { await onStreamedText(streamedText) }
                     } else if deltaType == "input_json_delta", let partialJSON = delta["partial_json"] as? String {
@@ -268,6 +276,7 @@ final class AnthropicProvider: LLMProviderAdapter {
 
                 case "content_block_stop":
                     guard let index = eventObject["index"] as? Int else { continue }
+                    thinkingBlockIndices.remove(index)
                     if let pending = pendingToolBlocks.removeValue(forKey: index) {
                         let argumentsJSON = pending.inputJSON.isEmpty ? "{}" : pending.inputJSON
                         toolCalls.append(AgentToolCall(id: pending.id, name: pending.name, argumentsJSON: argumentsJSON))
@@ -321,9 +330,12 @@ final class AnthropicProvider: LLMProviderAdapter {
                 inputTokensDetails: nil, outputTokensDetails: nil
             )
 
+            let finalThinking = thinkingText.trimmingCharacters(in: .whitespacesAndNewlines)
+
             return AgentLLMResponse(
                 textContent: streamedText, toolCalls: toolCalls,
-                usage: usage, stopReason: stopReason
+                usage: usage, stopReason: stopReason,
+                thinkingContent: finalThinking.isEmpty ? nil : finalThinking
             )
         }
     }
@@ -414,10 +426,10 @@ final class AnthropicProvider: LLMProviderAdapter {
 
     private func anthropicThinkingBudgetTokens(for effort: ResponsesReasoning.Effort) -> Int {
         switch effort {
-        case .low: return 1_024
-        case .medium: return 2_048
-        case .high: return 3_072
-        case .xhigh: return 4_096
+        case .low: return 4_096
+        case .medium: return 8_192
+        case .high: return 16_384
+        case .xhigh: return 32_768
         }
     }
 
