@@ -223,6 +223,7 @@ final class SettingsToggleCell: UITableViewCell {
 
     func configure(
         title: String,
+        icon: UIImage? = nil,
         isOn: Bool,
         onValueChanged: @escaping (Bool) -> Void
     ) {
@@ -230,6 +231,7 @@ final class SettingsToggleCell: UITableViewCell {
         toggle.isOn = isOn
 
         var configuration = defaultContentConfiguration()
+        configuration.image = icon
         configuration.text = title
         contentConfiguration = configuration
     }

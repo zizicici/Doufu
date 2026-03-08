@@ -11,8 +11,8 @@ final class SettingsViewController: UITableViewController {
 
     private enum Section: Int, CaseIterable {
         case general
-        case chat
         case llmProviders
+        case chat
     }
 
     private enum GeneralRow: Int, CaseIterable {
@@ -45,7 +45,6 @@ final class SettingsViewController: UITableViewController {
         super.viewDidLoad()
         title = String(localized: "settings.title")
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "SettingsCell")
-        tableView.register(SettingsToggleCell.self, forCellReuseIdentifier: SettingsToggleCell.reuseIdentifier)
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -62,10 +61,10 @@ final class SettingsViewController: UITableViewController {
         switch section {
         case .general:
             return GeneralRow.allCases.count
-        case .chat:
-            return ChatRow.allCases.count
         case .llmProviders:
             return LLMProvidersRow.allCases.count
+        case .chat:
+            return ChatRow.allCases.count
         }
     }
 
@@ -74,22 +73,20 @@ final class SettingsViewController: UITableViewController {
         switch section {
         case .general:
             return String(localized: "settings.section.general")
-        case .chat:
-            return String(localized: "settings.section.chat")
         case .llmProviders:
             return String(localized: "settings.section.llm_providers")
+        case .chat:
+            return String(localized: "settings.section.chat")
         }
     }
 
     override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
         guard let section = Section(rawValue: section) else { return nil }
         switch section {
-        case .general:
-            return nil
-        case .chat:
-            return String(localized: "settings.section.chat.footer.combined")
         case .llmProviders:
             return String(localized: "settings.section.llm_providers.footer")
+        case .general, .chat:
+            return nil
         }
     }
 
@@ -104,42 +101,15 @@ final class SettingsViewController: UITableViewController {
 
         switch section {
         case .general:
-            var configuration = cell.defaultContentConfiguration()
+            var configuration = UIListContentConfiguration.valueCell()
             configuration.image = UIImage(systemName: "globe")
             configuration.text = String(localized: "settings.general.language.title")
-            configuration.secondaryText = String(localized: "settings.general.language.subtitle")
-            configuration.secondaryTextProperties.color = .secondaryLabel
+            configuration.secondaryText = currentLanguageDisplayName()
             cell.contentConfiguration = configuration
-
-        case .chat:
-            guard let row = ChatRow(rawValue: indexPath.row) else { return cell }
-            switch row {
-            case .toolPermission:
-                let mode = projectStore.loadAppToolPermissionMode()
-                var configuration = cell.defaultContentConfiguration()
-                configuration.image = UIImage(systemName: "wrench")
-                configuration.text = String(localized: "settings.chat.tool_permission.title")
-                configuration.secondaryText = displayName(for: mode)
-                configuration.secondaryTextProperties.color = .secondaryLabel
-                cell.contentConfiguration = configuration
-
-            case .pipProgress:
-                guard let toggleCell = tableView.dequeueReusableCell(
-                    withIdentifier: SettingsToggleCell.reuseIdentifier,
-                    for: indexPath
-                ) as? SettingsToggleCell else { return cell }
-                toggleCell.configure(
-                    title: String(localized: "settings.chat.pip_progress.title"),
-                    isOn: PiPProgressManager.shared.isEnabled
-                ) { newValue in
-                    PiPProgressManager.shared.isEnabled = newValue
-                }
-                return toggleCell
-            }
 
         case .llmProviders:
             guard let row = LLMProvidersRow(rawValue: indexPath.row) else { return cell }
-            var configuration = cell.defaultContentConfiguration()
+            var configuration = UIListContentConfiguration.valueCell()
             switch row {
             case .manageProviders:
                 let providersCount = store.loadProviders().count
@@ -152,9 +122,25 @@ final class SettingsViewController: UITableViewController {
             case .tokenUsage:
                 configuration.image = UIImage(systemName: "chart.bar.xaxis")
                 configuration.text = String(localized: "providers.manage.item.token_usage")
-                configuration.secondaryText = String(localized: "providers.manage.item.token_usage.subtitle")
             }
-            configuration.secondaryTextProperties.color = .secondaryLabel
+            cell.contentConfiguration = configuration
+
+        case .chat:
+            guard let row = ChatRow(rawValue: indexPath.row) else { return cell }
+            var configuration = UIListContentConfiguration.valueCell()
+            switch row {
+            case .toolPermission:
+                let mode = projectStore.loadAppToolPermissionMode()
+                configuration.image = UIImage(systemName: "wrench")
+                configuration.text = String(localized: "settings.chat.tool_permission.title")
+                configuration.secondaryText = displayName(for: mode)
+            case .pipProgress:
+                configuration.image = UIImage(systemName: "pip")
+                configuration.text = String(localized: "settings.chat.pip_progress.title")
+                configuration.secondaryText = PiPProgressManager.shared.isEnabled
+                    ? String(localized: "settings.chat.pip_progress.on")
+                    : String(localized: "settings.chat.pip_progress.off")
+            }
             cell.contentConfiguration = configuration
         }
 
@@ -171,10 +157,6 @@ final class SettingsViewController: UITableViewController {
                 UIApplication.shared.open(url)
             }
 
-        case .chat:
-            guard ChatRow(rawValue: indexPath.row) == .toolPermission else { return }
-            presentToolPermissionPicker()
-
         case .llmProviders:
             guard let row = LLMProvidersRow(rawValue: indexPath.row) else { return }
             switch row {
@@ -185,7 +167,26 @@ final class SettingsViewController: UITableViewController {
                 let controller = TokenUsageViewController()
                 navigationController?.pushViewController(controller, animated: true)
             }
+
+        case .chat:
+            guard let row = ChatRow(rawValue: indexPath.row) else { return }
+            switch row {
+            case .toolPermission:
+                let controller = ToolPermissionPickerViewController()
+                navigationController?.pushViewController(controller, animated: true)
+            case .pipProgress:
+                let controller = PiPProgressPickerViewController()
+                navigationController?.pushViewController(controller, animated: true)
+            }
         }
+    }
+
+    // MARK: - Language
+
+    private func currentLanguageDisplayName() -> String {
+        let langCode = Bundle.main.preferredLocalizations.first ?? "en"
+        let locale = Locale(identifier: langCode)
+        return locale.localizedString(forIdentifier: langCode)?.localizedCapitalized ?? langCode
     }
 
     // MARK: - Tool Permission
@@ -199,30 +200,5 @@ final class SettingsViewController: UITableViewController {
         case .fullAutoApprove:
             return String(localized: "tool_permission.mode.full_auto")
         }
-    }
-
-    private func presentToolPermissionPicker() {
-        let currentMode = projectStore.loadAppToolPermissionMode()
-        let alert = UIAlertController(
-            title: String(localized: "tool_permission.picker.title"),
-            message: String(localized: "tool_permission.picker.message"),
-            preferredStyle: .actionSheet
-        )
-
-        for mode in ToolPermissionMode.allCases {
-            let title = displayName(for: mode)
-            let action = UIAlertAction(title: title, style: .default) { [weak self] _ in
-                guard let self else { return }
-                self.projectStore.saveAppToolPermissionMode(mode)
-                self.tableView.reloadSections(IndexSet(integer: Section.chat.rawValue), with: .none)
-            }
-            if mode == currentMode {
-                action.setValue(true, forKey: "checked")
-            }
-            alert.addAction(action)
-        }
-
-        alert.addAction(UIAlertAction(title: String(localized: "common.action.cancel"), style: .cancel))
-        present(alert, animated: true)
     }
 }

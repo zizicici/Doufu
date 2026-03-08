@@ -48,11 +48,12 @@ final class HomeViewController: UIViewController {
 
         let view = UICollectionView(frame: .zero, collectionViewLayout: layout)
         view.translatesAutoresizingMaskIntoConstraints = false
-        view.backgroundColor = .systemBackground
+        view.backgroundColor = .doufuBackground
         view.keyboardDismissMode = .onDrag
         view.dataSource = self
         view.delegate = self
         view.register(ProjectCardCell.self, forCellWithReuseIdentifier: ProjectCardCell.reuseIdentifier)
+        view.register(AddProjectCardCell.self, forCellWithReuseIdentifier: AddProjectCardCell.reuseIdentifier)
         return view
     }()
 
@@ -82,12 +83,6 @@ final class HomeViewController: UIViewController {
         return label
     }()
 
-    private lazy var dateFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.dateFormat = "M月d日"
-        return formatter
-    }()
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -106,23 +101,17 @@ final class HomeViewController: UIViewController {
         title = String(localized: "home.title")
         navigationController?.navigationBar.prefersLargeTitles = false
 
-        navigationItem.leftBarButtonItem = UIBarButtonItem(
-            image: UIImage(systemName: "gearshape"),
+        navigationItem.rightBarButtonItem = UIBarButtonItem(
+            image: UIImage(systemName: "ellipsis"),
             style: .plain,
             target: self,
-            action: #selector(didTapSettingsButton)
-        )
-
-        navigationItem.rightBarButtonItem = UIBarButtonItem(
-            barButtonSystemItem: .add,
-            target: self,
-            action: #selector(didTapAddButton)
+            action: #selector(didTapMoreButton)
         )
         definesPresentationContext = true
     }
 
     private func configureViewHierarchy() {
-        view.backgroundColor = .systemBackground
+        view.backgroundColor = .doufuBackground
         view.addSubview(collectionView)
         view.addSubview(emptyStateContainer)
         emptyStateContainer.addSubview(emptyStateLabel)
@@ -144,7 +133,6 @@ final class HomeViewController: UIViewController {
         ])
     }
 
-    @objc
     private func didTapAddButton() {
         do {
             let project = try projectStore.createBlankProject()
@@ -156,7 +144,7 @@ final class HomeViewController: UIViewController {
     }
 
     @objc
-    private func didTapSettingsButton() {
+    private func didTapMoreButton() {
         let controller = SettingsViewController()
         navigationController?.pushViewController(controller, animated: true)
     }
@@ -410,10 +398,13 @@ final class HomeViewController: UIViewController {
     }
 
     private func updateEmptyState(for keyword: String) {
-        emptyStateLabel.text = keyword.isEmpty
-            ? String(localized: "home.empty.default")
-            : String(localized: "home.empty.no_match")
-        emptyStateContainer.isHidden = !filteredProjects.isEmpty
+        // Only show empty state for search with no results (the add card is always visible otherwise)
+        if !keyword.isEmpty && filteredProjects.isEmpty {
+            emptyStateLabel.text = String(localized: "home.empty.no_match")
+            emptyStateContainer.isHidden = false
+        } else {
+            emptyStateContainer.isHidden = true
+        }
     }
 
     private func openProject(_ project: HomeProjectItem, at indexPath: IndexPath? = nil) {
@@ -465,10 +456,17 @@ extension HomeViewController: UISearchResultsUpdating {
 
 extension HomeViewController: UICollectionViewDataSource {
     func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
-        filteredProjects.count
+        filteredProjects.count + 1 // +1 for add button
     }
 
     func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
+        if indexPath.item == filteredProjects.count {
+            return collectionView.dequeueReusableCell(
+                withReuseIdentifier: AddProjectCardCell.reuseIdentifier,
+                for: indexPath
+            )
+        }
+
         guard
             let cell = collectionView.dequeueReusableCell(
                 withReuseIdentifier: ProjectCardCell.reuseIdentifier,
@@ -479,14 +477,17 @@ extension HomeViewController: UICollectionViewDataSource {
         }
 
         let project = filteredProjects[indexPath.item]
-        let dateText = dateFormatter.string(from: project.updatedAt)
-        cell.configure(project: project, dateText: dateText)
+        cell.configure(project: project)
         return cell
     }
 }
 
 extension HomeViewController: UICollectionViewDelegate {
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
+        if indexPath.item == filteredProjects.count {
+            didTapAddButton()
+            return
+        }
         let project = filteredProjects[indexPath.item]
         openProject(project, at: indexPath)
     }
@@ -496,6 +497,7 @@ extension HomeViewController: UICollectionViewDelegate {
         contextMenuConfigurationForItemAt indexPath: IndexPath,
         point: CGPoint
     ) -> UIContextMenuConfiguration? {
+        guard indexPath.item < filteredProjects.count else { return nil }
         let project = filteredProjects[indexPath.item]
 
         return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
@@ -542,13 +544,37 @@ extension HomeViewController: UICollectionViewDelegateFlowLayout {
             - LayoutMetric.horizontalPadding * 2
             - totalSpacing
         let itemWidth = floor(availableWidth / LayoutMetric.columns)
-        return CGSize(width: itemWidth, height: itemWidth * 1.22)
+        // Preview: (itemWidth - 16) * screenAspectRatio, plus padding (8 top + 8 gap + ~30 title + 8 bottom)
+        let screenRatio = UIScreen.main.bounds.height / UIScreen.main.bounds.width
+        let previewWidth = itemWidth - 16 // 8pt padding on each side
+        let previewHeight = previewWidth * screenRatio
+        let itemHeight = 8 + previewHeight + 8 + 30 + 8 // top + preview + gap + title + bottom
+        return CGSize(width: itemWidth, height: itemHeight)
     }
 }
 
 private final class ProjectCardCell: UICollectionViewCell {
 
     static let reuseIdentifier = "ProjectCardCell"
+
+    /// Screen aspect ratio used for preview thumbnail (e.g. 19.5:9 ≈ 2.16).
+    private static let screenAspectRatio: CGFloat = {
+        let screen = UIScreen.main.bounds
+        return max(screen.height, screen.width) / min(screen.height, screen.width)
+    }()
+
+    private let previewShadowView: UIView = {
+        let view = UIView()
+        view.translatesAutoresizingMaskIntoConstraints = false
+        view.backgroundColor = .clear
+        view.layer.cornerRadius = 10
+        view.layer.cornerCurve = .continuous
+        view.layer.shadowColor = UIColor.black.cgColor
+        view.layer.shadowOpacity = 0.08
+        view.layer.shadowRadius = 4
+        view.layer.shadowOffset = CGSize(width: 0, height: 2)
+        return view
+    }()
 
     private let previewContainer: UIView = {
         let view = UIView()
@@ -580,17 +606,8 @@ private final class ProjectCardCell: UICollectionViewCell {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
         label.font = .systemFont(ofSize: 13, weight: .semibold)
-        label.textColor = .label
+        label.textColor = .doufuText
         label.numberOfLines = 2
-        return label
-    }()
-
-    private let dateLabel: UILabel = {
-        let label = UILabel()
-        label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = .systemFont(ofSize: 11, weight: .regular)
-        label.textColor = .secondaryLabel
-        label.numberOfLines = 1
         return label
     }()
 
@@ -611,9 +628,8 @@ private final class ProjectCardCell: UICollectionViewCell {
         placeholderIconView.isHidden = false
     }
 
-    func configure(project: HomeProjectItem, dateText: String) {
+    func configure(project: HomeProjectItem) {
         titleLabel.text = project.name
-        dateLabel.text = dateText
 
         if let previewImagePath = project.previewImagePath, let image = UIImage(contentsOfFile: previewImagePath) {
             previewImageView.image = image
@@ -625,25 +641,37 @@ private final class ProjectCardCell: UICollectionViewCell {
     }
 
     private func configureViewHierarchy() {
-        contentView.backgroundColor = .secondarySystemBackground
-        contentView.layer.cornerRadius = 14
-        contentView.layer.cornerCurve = .continuous
-        contentView.layer.borderWidth = 0
-        contentView.clipsToBounds = true
+        // Cell background + shadow via UIBackgroundConfiguration
+        var bgConfig = UIBackgroundConfiguration.clear()
+        bgConfig.backgroundColor = .doufuPaper
+        bgConfig.cornerRadius = 14
+        bgConfig.shadowProperties.color = .black
+        bgConfig.shadowProperties.opacity = 0.15
+        bgConfig.shadowProperties.radius = 6
+        bgConfig.shadowProperties.offset = CGSize(width: 0, height: 3)
+        backgroundConfiguration = bgConfig
 
-        contentView.addSubview(previewContainer)
+        contentView.addSubview(previewShadowView)
+        previewShadowView.addSubview(previewContainer)
         previewContainer.addSubview(previewImageView)
         previewContainer.addSubview(placeholderIconView)
         contentView.addSubview(titleLabel)
-        contentView.addSubview(dateLabel)
     }
 
     private func configureLayout() {
         NSLayoutConstraint.activate([
-            previewContainer.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 8),
-            previewContainer.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 8),
-            previewContainer.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -8),
-            previewContainer.heightAnchor.constraint(equalTo: contentView.heightAnchor, multiplier: 0.63),
+            previewShadowView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 8),
+            previewShadowView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 8),
+            previewShadowView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -8),
+            previewShadowView.heightAnchor.constraint(
+                equalTo: previewShadowView.widthAnchor,
+                multiplier: Self.screenAspectRatio
+            ),
+
+            previewContainer.topAnchor.constraint(equalTo: previewShadowView.topAnchor),
+            previewContainer.leadingAnchor.constraint(equalTo: previewShadowView.leadingAnchor),
+            previewContainer.trailingAnchor.constraint(equalTo: previewShadowView.trailingAnchor),
+            previewContainer.bottomAnchor.constraint(equalTo: previewShadowView.bottomAnchor),
 
             previewImageView.topAnchor.constraint(equalTo: previewContainer.topAnchor),
             previewImageView.leadingAnchor.constraint(equalTo: previewContainer.leadingAnchor),
@@ -655,14 +683,88 @@ private final class ProjectCardCell: UICollectionViewCell {
             placeholderIconView.widthAnchor.constraint(equalToConstant: 24),
             placeholderIconView.heightAnchor.constraint(equalToConstant: 24),
 
-            titleLabel.topAnchor.constraint(equalTo: previewContainer.bottomAnchor, constant: 8),
+            titleLabel.topAnchor.constraint(equalTo: previewShadowView.bottomAnchor, constant: 8),
             titleLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 8),
             titleLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -8),
-
-            dateLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 4),
-            dateLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 8),
-            dateLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -8),
-            dateLabel.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -8)
+            titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -8)
         ])
+    }
+}
+
+private final class AddProjectCardCell: UICollectionViewCell {
+
+    static let reuseIdentifier = "AddProjectCardCell"
+
+    private static let screenAspectRatio: CGFloat = {
+        let screen = UIScreen.main.bounds
+        return max(screen.height, screen.width) / min(screen.height, screen.width)
+    }()
+
+    private let placeholderView: UIView = {
+        let view = UIView()
+        view.translatesAutoresizingMaskIntoConstraints = false
+        view.backgroundColor = .systemGray6
+        view.layer.cornerRadius = 10
+        view.layer.cornerCurve = .continuous
+        return view
+    }()
+
+    private let plusIcon: UIImageView = {
+        let config = UIImage.SymbolConfiguration(pointSize: 28, weight: .medium)
+        let imageView = UIImageView(image: UIImage(systemName: "plus", withConfiguration: config))
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        imageView.tintColor = .tertiaryLabel
+        imageView.contentMode = .scaleAspectFit
+        return imageView
+    }()
+
+    private let titleLabel: UILabel = {
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.font = .systemFont(ofSize: 13, weight: .semibold)
+        label.textColor = .doufuText
+        label.text = String(localized: "home.add_project.title")
+        label.numberOfLines = 1
+        return label
+    }()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+
+        var bgConfig = UIBackgroundConfiguration.clear()
+        bgConfig.backgroundColor = .doufuPaper
+        bgConfig.cornerRadius = 14
+        bgConfig.shadowProperties.color = .black
+        bgConfig.shadowProperties.opacity = 0.15
+        bgConfig.shadowProperties.radius = 6
+        bgConfig.shadowProperties.offset = CGSize(width: 0, height: 3)
+        backgroundConfiguration = bgConfig
+
+        contentView.addSubview(placeholderView)
+        placeholderView.addSubview(plusIcon)
+        contentView.addSubview(titleLabel)
+
+        NSLayoutConstraint.activate([
+            placeholderView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 8),
+            placeholderView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 8),
+            placeholderView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -8),
+            placeholderView.heightAnchor.constraint(
+                equalTo: placeholderView.widthAnchor,
+                multiplier: Self.screenAspectRatio
+            ),
+
+            plusIcon.centerXAnchor.constraint(equalTo: placeholderView.centerXAnchor),
+            plusIcon.centerYAnchor.constraint(equalTo: placeholderView.centerYAnchor),
+
+            titleLabel.topAnchor.constraint(equalTo: placeholderView.bottomAnchor, constant: 8),
+            titleLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 8),
+            titleLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -8),
+            titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -8)
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
     }
 }
