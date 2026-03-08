@@ -45,6 +45,7 @@ final class ProjectWorkspaceViewController: UIViewController {
     private var autoCollapseWorkItem: DispatchWorkItem?
     private var chatNavigationController: UINavigationController?
     private var webLoadingCover: UIView?
+    private let webServer: LocalWebServer
 
     private lazy var webView: WKWebView = {
         let configuration = WKWebViewConfiguration()
@@ -173,6 +174,7 @@ final class ProjectWorkspaceViewController: UIViewController {
         self.projectName = projectName
         self.projectURL = projectURL
         self.isNewlyCreated = isNewlyCreated
+        self.webServer = LocalWebServer(projectURL: projectURL)
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -183,6 +185,7 @@ final class ProjectWorkspaceViewController: UIViewController {
 
     deinit {
         autoCollapseWorkItem?.cancel()
+        webServer.stop()
         webView.configuration.userContentController.removeScriptMessageHandler(forName: jsErrorHandlerName)
     }
 
@@ -342,13 +345,22 @@ final class ProjectWorkspaceViewController: UIViewController {
     }
 
     private func loadProjectPage() {
-        let entryURL = projectURL.appendingPathComponent("index.html")
-        guard FileManager.default.fileExists(atPath: entryURL.path) else {
+        let entryPath = projectURL.appendingPathComponent("index.html")
+        guard FileManager.default.fileExists(atPath: entryPath.path) else {
             showLoadError(String(localized: "workspace.load_error.entry_missing"))
             return
         }
 
-        webView.loadFileURL(entryURL, allowingReadAccessTo: projectURL)
+        do {
+            try webServer.start()
+            guard let url = webServer.baseURL else {
+                throw LocalWebServer.ServerError.failedToStart
+            }
+            webView.load(URLRequest(url: url))
+        } catch {
+            // Fallback to file:// if the server fails to start.
+            webView.loadFileURL(entryPath, allowingReadAccessTo: projectURL)
+        }
     }
 
     private func currentSafeFrame() -> CGRect {
