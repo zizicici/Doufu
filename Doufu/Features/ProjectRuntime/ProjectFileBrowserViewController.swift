@@ -72,6 +72,16 @@ final class ProjectFileBrowserViewController: UITableViewController {
         super.viewDidLoad()
         title = titleForCurrentDirectory()
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "ProjectFileRow")
+
+        if directoryURL.standardizedFileURL == rootURL.standardizedFileURL {
+            navigationItem.rightBarButtonItem = UIBarButtonItem(
+                image: UIImage(systemName: "square.and.arrow.up"),
+                style: .plain,
+                target: self,
+                action: #selector(didTapShare)
+            )
+        }
+
         reloadItems()
     }
 
@@ -207,6 +217,58 @@ final class ProjectFileBrowserViewController: UITableViewController {
 
         let viewer = ProjectFileContentViewController(fileURL: item.url, rootURL: rootURL)
         navigationController?.pushViewController(viewer, animated: true)
+    }
+
+    // MARK: - Share
+
+    @objc private func didTapShare() {
+        let zipName = projectName.isEmpty ? "project" : projectName
+        let tempDir = FileManager.default.temporaryDirectory
+        let zipURL = tempDir.appendingPathComponent("\(zipName).zip")
+
+        // Remove any previous zip at the same path.
+        try? fileManager.removeItem(at: zipURL)
+
+        do {
+            try zipDirectory(at: rootURL, to: zipURL)
+        } catch {
+            let alert = UIAlertController(
+                title: String(localized: "file_browser.alert.zip_failed.title"),
+                message: error.localizedDescription,
+                preferredStyle: .alert
+            )
+            alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
+            present(alert, animated: true)
+            return
+        }
+
+        let activity = UIActivityViewController(activityItems: [zipURL], applicationActivities: nil)
+        activity.popoverPresentationController?.barButtonItem = navigationItem.rightBarButtonItem
+        activity.completionWithItemsHandler = { _, _, _, _ in
+            try? FileManager.default.removeItem(at: zipURL)
+        }
+        present(activity, animated: true)
+    }
+
+    private func zipDirectory(at sourceURL: URL, to destinationURL: URL) throws {
+        let coordinator = NSFileCoordinator()
+        var coordinatorError: NSError?
+        var zipError: Error?
+
+        coordinator.coordinate(
+            readingItemAt: sourceURL,
+            options: [.forUploading],
+            error: &coordinatorError
+        ) { tempURL in
+            do {
+                try FileManager.default.copyItem(at: tempURL, to: destinationURL)
+            } catch {
+                zipError = error
+            }
+        }
+
+        if let error = coordinatorError { throw error }
+        if let error = zipError { throw error }
     }
 
     private static func formatBytes(_ bytes: Int) -> String {
