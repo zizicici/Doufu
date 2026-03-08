@@ -83,44 +83,82 @@ final class ProjectGitService {
         let date: Date
     }
 
-    /// List recent checkpoint commits.
-    func listCheckpoints(projectURL: URL, limit: Int = 20) throws -> [CheckpointRecord] {
+    /// List recent checkpoint commits across all branches,
+    /// deduplicated and sorted by date (newest first).
+    func listCheckpoints(projectURL: URL, limit: Int = 50) throws -> [CheckpointRecord] {
         let repo = try openRepository(at: projectURL)
-        let commits = try repo.log()
+        let branches = try repo.branch.list(.local)
 
+        var seen = Set<String>()
         var records: [CheckpointRecord] = []
-        for commit in commits {
-            guard records.count < limit else { break }
 
-            let message = commit.message.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard message.hasPrefix(checkpointPrefix) else { continue }
+        for branch in branches {
+            guard let branchCommit = branch.target as? Commit else { continue }
+            let commits = repo.log(from: branchCommit)
 
-            let userMessage = String(message.dropFirst(checkpointPrefix.count))
-                .trimmingCharacters(in: .whitespacesAndNewlines)
+            for commit in commits {
+                let hex = commit.id.hex
+                guard !seen.contains(hex) else { continue }
+                seen.insert(hex)
 
-            records.append(CheckpointRecord(
-                id: commit.id.hex,
-                message: message,
-                userMessage: userMessage,
-                date: commit.date
-            ))
-        }
-        return records
-    }
+                let message = commit.message.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard message.hasPrefix(checkpointPrefix) else { continue }
 
-    /// Restore to a specific checkpoint by its commit ID string.
-    func restore(projectURL: URL, checkpointID: String) throws {
-        let repo = try openRepository(at: projectURL)
-        let commits = try repo.log()
+                // Skip auto-save commits from restore operations
+                let body = String(message.dropFirst(checkpointPrefix.count))
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if body == "Auto-save before restore" { continue }
 
-        for commit in commits {
-            if commit.id.hex == checkpointID {
-                try repo.reset(to: commit, mode: .hard)
-                return
+                records.append(CheckpointRecord(
+                    id: hex,
+                    message: message,
+                    userMessage: body,
+                    date: commit.date
+                ))
             }
         }
 
-        throw GitServiceError.checkpointNotFound
+        records.sort { $0.date > $1.date }
+        return Array(records.prefix(limit))
+    }
+
+    /// Restore to a specific checkpoint by its commit ID string.
+    /// Auto-commits any uncommitted changes first, then creates a new branch
+    /// from the target commit and switches to it. The old branch is preserved
+    /// so no history is ever lost.
+    func restore(projectURL: URL, checkpointID: String) throws {
+        let repo = try openRepository(at: projectURL)
+
+        // 1. Auto-commit any dirty changes on the current branch.
+        try addAll(repo: repo, projectURL: projectURL)
+        if hasChangesToCommit(repo: repo) {
+            try repo.commit(message: "\(checkpointPrefix) Auto-save before restore")
+        }
+
+        // 2. Find the target commit.
+        let targetCommit = try findCommitAcrossBranches(repo: repo, commitID: checkpointID)
+
+        // 3. Create a new branch from the target commit and switch to it.
+        let branchName = "doufu-\(Int(Date().timeIntervalSince1970))"
+        let branch = try repo.branch.create(named: branchName, target: targetCommit)
+        try repo.switch(to: branch)
+    }
+
+    /// Returns the commit ID of the most recent checkpoint reachable from HEAD.
+    /// This tells the user which checkpoint they are currently "on".
+    func currentCheckpointID(projectURL: URL) -> String? {
+        guard let repo = try? openRepository(at: projectURL) else { return nil }
+        guard let commits = try? repo.log() else { return nil }
+        for commit in commits {
+            let message = commit.message.trimmingCharacters(in: .whitespacesAndNewlines)
+            if message.hasPrefix(checkpointPrefix) {
+                let body = String(message.dropFirst(checkpointPrefix.count))
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if body == "Auto-save before restore" { continue }
+                return commit.id.hex
+            }
+        }
+        return nil
     }
 
     // MARK: - Diff
@@ -258,6 +296,21 @@ final class ProjectGitService {
             }
         }
         return nil
+    }
+
+    /// Search for a commit by ID across all local branches.
+    private func findCommitAcrossBranches(repo: Repository, commitID: String) throws -> Commit {
+        let branches = try repo.branch.list(.local)
+        for branch in branches {
+            guard let branchCommit = branch.target as? Commit else { continue }
+            let commits = repo.log(from: branchCommit)
+            for commit in commits {
+                if commit.id.hex == commitID {
+                    return commit
+                }
+            }
+        }
+        throw GitServiceError.checkpointNotFound
     }
 
     private let defaultGitignore = """

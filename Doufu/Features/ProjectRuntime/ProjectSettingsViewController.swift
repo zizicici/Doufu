@@ -354,6 +354,7 @@ private final class ProjectCheckpointsViewController: UITableViewController {
     private let projectURL: URL
     private let gitService = ProjectGitService.shared
     private var checkpoints: [ProjectGitService.CheckpointRecord] = []
+    private var currentCheckpointID: String?
 
     private lazy var dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -412,7 +413,7 @@ private final class ProjectCheckpointsViewController: UITableViewController {
         configuration.secondaryTextProperties.color = .secondaryLabel
         cell.contentConfiguration = configuration
         cell.selectionStyle = .default
-        cell.accessoryType = .none
+        cell.accessoryType = checkpoint.id == currentCheckpointID ? .checkmark : .none
         return cell
     }
 
@@ -439,6 +440,7 @@ private final class ProjectCheckpointsViewController: UITableViewController {
 
     private func reloadCheckpoints() {
         checkpoints = (try? gitService.listCheckpoints(projectURL: projectURL)) ?? []
+        currentCheckpointID = gitService.currentCheckpointID(projectURL: projectURL)
         tableView.reloadData()
     }
 
