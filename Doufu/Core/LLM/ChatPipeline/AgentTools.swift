@@ -1438,15 +1438,16 @@ final class AgentToolProvider {
             )
         }
 
+        let totalErrorCount = result.errors.count + result.resourceErrors.count
         if let onProgress {
-            await onProgress(.codeValidated(path: normalizedPath, errorCount: result.errors.count))
+            await onProgress(.codeValidated(path: normalizedPath, errorCount: totalErrorCount))
         }
 
         return ToolExecutionResult(
             output: result.summary,
             isError: false,
             changedPaths: [],
-            metadata: .codeValidation(path: normalizedPath, errorCount: result.errors.count, passed: result.passed)
+            metadata: .codeValidation(path: normalizedPath, errorCount: totalErrorCount, passed: result.passed)
         )
     }
 
