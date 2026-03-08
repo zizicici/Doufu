@@ -1648,6 +1648,7 @@ final class ProjectChatViewController: UIViewController {
         activeProgressMessageID = nil
         streamedCharacterCount = 0
         startProgressUIUpdateTimerIfNeeded()
+        PiPProgressManager.shared.taskDidStart(projectName: projectName, projectURL: projectURL)
         persistCurrentThreadMessages()
         refreshSendButton()
 
@@ -1743,6 +1744,8 @@ final class ProjectChatViewController: UIViewController {
                 if !result.changedPaths.isEmpty {
                     onProjectFilesUpdated?()
                 }
+
+                PiPProgressManager.shared.taskDidComplete()
             } catch is CancellationError {
                 finalizeActiveProgressMessage()
                 if !didAppendCancelMessage {
@@ -1753,6 +1756,7 @@ final class ProjectChatViewController: UIViewController {
                     )
                     didAppendCancelMessage = true
                 }
+                PiPProgressManager.shared.taskDidCancel()
             } catch {
                 if didCancelCurrentRequest {
                     finalizeActiveProgressMessage()
@@ -1764,6 +1768,7 @@ final class ProjectChatViewController: UIViewController {
                         )
                         didAppendCancelMessage = true
                     }
+                    PiPProgressManager.shared.taskDidCancel()
                     return
                 }
                 finalizeActiveProgressMessage()
@@ -1772,6 +1777,7 @@ final class ProjectChatViewController: UIViewController {
                     text: error.localizedDescription,
                     startedAt: currentRequestStartedAt
                 )
+                PiPProgressManager.shared.taskDidFail(error.localizedDescription)
             }
         }
     }
@@ -1894,5 +1900,6 @@ extension ProjectChatViewController {
             displayText = event.displayText
         }
         appendProgressMessageIfNeeded(displayText)
+        PiPProgressManager.shared.updateStatus(event.displayText)
     }
 }

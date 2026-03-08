@@ -21,6 +21,7 @@ final class SettingsViewController: UITableViewController {
 
     private enum ChatRow: Int, CaseIterable {
         case toolPermission
+        case pipProgress
     }
 
     private enum LLMProvidersRow: Int, CaseIterable {
@@ -44,6 +45,7 @@ final class SettingsViewController: UITableViewController {
         super.viewDidLoad()
         title = String(localized: "settings.title")
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "SettingsCell")
+        tableView.register(SettingsToggleCell.self, forCellReuseIdentifier: SettingsToggleCell.reuseIdentifier)
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -85,7 +87,7 @@ final class SettingsViewController: UITableViewController {
         case .general:
             return nil
         case .chat:
-            return String(localized: "settings.section.chat.footer")
+            return String(localized: "settings.section.chat.footer.combined")
         case .llmProviders:
             return String(localized: "settings.section.llm_providers.footer")
         }
@@ -110,13 +112,30 @@ final class SettingsViewController: UITableViewController {
             cell.contentConfiguration = configuration
 
         case .chat:
-            let mode = projectStore.loadAppToolPermissionMode()
-            var configuration = cell.defaultContentConfiguration()
-            configuration.image = UIImage(systemName: "wrench")
-            configuration.text = String(localized: "settings.chat.tool_permission.title")
-            configuration.secondaryText = displayName(for: mode)
-            configuration.secondaryTextProperties.color = .secondaryLabel
-            cell.contentConfiguration = configuration
+            guard let row = ChatRow(rawValue: indexPath.row) else { return cell }
+            switch row {
+            case .toolPermission:
+                let mode = projectStore.loadAppToolPermissionMode()
+                var configuration = cell.defaultContentConfiguration()
+                configuration.image = UIImage(systemName: "wrench")
+                configuration.text = String(localized: "settings.chat.tool_permission.title")
+                configuration.secondaryText = displayName(for: mode)
+                configuration.secondaryTextProperties.color = .secondaryLabel
+                cell.contentConfiguration = configuration
+
+            case .pipProgress:
+                guard let toggleCell = tableView.dequeueReusableCell(
+                    withIdentifier: SettingsToggleCell.reuseIdentifier,
+                    for: indexPath
+                ) as? SettingsToggleCell else { return cell }
+                toggleCell.configure(
+                    title: String(localized: "settings.chat.pip_progress.title"),
+                    isOn: PiPProgressManager.shared.isEnabled
+                ) { newValue in
+                    PiPProgressManager.shared.isEnabled = newValue
+                }
+                return toggleCell
+            }
 
         case .llmProviders:
             guard let row = LLMProvidersRow(rawValue: indexPath.row) else { return cell }
@@ -153,6 +172,7 @@ final class SettingsViewController: UITableViewController {
             }
 
         case .chat:
+            guard ChatRow(rawValue: indexPath.row) == .toolPermission else { return }
             presentToolPermissionPicker()
 
         case .llmProviders:
