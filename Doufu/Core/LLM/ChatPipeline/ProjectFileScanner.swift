@@ -258,20 +258,11 @@ final class ProjectFileScanner {
     }
 
     private func normalizedRelativePath(fileURL: URL, rootURL: URL) -> String {
-        let rootPath = rootURL.standardizedFileURL.path
-        let filePath = fileURL.standardizedFileURL.path
-        let prefix = rootPath.hasSuffix("/") ? rootPath : rootPath + "/"
-        var relative = filePath
-        if relative.hasPrefix(prefix) {
-            relative.removeFirst(prefix.count)
-        }
-        return relative.replacingOccurrences(of: "\\", with: "/")
+        ProjectPathResolver.normalizedRelativePath(fileURL: fileURL, rootURL: rootURL)
     }
 
     private func isSupportedTextFile(_ relativePath: String) -> Bool {
-        let allowedExtensions: Set<String> = ["html", "css", "js", "json", "txt", "md", "svg"]
-        let ext = URL(fileURLWithPath: relativePath).pathExtension.lowercased()
-        return allowedExtensions.contains(ext)
+        ProjectPathResolver.isTextFile(relativePath)
     }
 
     private func shouldIncludeFile(

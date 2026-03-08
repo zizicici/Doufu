@@ -161,7 +161,7 @@ final class SessionMemoryManager {
         remainingTasks: [TaskPlanItem]
     ) -> ProjectChatService.SessionMemory {
         var nextMemory = memory
-        let remainingTodoItems = remainingTasks.map { "待处理：\($0.title) - \($0.goal)" }
+        let remainingTodoItems = remainingTasks.map { "Pending: \($0.title) - \($0.goal)" }
         nextMemory.todoItems = sanitizeMemoryItems(remainingTodoItems, limit: configuration.maxMemoryTodoItems)
         return sanitizeMemory(nextMemory)
     }
@@ -183,19 +183,7 @@ final class SessionMemoryManager {
     }
 
     func mergeChangedPaths(_ paths: [String], into target: inout [String]) {
-        var seen = Set(target)
-        for path in paths {
-            let normalized = path
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .replacingOccurrences(of: "\\", with: "/")
-            guard isSafeRelativePath(normalized) else {
-                continue
-            }
-            guard seen.insert(normalized).inserted else {
-                continue
-            }
-            target.append(normalized)
-        }
+        ProjectPathResolver.mergeChangedPaths(paths, into: &target)
     }
 
     func encodeMemoryToJSONString(_ memory: ProjectChatService.SessionMemory) -> String {
@@ -222,7 +210,7 @@ final class SessionMemoryManager {
         var lines: [String] = []
         var currentLength = 0
         for turn in turns {
-            let roleLabel = turn.role == .user ? "用户" : "助手"
+            let roleLabel = turn.role == .user ? "User" : "Assistant"
             let normalized = turn.text
                 .replacingOccurrences(of: "\r\n", with: "\n")
                 .replacingOccurrences(of: "\n", with: " ")
@@ -373,7 +361,7 @@ final class SessionMemoryManager {
         guard let normalized = normalizedMemoryItem(text, maxCharacters: configuration.maxMemoryItemCharacters) else {
             return nil
         }
-        return "待处理：\(normalized)"
+        return "Pending: \(normalized)"
     }
 
     private func inferConstraints(from text: String) -> [String] {
@@ -381,39 +369,22 @@ final class SessionMemoryManager {
         var constraints: [String] = []
 
         if lowered.contains("iphone") || lowered.contains("ios") || text.contains("移动端") || text.contains("手机") {
-            constraints.append("默认面向 iPhone 竖屏体验")
+            constraints.append("Default target: iPhone portrait")
         }
         if lowered.contains("safe area") || text.contains("safe area") || text.contains("安全区") {
-            constraints.append("必须正确处理 Safe Area")
+            constraints.append("Must handle Safe Area correctly")
         }
-        if text.contains("原生") || text.contains("网页感") {
-            constraints.append("视觉交互尽量贴近 iOS 原生，降低网页感")
+        if text.contains("原生") || text.contains("网页感") || lowered.contains("native") {
+            constraints.append("Visual style should be close to native iOS, minimize web-page feel")
         }
-        if text.contains("44") || text.contains("触控") {
-            constraints.append("关键点击区域保持可触达尺寸")
+        if text.contains("44") || text.contains("触控") || lowered.contains("touch") {
+            constraints.append("Key interactive areas must have adequate touch target size")
         }
 
         return constraints
     }
 
     private func isSafeRelativePath(_ path: String) -> Bool {
-        guard !path.isEmpty else {
-            return false
-        }
-        if path.hasPrefix("/") || path.hasPrefix("~") {
-            return false
-        }
-
-        let components = path.split(separator: "/", omittingEmptySubsequences: false)
-        guard !components.isEmpty else {
-            return false
-        }
-        for component in components {
-            if component.isEmpty || component == "." || component == ".." {
-                return false
-            }
-        }
-
-        return true
+        ProjectPathResolver.isSafeRelativePath(path)
     }
 }

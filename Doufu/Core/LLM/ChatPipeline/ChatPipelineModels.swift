@@ -133,6 +133,20 @@ struct ResponsesUsage: Decodable {
         case inputTokensDetails = "input_tokens_details"
         case outputTokensDetails = "output_tokens_details"
     }
+
+    init(
+        inputTokens: Int?,
+        outputTokens: Int?,
+        totalTokens: Int?,
+        inputTokensDetails: ResponsesInputTokensDetails?,
+        outputTokensDetails: ResponsesOutputTokensDetails?
+    ) {
+        self.inputTokens = inputTokens
+        self.outputTokens = outputTokens
+        self.totalTokens = totalTokens
+        self.inputTokensDetails = inputTokensDetails
+        self.outputTokensDetails = outputTokensDetails
+    }
 }
 
 struct ResponsesInputTokensDetails: Decodable {
@@ -454,6 +468,22 @@ struct DirectAnswerPayload: Decodable {
     }
 }
 
+struct ContextRefinementPayload: Decodable {
+    let additionalPaths: [String]
+    let ready: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case additionalPaths = "additional_paths"
+        case ready
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        additionalPaths = try container.decodeIfPresent([String].self, forKey: .additionalPaths) ?? []
+        ready = try container.decodeIfPresent(Bool.self, forKey: .ready) ?? additionalPaths.isEmpty
+    }
+}
+
 struct PatchChange: Decodable {
     let path: String
     let content: String
@@ -498,4 +528,44 @@ struct SearchReplaceOperation: Decodable {
         replaceAll = try container.decodeIfPresent(Bool.self, forKey: .replaceAll) ?? false
         ignoreCase = try container.decodeIfPresent(Bool.self, forKey: .ignoreCase) ?? false
     }
+}
+
+// MARK: - Agent Tool Use Models
+
+struct AgentToolDefinition {
+    let name: String
+    let description: String
+    let parameters: JSONValue
+}
+
+struct AgentToolCall {
+    let id: String
+    let name: String
+    let argumentsJSON: String
+
+    func decodedArguments() -> [String: Any]? {
+        guard let data = argumentsJSON.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        return object
+    }
+}
+
+enum AgentStopReason {
+    case endTurn
+    case toolUse
+    case maxTokens
+}
+
+struct AgentLLMResponse {
+    let textContent: String
+    let toolCalls: [AgentToolCall]
+    let usage: ResponsesUsage?
+    let stopReason: AgentStopReason
+}
+
+enum AgentConversationItem {
+    case userMessage(String)
+    case assistantMessage(text: String, toolCalls: [AgentToolCall])
+    case toolResult(callID: String, name: String, content: String, isError: Bool)
 }

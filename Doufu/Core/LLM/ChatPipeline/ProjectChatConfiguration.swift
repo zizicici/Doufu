@@ -15,16 +15,16 @@ struct ProjectChatConfiguration {
     let maxPreviewCharactersForCatalog = 220
 
     let maxFilesForContext = 20
-    let maxBytesPerContextFile = 45_000
-    let maxContextBytesTotal = 220_000
+    let maxBytesPerContextFile = 65_000
+    let maxContextBytesTotal = 360_000
     let maxFilePathsFromSelection = 16
 
     let maxPlannedTasks = 5
-    let maxFilesPerTaskContext = 3
+    let maxFilesPerTaskContext = 6
 
     let maxHistoryTurns = 16
     let maxHistoryTurnsDirectlyIncluded = 8
-    let maxHistorySummaryCharacters = 1_600
+    let maxHistorySummaryCharacters = 3_200
 
     let maxMemoryObjectiveCharacters = 180
     let maxMemoryConstraintItems = 8
@@ -46,6 +46,19 @@ struct ProjectChatConfiguration {
 
     let maxThreadMemoryCharactersInPrompt = 16_000
     let maxDebugTextCharacters = 1_600
+
+    let maxContextRefinementRounds = 1
+    let maxFilesPerRefinementRequest = 5
+    let maxPatchRepairAttempts = 1
+
+    let maxOutputTokens = 8192
+
+    let webFetchMaxBytes = 65_000
+    let webFetchTimeoutSeconds: TimeInterval = 15
+    let webSearchMaxResults = 10
+
+    let maxAgentIterations = 25
+    let maxToolCallsPerIteration = 8
 
     static let `default` = ProjectChatConfiguration()
 }

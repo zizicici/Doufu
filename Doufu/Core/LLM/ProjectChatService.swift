@@ -152,6 +152,7 @@ final class ProjectChatService {
         memory: SessionMemory? = nil,
         threadContext: ThreadContext?,
         executionOptions: ModelExecutionOptions,
+        confirmationHandler: ToolConfirmationHandler? = nil,
         onStreamedText: (@MainActor (String) -> Void)? = nil,
         onProgress: (@MainActor (String) -> Void)? = nil
     ) async throws -> ResultPayload {
@@ -163,6 +164,7 @@ final class ProjectChatService {
             memory: memory,
             threadContext: threadContext,
             executionOptions: executionOptions,
+            confirmationHandler: confirmationHandler,
             onStreamedText: onStreamedText,
             onProgress: onProgress
         )
