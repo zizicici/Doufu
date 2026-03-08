@@ -110,7 +110,7 @@ final class ProjectFileBrowserViewController: UITableViewController {
             }
 
             let isDirectory = values?.isDirectory == true
-            if childURL.lastPathComponent == ".doufu_snapshots", isDirectory {
+            if childURL.lastPathComponent == ".git", isDirectory {
                 return nil
             }
 

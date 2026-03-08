@@ -1248,6 +1248,48 @@
         }
       }
     },
+    "checkpoint_list.action.restore" : {
+
+    },
+    "checkpoint_list.alert.restore_failed.title" : {
+
+    },
+    "checkpoint_list.alert.restore.message_format" : {
+
+    },
+    "checkpoint_list.alert.restore.title" : {
+
+    },
+    "checkpoint_list.alert.restored.message" : {
+
+    },
+    "checkpoint_list.alert.restored.title" : {
+
+    },
+    "checkpoint_list.empty" : {
+
+    },
+    "checkpoint_list.title" : {
+
+    },
+    "checkpoint.action.undo" : {
+
+    },
+    "checkpoint.alert.undo_done.message" : {
+
+    },
+    "checkpoint.alert.undo_done.title" : {
+
+    },
+    "checkpoint.alert.undo_failed.title" : {
+
+    },
+    "checkpoint.alert.undo.message" : {
+
+    },
+    "checkpoint.alert.undo.title" : {
+
+    },
     "common.action.cancel" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2640,6 +2682,15 @@
         }
       }
     },
+    "project_settings.checkpoint.history_subtitle" : {
+
+    },
+    "project_settings.checkpoint.history_title" : {
+
+    },
+    "project_settings.checkpoint.undo_button" : {
+
+    },
     "project_settings.field.name_placeholder" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2697,6 +2748,9 @@
           }
         }
       }
+    },
+    "project_settings.footer.checkpoints" : {
+
     },
     "project_settings.footer.future_features" : {
       "extractionState" : "manual",
@@ -2900,6 +2954,9 @@
           }
         }
       }
+    },
+    "project_settings.section.checkpoints" : {
+
     },
     "project_settings.section.coming_soon" : {
       "extractionState" : "manual",
@@ -6931,6 +6988,21 @@
           }
         }
       }
+    },
+    "tool.confirm.allow" : {
+
+    },
+    "tool.confirm.delete_file" : {
+
+    },
+    "tool.confirm.deny" : {
+
+    },
+    "tool.confirm.overwrite_file" : {
+
+    },
+    "tool.confirm.title" : {
+
     },
     "workspace.action.discard" : {
       "extractionState" : "manual",

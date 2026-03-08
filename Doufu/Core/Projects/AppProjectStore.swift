@@ -16,34 +16,6 @@ struct AppProjectRecord: Equatable, Hashable {
     let updatedAt: Date
 }
 
-enum AppProjectSnapshotKind: String, Codable, CaseIterable {
-    case manual
-    case auto
-
-    var displayName: String {
-        switch self {
-        case .manual:
-            return String(localized: "project_snapshot.kind.manual")
-        case .auto:
-            return String(localized: "project_snapshot.kind.auto")
-        }
-    }
-}
-
-struct AppProjectSnapshotRecord: Equatable, Hashable {
-    let id: String
-    let kind: AppProjectSnapshotKind
-    let createdAt: Date
-    let snapshotURL: URL
-    let contentURL: URL
-}
-
-private struct SnapshotMetadata: Codable {
-    let id: String
-    let kind: AppProjectSnapshotKind
-    let createdAt: Date
-}
-
 enum AppProjectStoreError: LocalizedError {
     case unavailableDocumentsDirectory
     case projectCreationFailed
@@ -51,10 +23,6 @@ enum AppProjectStoreError: LocalizedError {
     case projectDeletionFailed
     case invalidProjectName
     case manifestUpdateFailed
-    case snapshotCreateFailed
-    case snapshotReadFailed
-    case snapshotRestoreFailed
-    case snapshotNotFound
 
     var errorDescription: String? {
         switch self {
@@ -70,14 +38,6 @@ enum AppProjectStoreError: LocalizedError {
             return String(localized: "project_store.error.invalid_project_name")
         case .manifestUpdateFailed:
             return String(localized: "project_store.error.manifest_update_failed")
-        case .snapshotCreateFailed:
-            return String(localized: "project_store.error.snapshot_create_failed")
-        case .snapshotReadFailed:
-            return String(localized: "project_store.error.snapshot_read_failed")
-        case .snapshotRestoreFailed:
-            return String(localized: "project_store.error.snapshot_restore_failed")
-        case .snapshotNotFound:
-            return String(localized: "project_store.error.snapshot_not_found")
         }
     }
 }
@@ -87,11 +47,6 @@ final class AppProjectStore {
 
     private let fileManager: FileManager
     private let isoFormatter: ISO8601DateFormatter
-    private let snapshotDirectoryName = ".doufu_snapshots"
-    private let snapshotMetadataFileName = "snapshot.json"
-    private let snapshotContentDirectoryName = "content"
-    private let manualSnapshotLimit = 10
-    private let autoSnapshotLimit = 10
 
     init(fileManager: FileManager = .default) {
         self.fileManager = fileManager
@@ -112,6 +67,7 @@ final class AppProjectStore {
         do {
             try fileManager.createDirectory(at: projectURL, withIntermediateDirectories: true)
             try writeBlankWebsiteFiles(projectID: projectID, name: projectName, now: now, projectURL: projectURL)
+            try ProjectGitService.shared.initializeRepository(at: projectURL)
         } catch {
             try? fileManager.removeItem(at: projectURL)
             throw AppProjectStoreError.projectCreationFailed
@@ -201,261 +157,6 @@ final class AppProjectStore {
         } catch {
             throw AppProjectStoreError.manifestUpdateFailed
         }
-    }
-
-    @discardableResult
-    func createSnapshot(projectURL: URL, kind: AppProjectSnapshotKind) throws -> AppProjectSnapshotRecord {
-        try validateProjectLocation(projectURL)
-
-        let now = Date()
-        let snapshotID = buildSnapshotID(createdAt: now)
-        let snapshotURL = snapshotsKindDirectoryURL(projectURL: projectURL, kind: kind).appendingPathComponent(snapshotID, isDirectory: true)
-        let contentURL = snapshotURL.appendingPathComponent(snapshotContentDirectoryName, isDirectory: true)
-
-        do {
-            try fileManager.createDirectory(at: contentURL, withIntermediateDirectories: true)
-            try copyDirectoryContents(
-                from: projectURL,
-                to: contentURL,
-                skippingSnapshotStorage: true
-            )
-            let metadata = SnapshotMetadata(id: snapshotID, kind: kind, createdAt: now)
-            try writeSnapshotMetadata(metadata, to: snapshotURL)
-            try pruneSnapshotsIfNeeded(projectURL: projectURL, kind: kind)
-        } catch {
-            try? fileManager.removeItem(at: snapshotURL)
-            throw AppProjectStoreError.snapshotCreateFailed
-        }
-
-        return AppProjectSnapshotRecord(
-            id: snapshotID,
-            kind: kind,
-            createdAt: now,
-            snapshotURL: snapshotURL,
-            contentURL: contentURL
-        )
-    }
-
-    func loadSnapshots(projectURL: URL) throws -> [AppProjectSnapshotRecord] {
-        try validateProjectLocation(projectURL)
-
-        var records: [AppProjectSnapshotRecord] = []
-        for kind in AppProjectSnapshotKind.allCases {
-            let kindDirectoryURL = snapshotsKindDirectoryURL(projectURL: projectURL, kind: kind)
-            guard fileManager.fileExists(atPath: kindDirectoryURL.path) else {
-                continue
-            }
-
-            let childURLs = (try? fileManager.contentsOfDirectory(
-                at: kindDirectoryURL,
-                includingPropertiesForKeys: [.isDirectoryKey, .contentModificationDateKey],
-                options: [.skipsHiddenFiles]
-            )) ?? []
-
-            for childURL in childURLs {
-                let values = try? childURL.resourceValues(forKeys: [.isDirectoryKey, .contentModificationDateKey])
-                guard values?.isDirectory == true else {
-                    continue
-                }
-                if let record = buildSnapshotRecord(snapshotURL: childURL, fallbackKind: kind) {
-                    records.append(record)
-                }
-            }
-        }
-
-        return records.sorted { lhs, rhs in
-            if lhs.createdAt == rhs.createdAt {
-                return lhs.id > rhs.id
-            }
-            return lhs.createdAt > rhs.createdAt
-        }
-    }
-
-    func restoreSnapshot(projectURL: URL, snapshot: AppProjectSnapshotRecord) throws {
-        try validateProjectLocation(projectURL)
-        let snapshotsRootURL = snapshotsRootURL(projectURL: projectURL)
-        let normalizedSnapshotPath = snapshot.snapshotURL.standardizedFileURL.path
-        let normalizedSnapshotsRootPath = snapshotsRootURL.standardizedFileURL.path
-        let snapshotsRootPrefix = normalizedSnapshotsRootPath.hasSuffix("/")
-            ? normalizedSnapshotsRootPath
-            : normalizedSnapshotsRootPath + "/"
-
-        guard normalizedSnapshotPath.hasPrefix(snapshotsRootPrefix) else {
-            throw AppProjectStoreError.snapshotNotFound
-        }
-        guard fileManager.fileExists(atPath: snapshot.contentURL.path) else {
-            throw AppProjectStoreError.snapshotNotFound
-        }
-
-        do {
-            try clearProjectFilesExcludingSnapshotStorage(projectURL: projectURL)
-            try copyDirectoryContents(
-                from: snapshot.contentURL,
-                to: projectURL,
-                skippingSnapshotStorage: false
-            )
-            touchProjectUpdatedAt(projectURL: projectURL)
-        } catch {
-            throw AppProjectStoreError.snapshotRestoreFailed
-        }
-    }
-
-    private func validateProjectLocation(_ projectURL: URL) throws {
-        let rootURL = try ensureProjectsRootDirectory()
-        let rootPath = rootURL.standardizedFileURL.path
-        let rootPrefix = rootPath.hasSuffix("/") ? rootPath : rootPath + "/"
-        let targetPath = projectURL.standardizedFileURL.path
-
-        guard targetPath.hasPrefix(rootPrefix) else {
-            throw AppProjectStoreError.invalidProjectLocation
-        }
-    }
-
-    private func snapshotsRootURL(projectURL: URL) -> URL {
-        projectURL.appendingPathComponent(snapshotDirectoryName, isDirectory: true)
-    }
-
-    private func snapshotsKindDirectoryURL(projectURL: URL, kind: AppProjectSnapshotKind) -> URL {
-        snapshotsRootURL(projectURL: projectURL).appendingPathComponent(kind.rawValue, isDirectory: true)
-    }
-
-    private func buildSnapshotID(createdAt: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyyMMdd-HHmmss"
-        let prefix = formatter.string(from: createdAt)
-        let suffix = UUID().uuidString.prefix(8).lowercased()
-        return "snapshot-\(prefix)-\(suffix)"
-    }
-
-    private func writeSnapshotMetadata(_ metadata: SnapshotMetadata, to snapshotURL: URL) throws {
-        let metadataURL = snapshotURL.appendingPathComponent(snapshotMetadataFileName, isDirectory: false)
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        encoder.dateEncodingStrategy = .iso8601
-        let data = try encoder.encode(metadata)
-        try data.write(to: metadataURL, options: .atomic)
-    }
-
-    private func readSnapshotMetadata(from snapshotURL: URL) -> SnapshotMetadata? {
-        let metadataURL = snapshotURL.appendingPathComponent(snapshotMetadataFileName, isDirectory: false)
-        guard let data = try? Data(contentsOf: metadataURL) else {
-            return nil
-        }
-
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return try? decoder.decode(SnapshotMetadata.self, from: data)
-    }
-
-    private func buildSnapshotRecord(snapshotURL: URL, fallbackKind: AppProjectSnapshotKind) -> AppProjectSnapshotRecord? {
-        let contentURL = snapshotURL.appendingPathComponent(snapshotContentDirectoryName, isDirectory: true)
-        guard fileManager.fileExists(atPath: contentURL.path) else {
-            return nil
-        }
-
-        if let metadata = readSnapshotMetadata(from: snapshotURL) {
-            return AppProjectSnapshotRecord(
-                id: metadata.id,
-                kind: metadata.kind,
-                createdAt: metadata.createdAt,
-                snapshotURL: snapshotURL,
-                contentURL: contentURL
-            )
-        }
-
-        let resourceValues = try? snapshotURL.resourceValues(forKeys: [.contentModificationDateKey])
-        let fallbackDate = resourceValues?.contentModificationDate ?? Date.distantPast
-        return AppProjectSnapshotRecord(
-            id: snapshotURL.lastPathComponent,
-            kind: fallbackKind,
-            createdAt: fallbackDate,
-            snapshotURL: snapshotURL,
-            contentURL: contentURL
-        )
-    }
-
-    private func pruneSnapshotsIfNeeded(projectURL: URL, kind: AppProjectSnapshotKind) throws {
-        let limit = kind == .manual ? manualSnapshotLimit : autoSnapshotLimit
-        let snapshots = try loadSnapshots(projectURL: projectURL)
-            .filter { $0.kind == kind }
-
-        guard snapshots.count > limit else {
-            return
-        }
-
-        let overflow = snapshots.count - limit
-        let recordsToDelete = Array(snapshots.suffix(overflow))
-        for record in recordsToDelete {
-            try? fileManager.removeItem(at: record.snapshotURL)
-        }
-    }
-
-    private func clearProjectFilesExcludingSnapshotStorage(projectURL: URL) throws {
-        let childURLs = try fileManager.contentsOfDirectory(
-            at: projectURL,
-            includingPropertiesForKeys: nil,
-            options: []
-        )
-
-        for childURL in childURLs {
-            if childURL.lastPathComponent == snapshotDirectoryName {
-                continue
-            }
-            try fileManager.removeItem(at: childURL)
-        }
-    }
-
-    private func copyDirectoryContents(
-        from sourceRootURL: URL,
-        to destinationRootURL: URL,
-        skippingSnapshotStorage: Bool
-    ) throws {
-        guard let enumerator = fileManager.enumerator(
-            at: sourceRootURL,
-            includingPropertiesForKeys: [.isDirectoryKey],
-            options: []
-        ) else {
-            throw AppProjectStoreError.snapshotCreateFailed
-        }
-
-        for case let sourceURL as URL in enumerator {
-            let resourceValues = try? sourceURL.resourceValues(forKeys: [.isDirectoryKey])
-            let relativePath = relativePath(of: sourceURL, rootURL: sourceRootURL)
-
-            if skippingSnapshotStorage {
-                if relativePath == snapshotDirectoryName || relativePath.hasPrefix(snapshotDirectoryName + "/") {
-                    if resourceValues?.isDirectory == true {
-                        enumerator.skipDescendants()
-                    }
-                    continue
-                }
-            }
-
-            let destinationURL = destinationRootURL.appendingPathComponent(relativePath, isDirectory: resourceValues?.isDirectory == true)
-            if resourceValues?.isDirectory == true {
-                try fileManager.createDirectory(at: destinationURL, withIntermediateDirectories: true)
-                continue
-            }
-
-            let parentURL = destinationURL.deletingLastPathComponent()
-            try fileManager.createDirectory(at: parentURL, withIntermediateDirectories: true)
-            if fileManager.fileExists(atPath: destinationURL.path) {
-                try fileManager.removeItem(at: destinationURL)
-            }
-            try fileManager.copyItem(at: sourceURL, to: destinationURL)
-        }
-    }
-
-    private func relativePath(of url: URL, rootURL: URL) -> String {
-        let rootPath = rootURL.standardizedFileURL.path
-        let urlPath = url.standardizedFileURL.path
-        let prefix = rootPath.hasSuffix("/") ? rootPath : rootPath + "/"
-        if urlPath.hasPrefix(prefix) {
-            let index = urlPath.index(urlPath.startIndex, offsetBy: prefix.count)
-            return String(urlPath[index...])
-        }
-        return url.lastPathComponent
     }
 
     private func ensureProjectsRootDirectory() throws -> URL {

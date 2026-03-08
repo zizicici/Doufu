@@ -13,14 +13,14 @@ final class ProjectSettingsViewController: UITableViewController {
 
     private enum Section: Int, CaseIterable {
         case project
-        case snapshots
+        case checkpoints
         case future
         case action
     }
 
-    private enum SnapshotRow: Int, CaseIterable {
-        case save
-        case load
+    private enum CheckpointRow: Int, CaseIterable {
+        case undo
+        case history
     }
 
     private enum FutureRow: Int, CaseIterable {
@@ -30,6 +30,7 @@ final class ProjectSettingsViewController: UITableViewController {
 
     private let projectURL: URL
     private let store = AppProjectStore.shared
+    private let gitService = ProjectGitService.shared
 
     private var baselineProjectName: String
     private var projectNameText: String
@@ -62,7 +63,7 @@ final class ProjectSettingsViewController: UITableViewController {
         tableView.register(SettingsTextInputCell.self, forCellReuseIdentifier: SettingsTextInputCell.reuseIdentifier)
         tableView.register(SettingsCenteredButtonCell.self, forCellReuseIdentifier: SettingsCenteredButtonCell.reuseIdentifier)
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "ProjectFutureCell")
-        tableView.register(UITableViewCell.self, forCellReuseIdentifier: "SnapshotCell")
+        tableView.register(UITableViewCell.self, forCellReuseIdentifier: "CheckpointCell")
 
         navigationItem.leftBarButtonItem = UIBarButtonItem(
             barButtonSystemItem: .close,
@@ -83,8 +84,8 @@ final class ProjectSettingsViewController: UITableViewController {
         switch section {
         case .project, .action:
             return 1
-        case .snapshots:
-            return SnapshotRow.allCases.count
+        case .checkpoints:
+            return CheckpointRow.allCases.count
         case .future:
             return FutureRow.allCases.count
         }
@@ -97,8 +98,8 @@ final class ProjectSettingsViewController: UITableViewController {
         switch section {
         case .project:
             return String(localized: "project_settings.section.project")
-        case .snapshots:
-            return String(localized: "project_settings.section.snapshots")
+        case .checkpoints:
+            return String(localized: "project_settings.section.checkpoints")
         case .future:
             return String(localized: "project_settings.section.coming_soon")
         case .action:
@@ -114,8 +115,8 @@ final class ProjectSettingsViewController: UITableViewController {
         switch section {
         case .project:
             return String(localized: "project_settings.footer.project_name_usage")
-        case .snapshots:
-            return String(localized: "project_settings.footer.snapshot_limit")
+        case .checkpoints:
+            return String(localized: "project_settings.footer.checkpoints")
         case .future:
             return String(localized: "project_settings.footer.future_features")
         case .action:
@@ -150,13 +151,13 @@ final class ProjectSettingsViewController: UITableViewController {
             }
             return cell
 
-        case .snapshots:
-            guard let row = SnapshotRow(rawValue: indexPath.row) else {
+        case .checkpoints:
+            guard let row = CheckpointRow(rawValue: indexPath.row) else {
                 return UITableViewCell()
             }
 
             switch row {
-            case .save:
+            case .undo:
                 guard
                     let cell = tableView.dequeueReusableCell(
                         withIdentifier: SettingsCenteredButtonCell.reuseIdentifier,
@@ -165,14 +166,18 @@ final class ProjectSettingsViewController: UITableViewController {
                 else {
                     return UITableViewCell()
                 }
-                cell.configure(title: String(localized: "project_settings.snapshot.save_button"))
+                let hasCheckpoint = gitService.hasCheckpoint(projectURL: projectURL)
+                cell.configure(
+                    title: String(localized: "project_settings.checkpoint.undo_button"),
+                    isEnabled: hasCheckpoint
+                )
                 return cell
 
-            case .load:
-                let cell = tableView.dequeueReusableCell(withIdentifier: "SnapshotCell", for: indexPath)
+            case .history:
+                let cell = tableView.dequeueReusableCell(withIdentifier: "CheckpointCell", for: indexPath)
                 var configuration = cell.defaultContentConfiguration()
-                configuration.text = String(localized: "project_settings.snapshot.load_title")
-                configuration.secondaryText = String(localized: "project_settings.snapshot.load_subtitle")
+                configuration.text = String(localized: "project_settings.checkpoint.history_title")
+                configuration.secondaryText = String(localized: "project_settings.checkpoint.history_subtitle")
                 configuration.secondaryTextProperties.color = .secondaryLabel
                 cell.contentConfiguration = configuration
                 cell.accessoryType = .disclosureIndicator
@@ -217,7 +222,7 @@ final class ProjectSettingsViewController: UITableViewController {
             return nil
         }
         switch section {
-        case .snapshots:
+        case .checkpoints:
             return indexPath
         case .action:
             return canSave ? indexPath : nil
@@ -233,15 +238,15 @@ final class ProjectSettingsViewController: UITableViewController {
         }
 
         switch section {
-        case .snapshots:
-            guard let row = SnapshotRow(rawValue: indexPath.row) else {
+        case .checkpoints:
+            guard let row = CheckpointRow(rawValue: indexPath.row) else {
                 return
             }
             switch row {
-            case .save:
-                saveManualSnapshot()
-            case .load:
-                openSnapshotsPage()
+            case .undo:
+                undoLastCheckpoint()
+            case .history:
+                openCheckpointsPage()
             }
 
         case .action:
@@ -289,19 +294,40 @@ final class ProjectSettingsViewController: UITableViewController {
         }
     }
 
-    private func saveManualSnapshot() {
+    private func undoLastCheckpoint() {
+        let alert = UIAlertController(
+            title: String(localized: "checkpoint.alert.undo.title"),
+            message: String(localized: "checkpoint.alert.undo.message"),
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: String(localized: "common.action.cancel"), style: .cancel))
+        alert.addAction(UIAlertAction(title: String(localized: "checkpoint.action.undo"), style: .destructive) { [weak self] _ in
+            self?.performUndo()
+        })
+        present(alert, animated: true)
+    }
+
+    private func performUndo() {
         do {
-            _ = try store.createSnapshot(projectURL: projectURL, kind: .manual)
-            let alert = UIAlertController(
-                title: String(localized: "snapshot.alert.saved.title"),
-                message: String(localized: "snapshot.alert.saved.message"),
-                preferredStyle: .alert
-            )
-            alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
-            present(alert, animated: true)
+            let didUndo = try gitService.undo(projectURL: projectURL)
+            if didUndo {
+                let latestProjectName = store.loadProjectName(projectURL: projectURL)
+                baselineProjectName = latestProjectName
+                projectNameText = latestProjectName
+                onProjectUpdated?(latestProjectName)
+                tableView.reloadData()
+
+                let alert = UIAlertController(
+                    title: String(localized: "checkpoint.alert.undo_done.title"),
+                    message: String(localized: "checkpoint.alert.undo_done.message"),
+                    preferredStyle: .alert
+                )
+                alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
+                present(alert, animated: true)
+            }
         } catch {
             let alert = UIAlertController(
-                title: String(localized: "project_settings.alert.save_failed.title"),
+                title: String(localized: "checkpoint.alert.undo_failed.title"),
                 message: error.localizedDescription,
                 preferredStyle: .alert
             )
@@ -310,9 +336,9 @@ final class ProjectSettingsViewController: UITableViewController {
         }
     }
 
-    private func openSnapshotsPage() {
-        let controller = ProjectSnapshotsViewController(projectURL: projectURL)
-        controller.onSnapshotLoaded = { [weak self] in
+    private func openCheckpointsPage() {
+        let controller = ProjectCheckpointsViewController(projectURL: projectURL)
+        controller.onCheckpointRestored = { [weak self] in
             guard let self else { return }
             let latestProjectName = self.store.loadProjectName(projectURL: self.projectURL)
             self.baselineProjectName = latestProjectName
@@ -324,28 +350,15 @@ final class ProjectSettingsViewController: UITableViewController {
     }
 }
 
-private final class ProjectSnapshotsViewController: UITableViewController {
+// MARK: - Checkpoint History
 
-    var onSnapshotLoaded: (() -> Void)?
+private final class ProjectCheckpointsViewController: UITableViewController {
 
-    private enum Section: Int, CaseIterable {
-        case manual
-        case auto
-
-        var kind: AppProjectSnapshotKind {
-            switch self {
-            case .manual:
-                return .manual
-            case .auto:
-                return .auto
-            }
-        }
-    }
+    var onCheckpointRestored: (() -> Void)?
 
     private let projectURL: URL
-    private let store = AppProjectStore.shared
-    private var manualSnapshots: [AppProjectSnapshotRecord] = []
-    private var autoSnapshots: [AppProjectSnapshotRecord] = []
+    private let gitService = ProjectGitService.shared
+    private var checkpoints: [ProjectGitService.CheckpointRecord] = []
 
     private lazy var dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -366,151 +379,92 @@ private final class ProjectSnapshotsViewController: UITableViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        title = String(localized: "snapshot_list.title")
-        tableView.register(UITableViewCell.self, forCellReuseIdentifier: "ProjectSnapshotRow")
-        reloadSnapshots(showError: true)
+        title = String(localized: "checkpoint_list.title")
+        tableView.register(UITableViewCell.self, forCellReuseIdentifier: "CheckpointRow")
+        reloadCheckpoints()
     }
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        reloadSnapshots(showError: false)
+        reloadCheckpoints()
     }
 
-    override func numberOfSections(in tableView: UITableView) -> Int {
-        Section.allCases.count
-    }
+    override func numberOfSections(in tableView: UITableView) -> Int { 1 }
 
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        guard let section = Section(rawValue: section) else {
-            return 0
-        }
-        let snapshots = snapshots(for: section)
-        return max(1, snapshots.count)
-    }
-
-    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
-        guard let section = Section(rawValue: section) else {
-            return nil
-        }
-        return section.kind.displayName
-    }
-
-    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
-        guard let section = Section(rawValue: section) else {
-            return nil
-        }
-        switch section {
-        case .manual:
-            return String(localized: "snapshot_list.footer.manual_limit")
-        case .auto:
-            return String(localized: "snapshot_list.footer.auto_limit")
-        }
+        max(1, checkpoints.count)
     }
 
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        let cell = tableView.dequeueReusableCell(withIdentifier: "ProjectSnapshotRow", for: indexPath)
-        cell.accessoryType = .none
-        cell.selectionStyle = .none
+        let cell = tableView.dequeueReusableCell(withIdentifier: "CheckpointRow", for: indexPath)
 
-        guard
-            let section = Section(rawValue: indexPath.section),
-            let snapshot = snapshot(at: indexPath, section: section)
-        else {
+        guard !checkpoints.isEmpty, indexPath.row < checkpoints.count else {
             var configuration = cell.defaultContentConfiguration()
-            configuration.text = String(localized: "snapshot_list.empty")
+            configuration.text = String(localized: "checkpoint_list.empty")
             configuration.textProperties.color = .secondaryLabel
             cell.contentConfiguration = configuration
+            cell.selectionStyle = .none
+            cell.accessoryType = .none
             return cell
         }
 
+        let checkpoint = checkpoints[indexPath.row]
         var configuration = cell.defaultContentConfiguration()
-        configuration.text = dateFormatter.string(from: snapshot.createdAt)
-        configuration.secondaryText = snapshot.id
+        configuration.text = checkpoint.userMessage.isEmpty
+            ? dateFormatter.string(from: checkpoint.date)
+            : checkpoint.userMessage
+        configuration.secondaryText = dateFormatter.string(from: checkpoint.date)
         configuration.secondaryTextProperties.color = .secondaryLabel
         cell.contentConfiguration = configuration
         cell.selectionStyle = .default
+        cell.accessoryType = .none
         return cell
     }
 
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         defer { tableView.deselectRow(at: indexPath, animated: true) }
 
-        guard
-            let section = Section(rawValue: indexPath.section),
-            let snapshot = snapshot(at: indexPath, section: section)
-        else {
-            return
-        }
+        guard !checkpoints.isEmpty, indexPath.row < checkpoints.count else { return }
+        let checkpoint = checkpoints[indexPath.row]
 
         let alert = UIAlertController(
-            title: String(localized: "snapshot_list.alert.load.title"),
+            title: String(localized: "checkpoint_list.alert.restore.title"),
             message: String(
-                format: String(localized: "snapshot_list.alert.load.message_format"),
-                dateFormatter.string(from: snapshot.createdAt)
+                format: String(localized: "checkpoint_list.alert.restore.message_format"),
+                dateFormatter.string(from: checkpoint.date)
             ),
             preferredStyle: .alert
         )
         alert.addAction(UIAlertAction(title: String(localized: "common.action.cancel"), style: .cancel))
-        alert.addAction(UIAlertAction(title: String(localized: "snapshot_list.action.load"), style: .destructive, handler: { [weak self] _ in
-            self?.restoreSnapshot(snapshot)
-        }))
+        alert.addAction(UIAlertAction(title: String(localized: "checkpoint_list.action.restore"), style: .destructive) { [weak self] _ in
+            self?.restoreCheckpoint(checkpoint)
+        })
         present(alert, animated: true)
     }
 
-    private func snapshots(for section: Section) -> [AppProjectSnapshotRecord] {
-        switch section {
-        case .manual:
-            return manualSnapshots
-        case .auto:
-            return autoSnapshots
-        }
+    private func reloadCheckpoints() {
+        checkpoints = (try? gitService.listCheckpoints(projectURL: projectURL)) ?? []
+        tableView.reloadData()
     }
 
-    private func snapshot(at indexPath: IndexPath, section: Section) -> AppProjectSnapshotRecord? {
-        let snapshots = snapshots(for: section)
-        guard !snapshots.isEmpty, indexPath.row < snapshots.count else {
-            return nil
-        }
-        return snapshots[indexPath.row]
-    }
-
-    private func reloadSnapshots(showError: Bool) {
+    private func restoreCheckpoint(_ checkpoint: ProjectGitService.CheckpointRecord) {
         do {
-            let snapshots = try store.loadSnapshots(projectURL: projectURL)
-            manualSnapshots = snapshots.filter { $0.kind == .manual }
-            autoSnapshots = snapshots.filter { $0.kind == .auto }
-            tableView.reloadData()
-        } catch {
-            if showError {
-                let alert = UIAlertController(
-                    title: String(localized: "snapshot_list.alert.read_failed.title"),
-                    message: error.localizedDescription,
-                    preferredStyle: .alert
-                )
-                alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
-                present(alert, animated: true)
-            }
-        }
-    }
-
-    private func restoreSnapshot(_ snapshot: AppProjectSnapshotRecord) {
-        do {
-            try store.restoreSnapshot(projectURL: projectURL, snapshot: snapshot)
-            onSnapshotLoaded?()
-            reloadSnapshots(showError: false)
+            try gitService.restore(projectURL: projectURL, checkpointID: checkpoint.id)
+            onCheckpointRestored?()
+            reloadCheckpoints()
 
             let alert = UIAlertController(
-                title: String(localized: "snapshot_list.alert.loaded.title"),
-                message: String(localized: "snapshot_list.alert.loaded.message"),
+                title: String(localized: "checkpoint_list.alert.restored.title"),
+                message: String(localized: "checkpoint_list.alert.restored.message"),
                 preferredStyle: .alert
             )
-            alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default, handler: { [weak self] _ in
+            alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default) { [weak self] _ in
                 self?.navigationController?.popViewController(animated: true)
-            }))
+            })
             present(alert, animated: true)
         } catch {
             let alert = UIAlertController(
-                title: String(localized: "snapshot_list.alert.restore_failed.title"),
+                title: String(localized: "checkpoint_list.alert.restore_failed.title"),
                 message: error.localizedDescription,
                 preferredStyle: .alert
             )

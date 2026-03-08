@@ -34,6 +34,7 @@ final class ProjectChatOrchestrator {
     private let memoryManager: SessionMemoryManager
     private let promptBuilder: PromptBuilder
     private let streamingClient: LLMStreamingClient
+    private let gitService = ProjectGitService.shared
 
     init(
         configuration: ProjectChatConfiguration,
@@ -69,6 +70,9 @@ final class ProjectChatOrchestrator {
         let usageAccumulator = UsageAccumulator()
         let toolProvider = AgentToolProvider(projectURL: projectURL, configuration: configuration)
         toolProvider.confirmationHandler = confirmationHandler
+
+        // Create git checkpoint before agent loop starts
+        createCheckpointBeforeAgentLoop(projectURL: projectURL, userMessage: trimmedMessage)
 
         // Read AGENTS.md if present
         let agentsMarkdown = readAgentsMarkdown(projectURL: projectURL)
@@ -153,10 +157,8 @@ final class ProjectChatOrchestrator {
 
                 let finalMessage = accumulatedText.isEmpty ? "已完成。" : accumulatedText
 
-                // Create auto snapshot if files were changed
                 if !allChangedPaths.isEmpty {
                     AppProjectStore.shared.touchProjectUpdatedAt(projectURL: projectURL)
-                    createAutoSnapshotIfNeeded(projectURL: projectURL, changedPaths: allChangedPaths)
                 }
 
                 let updatedMemory = memoryManager.buildRolledMemory(
@@ -228,7 +230,6 @@ final class ProjectChatOrchestrator {
 
         if !allChangedPaths.isEmpty {
             AppProjectStore.shared.touchProjectUpdatedAt(projectURL: projectURL)
-            createAutoSnapshotIfNeeded(projectURL: projectURL, changedPaths: allChangedPaths)
         }
 
         let updatedMemory = memoryManager.buildRolledMemory(
@@ -300,12 +301,12 @@ final class ProjectChatOrchestrator {
         return content
     }
 
-    private func createAutoSnapshotIfNeeded(projectURL: URL, changedPaths: [String]) {
-        guard !changedPaths.isEmpty else { return }
+    private func createCheckpointBeforeAgentLoop(projectURL: URL, userMessage: String) {
         do {
-            try AppProjectStore.shared.createSnapshot(projectURL: projectURL, kind: .auto)
+            try gitService.ensureRepository(at: projectURL)
+            try gitService.createCheckpoint(projectURL: projectURL, userMessage: userMessage)
         } catch {
-            debugLog("[Doufu Agent] auto snapshot failed: \(error.localizedDescription)")
+            debugLog("[Doufu Agent] git checkpoint failed: \(error.localizedDescription)")
         }
     }
 
