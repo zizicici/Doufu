@@ -111,6 +111,7 @@
 				14B7E5632F5AB2C100BB3324 /* TreeSitterSwiftRunestone */,
 				14B7E54C2F5AB2C100BB3324 /* TreeSitterTSXRunestone */,
 				14B7E54B2F5AB2C100BB3324 /* TreeSitterTypeScriptRunestone */,
+				14D0MD022F5D000000AA2002 /* Markdown */,
 			);
 			productName = Doufu;
 			productReference = 450D41E02F40B7430025E0BB /* Doufu.app */;
@@ -147,6 +148,7 @@
 				14B7E4322F5A8AB200BB3324 /* XCRemoteSwiftPackageReference "Runestone" */,
 				14B7E5642F5AB2C100BB3324 /* XCRemoteSwiftPackageReference "TreeSitterLanguages" */,
 				14C0A0012F5CC00000AA1001 /* XCRemoteSwiftPackageReference "SwiftGitX" */,
+				14D0MD012F5D000000AA2002 /* XCRemoteSwiftPackageReference "swift-markdown" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 450D41E12F40B7430025E0BB /* Products */;
@@ -424,6 +426,14 @@
 				minimumVersion = 0.4.0;
 			};
 		};
+		14D0MD012F5D000000AA2002 /* XCRemoteSwiftPackageReference "swift-markdown" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/apple/swift-markdown.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.5.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -476,6 +486,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 14C0A0012F5CC00000AA1001 /* XCRemoteSwiftPackageReference "SwiftGitX" */;
 			productName = SwiftGitX;
+		};
+		14D0MD022F5D000000AA2002 /* Markdown */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 14D0MD012F5D000000AA2002 /* XCRemoteSwiftPackageReference "swift-markdown" */;
+			productName = Markdown;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

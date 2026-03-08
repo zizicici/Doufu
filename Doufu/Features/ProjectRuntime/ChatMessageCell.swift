@@ -81,23 +81,35 @@ final class ChatMessageCell: UITableViewCell {
     }
 
     func configure(message: ProjectChatViewController.Message, now: Date) {
-        let animatedText = displayText(for: message, now: now)
-        messageLabel.text = animatedText
         metaLabel.text = metadataText(for: message, now: now)
+
+        let useMarkdown = message.role == .assistant && (message.finishedAt != nil || !message.isProgress)
+
+        if useMarkdown {
+            messageLabel.attributedText = MarkdownRenderer.render(message.text)
+        } else {
+            let animatedText = displayText(for: message, now: now)
+            messageLabel.attributedText = nil
+            messageLabel.text = animatedText
+        }
 
         switch message.role {
         case .user:
             trailingConstraint.isActive = true
             leadingConstraint.isActive = false
             bubbleContainer.backgroundColor = tintColor
-            messageLabel.textColor = .white
+            if !useMarkdown {
+                messageLabel.textColor = .white
+            }
             metaLabel.textColor = UIColor.white.withAlphaComponent(0.78)
             bubbleContainer.layer.borderColor = UIColor.clear.cgColor
         case .assistant:
             trailingConstraint.isActive = false
             leadingConstraint.isActive = true
             bubbleContainer.backgroundColor = .secondarySystemGroupedBackground
-            messageLabel.textColor = .label
+            if !useMarkdown {
+                messageLabel.textColor = .label
+            }
             metaLabel.textColor = .secondaryLabel
             if message.isProgress && message.finishedAt == nil {
                 bubbleContainer.layer.borderColor = tintColor.withAlphaComponent(0.45).cgColor
@@ -136,7 +148,9 @@ final class ChatMessageCell: UITableViewCell {
             let duration = max(0, endAt.timeIntervalSince(message.startedAt))
             let durationString = formatDuration(duration)
             if message.isProgress {
-                parts.append(message.finishedAt == nil ? "执行中" : "已完成")
+                parts.append(message.finishedAt == nil
+                    ? String(localized: "chat.meta.in_progress")
+                    : String(localized: "chat.meta.completed"))
             }
             parts.append(durationString)
         }

@@ -144,7 +144,7 @@ final class ProjectModelConfigurationViewController: UITableViewController {
                 return String(localized: "chat.menu.thinking")
             }
         case .manage:
-            return "Manage Models"
+            return String(localized: "model_config.section.manage_models")
         }
     }
 
@@ -190,9 +190,9 @@ final class ProjectModelConfigurationViewController: UITableViewController {
             let sourceText: String
             switch model.source {
             case .official:
-                sourceText = "Official"
+                sourceText = String(localized: "model_config.source.official")
             case .custom:
-                sourceText = "Custom"
+                sourceText = String(localized: "model_config.source.custom")
             }
             configuration.secondaryText = sourceText + " · " + usageText
             configuration.secondaryTextProperties.color = .secondaryLabel
@@ -248,7 +248,7 @@ final class ProjectModelConfigurationViewController: UITableViewController {
                 cell.configure(
                     title: capabilities.thinkingCanDisable
                         ? String(localized: "chat.menu.thinking")
-                        : "Thinking (required)",
+                        : String(localized: "model_config.thinking_required"),
                     isOn: isOn
                 ) { [weak self] value in
                     guard let self else { return }
@@ -275,12 +275,14 @@ final class ProjectModelConfigurationViewController: UITableViewController {
             var configuration = cell.defaultContentConfiguration()
             switch row {
             case .refreshOfficialModels:
-                configuration.text = isRefreshingModels ? "Refreshing Official Models..." : "Refresh Official Models"
-                configuration.secondaryText = "Pull the latest model list from the provider API."
+                configuration.text = isRefreshingModels
+                    ? String(localized: "model_config.manage.refreshing_models")
+                    : String(localized: "model_config.manage.refresh_models")
+                configuration.secondaryText = String(localized: "model_config.manage.refresh_models_subtitle")
                 cell.accessoryType = .none
             case .addCustomModel:
-                configuration.text = "Add Custom Model"
-                configuration.secondaryText = "Register a model that is not returned by the provider API."
+                configuration.text = String(localized: "model_config.manage.add_custom_model")
+                configuration.secondaryText = String(localized: "model_config.manage.add_custom_model_subtitle")
                 cell.accessoryType = .disclosureIndicator
             }
             configuration.secondaryTextProperties.color = .secondaryLabel
@@ -596,7 +598,7 @@ final class ProjectModelConfigurationViewController: UITableViewController {
                 _ = try self.providerStore.replaceOfficialModels(providerID: providerRecord.id, models: models)
             } catch {
                 let alert = UIAlertController(
-                    title: "Refresh Failed",
+                    title: String(localized: "model_config.alert.refresh_failed"),
                     message: error.localizedDescription,
                     preferredStyle: .alert
                 )
@@ -634,7 +636,7 @@ final class ProjectModelConfigurationViewController: UITableViewController {
                 self.tableView.reloadData()
             } catch {
                 let alert = UIAlertController(
-                    title: "Save Failed",
+                    title: String(localized: "model_config.alert.save_failed"),
                     message: error.localizedDescription,
                     preferredStyle: .alert
                 )

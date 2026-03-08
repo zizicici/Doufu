@@ -962,7 +962,7 @@ final class ProjectChatViewController: UIViewController {
             if modelSubmenus.isEmpty {
                 providerChildren = [
                     useProviderAction,
-                    UIAction(title: "No models available", attributes: .disabled) { _ in }
+                    UIAction(title: String(localized: "chat.menu.no_models_available"), attributes: .disabled) { _ in }
                 ]
             } else {
                 providerChildren = [useProviderAction] + modelSubmenus
@@ -1334,7 +1334,7 @@ final class ProjectChatViewController: UIViewController {
         } else {
             countText = "\(streamedCharacterCount)"
         }
-        let updatedText = "\(baseText)（\(countText) 字符）"
+        let updatedText = baseText + String(format: String(localized: "chat.streaming.char_count_format"), countText)
         messages[index].text = updatedText
         refreshVisibleMessageCellsForDynamicState()
     }
@@ -1420,8 +1420,8 @@ final class ProjectChatViewController: UIViewController {
 
     private func presentManualModelPrompt(for providerCredential: ProjectChatService.ProviderCredential) {
         let alert = UIAlertController(
-            title: "Enter Model ID",
-            message: "No official or custom models are available for this provider yet. Enter a model ID to continue.",
+            title: String(localized: "chat.alert.enter_model_id.title"),
+            message: String(localized: "chat.alert.enter_model_id.message"),
             preferredStyle: .alert
         )
         alert.addTextField { [weak self] textField in
@@ -1431,7 +1431,7 @@ final class ProjectChatViewController: UIViewController {
             textField.clearButtonMode = .whileEditing
         }
         alert.addAction(UIAlertAction(title: String(localized: "common.action.cancel"), style: .cancel))
-        alert.addAction(UIAlertAction(title: "Save and Continue", style: .default, handler: { [weak self, weak alert] _ in
+        alert.addAction(UIAlertAction(title: String(localized: "chat.alert.enter_model_id.save"), style: .default, handler: { [weak self, weak alert] _ in
             guard let self, let textField = alert?.textFields?.first else {
                 return
             }
@@ -1455,14 +1455,14 @@ final class ProjectChatViewController: UIViewController {
                 self.refreshNavigationItems()
                 self.didTapSend()
             } catch {
-                self.showErrorAlert(title: "Save Failed", message: error.localizedDescription)
+                self.showErrorAlert(title: String(localized: "chat.alert.save_failed.title"), message: error.localizedDescription)
             }
         }))
         present(alert, animated: true)
     }
 
     private func showModelEntryError() {
-        showErrorAlert(title: "Model Required", message: "Enter a model ID to continue.")
+        showErrorAlert(title: String(localized: "chat.alert.model_required.title"), message: String(localized: "chat.alert.model_required.message"))
     }
 
     private func showErrorAlert(title: String, message: String) {
@@ -1872,11 +1872,11 @@ extension ProjectChatViewController {
         case let .fileRead(path, lineCount, preview):
             let previewLines = preview.components(separatedBy: .newlines).prefix(3)
             let previewText = previewLines.joined(separator: "\n")
-            displayText = "已读取：\(path)（\(lineCount) 行）\n```\n\(previewText)\n```"
+            displayText = String(format: String(localized: "chat.progress.file_read_format"), path, lineCount) + "\n```\n\(previewText)\n```"
         case let .fileEdited(path, applied, total, diffPreview):
-            displayText = "已编辑：\(path)（\(applied)/\(total) 成功）\n\(diffPreview)"
+            displayText = String(format: String(localized: "chat.progress.file_edited_format"), path, applied, total) + "\n\(diffPreview)"
         case let .searchCompleted(desc, count):
-            displayText = "\(desc)（\(count) 个结果）"
+            displayText = String(format: String(localized: "chat.progress.search_completed_format"), desc, count)
         case let .thinking(content):
             // Show a truncated preview of the thinking content — full content
             // is available as a collapsible area if the UI supports it.
