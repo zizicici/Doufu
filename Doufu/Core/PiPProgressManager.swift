@@ -72,7 +72,6 @@ final class PiPProgressManager: NSObject {
 
     @objc private func appWillResignActive() {
         guard isActive, isEnabled, hasActiveTask else { return }
-        startAudioPlayer()
         pipController?.startPictureInPicture()
     }
 
@@ -81,9 +80,20 @@ final class PiPProgressManager: NSObject {
         stopAudioPlayer()
         pipController?.stopPictureInPicture()
 
-        // If the task already finished, clean up when user comes back.
-        if isFinished {
-            tearDown()
+        // Detach old infrastructure so preparePiPController creates fresh ones.
+        pipSourceView = nil
+        pipController = nil
+        displayLayer = nil
+        isActive = false
+        isPiPShowing = false
+
+        // If the task is still running, recreate immediately.
+        if hasActiveTask {
+            preparePiPController()
+        } else {
+            isFinished = false
+            finishedStatusText = nil
+            projectSnapshot = nil
         }
     }
 
@@ -211,6 +221,8 @@ final class PiPProgressManager: NSObject {
         let controller = AVPictureInPictureController(contentSource: contentSource)
         controller.delegate = self
         controller.canStartPictureInPictureAutomaticallyFromInline = true
+        controller.requiresLinearPlayback = true
+        controller.setValue(2, forKey: "controlsStyle")
 
         self.displayLayer = layer
         self.pipSourceView = sourceView
@@ -321,8 +333,9 @@ final class PiPProgressManager: NSObject {
     /// This avoids UIImage/CGImage intermediary conversion that can cause
     /// format mismatches with AVSampleBufferDisplayLayer.
     private func renderPixelBuffer() -> CVPixelBuffer? {
-        let width = Int(pipSize.width)
-        let height = Int(pipSize.height)
+        let scale = UIScreen.main.scale
+        let width = Int(pipSize.width * scale)
+        let height = Int(pipSize.height * scale)
 
         let attrs: [CFString: Any] = [
             kCVPixelBufferCGImageCompatibilityKey: true,
@@ -356,7 +369,7 @@ final class PiPProgressManager: NSObject {
 
         // CGContext has origin at bottom-left; flip for UIKit drawing.
         ctx.translateBy(x: 0, y: CGFloat(height))
-        ctx.scaleBy(x: 1, y: -1)
+        ctx.scaleBy(x: scale, y: -scale)
 
         UIGraphicsPushContext(ctx)
         drawStatusContent()
@@ -478,8 +491,8 @@ final class PiPProgressManager: NSObject {
         UIGraphicsGetCurrentContext()?.saveGState()
         path.addClip()
 
-        // Position image so its bottom edge aligns with phone bottom edge
-        let drawY = phoneY + phoneHeight - scaledFullHeight
+        // Position image so its top edge aligns with phone top edge
+        let drawY = phoneY
         let drawRect = CGRect(x: phoneMargin, y: drawY, width: phoneWidth, height: scaledFullHeight)
         snapshot.draw(in: drawRect)
 
@@ -547,6 +560,7 @@ extension PiPProgressManager: AVPictureInPictureControllerDelegate {
     ) {
         Task { @MainActor [weak self] in
             self?.isPiPShowing = true
+            self?.startAudioPlayer()
         }
     }
 
@@ -564,7 +578,11 @@ extension PiPProgressManager: AVPictureInPictureControllerDelegate {
         _ pictureInPictureController: AVPictureInPictureController,
         restoreUserInterfaceForPictureInPictureStopWithCompletionHandler completionHandler: @escaping (Bool) -> Void
     ) {
-        completionHandler(true)
+        Task { @MainActor [weak self] in
+            // Hide the source view so the restore animation doesn't show a black rectangle.
+            self?.pipSourceView?.isHidden = true
+            completionHandler(true)
+        }
     }
 }
 
