@@ -55,6 +55,26 @@ final class DoufuBridge: NSObject {
         )
     }
 
+    /// Re-adds the bridge user script with the latest `storageData`.
+    ///
+    /// `WKUserScript` captures its source at creation time, so after localStorage
+    /// changes the embedded JSON snapshot becomes stale. Call this **before** any
+    /// page reload / navigation to ensure the freshly-injected script carries the
+    /// current data.
+    ///
+    /// - Important: This calls `removeAllUserScripts()` on the content controller.
+    ///   The caller must re-add any non-bridge user scripts afterwards.
+    func refreshStorageScript(on configuration: WKWebViewConfiguration) {
+        let controller = configuration.userContentController
+        controller.removeAllUserScripts()
+        let bridgeScript = WKUserScript(
+            source: bridgeJavaScript(),
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: false
+        )
+        controller.addUserScript(bridgeScript)
+    }
+
     /// Removes the bridge's message handlers. Call on deinit to break retain cycles.
     nonisolated func unregister(from configuration: WKWebViewConfiguration) {
         MainActor.assumeIsolated {

@@ -393,6 +393,21 @@ final class ProjectWorkspaceViewController: UIViewController {
         }
     }
 
+    /// Reload the WebView after refreshing the bridge's localStorage script
+    /// so the page sees the latest persisted data instead of a stale snapshot.
+    private func reloadWebView() {
+        let config = webView.configuration
+        doufuBridge.refreshStorageScript(on: config)
+        // Re-add the JS error capture script removed by refreshStorageScript.
+        let errorScript = WKUserScript(
+            source: jsErrorBridgeScriptSource(),
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: false
+        )
+        config.userContentController.addUserScript(errorScript)
+        webView.reload()
+    }
+
     private func currentSafeFrame() -> CGRect {
         view.safeAreaLayoutGuide.layoutFrame.insetBy(dx: panelMargin, dy: panelMargin)
     }
@@ -665,7 +680,7 @@ final class ProjectWorkspaceViewController: UIViewController {
     @objc
     private func didTapRefresh() {
         scheduleAutoCollapse()
-        webView.reload()
+        reloadWebView()
     }
 
     @objc
@@ -753,7 +768,7 @@ final class ProjectWorkspaceViewController: UIViewController {
             guard let self else { return }
             self.hasProjectBeenModified = true
             self.projectStore.touchProjectUpdatedAt(projectURL: self.projectURL)
-            self.webView.reload()
+            self.reloadWebView()
         }
 
         let navigationController = UINavigationController(rootViewController: chatController)
@@ -785,7 +800,7 @@ final class ProjectWorkspaceViewController: UIViewController {
             )
             self.title = updatedProjectName
             self.hasProjectBeenModified = true
-            self.webView.reload()
+            self.reloadWebView()
         }
         let navigationController = UINavigationController(rootViewController: settingsController)
         navigationController.modalPresentationStyle = .pageSheet
