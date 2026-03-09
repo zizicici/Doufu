@@ -81,11 +81,38 @@ struct OpenAIToolDefinition: Encodable {
     }
 }
 
+// MARK: - Anthropic Prompt Caching
+
+struct AnthropicCacheControl: Encodable {
+    let type: String
+
+    static let ephemeral = AnthropicCacheControl(type: "ephemeral")
+}
+
+struct AnthropicSystemBlock: Encodable {
+    let type: String
+    let text: String
+    let cacheControl: AnthropicCacheControl?
+
+    private enum CodingKeys: String, CodingKey {
+        case type, text
+        case cacheControl = "cache_control"
+    }
+
+    static func text(_ content: String, cache: Bool = false) -> AnthropicSystemBlock {
+        AnthropicSystemBlock(
+            type: "text",
+            text: content,
+            cacheControl: cache ? .ephemeral : nil
+        )
+    }
+}
+
 // MARK: - Anthropic Messages API Tool Use
 
 struct AnthropicToolUseRequest: Encodable {
     let model: String
-    let system: String?
+    let system: [AnthropicSystemBlock]
     let messages: [AnthropicToolUseMessage]
     let tools: [AnthropicToolDefinitionItem]
     let maxTokens: Int
@@ -152,10 +179,19 @@ struct AnthropicToolDefinitionItem: Encodable {
     let name: String
     let description: String
     let inputSchema: JSONValue
+    let cacheControl: AnthropicCacheControl?
 
     private enum CodingKeys: String, CodingKey {
         case name, description
         case inputSchema = "input_schema"
+        case cacheControl = "cache_control"
+    }
+
+    init(name: String, description: String, inputSchema: JSONValue, cacheControl: AnthropicCacheControl? = nil) {
+        self.name = name
+        self.description = description
+        self.inputSchema = inputSchema
+        self.cacheControl = cacheControl
     }
 }
 

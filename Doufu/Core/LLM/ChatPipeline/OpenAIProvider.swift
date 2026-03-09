@@ -12,7 +12,7 @@ final class OpenAIProvider: LLMProviderAdapter {
     private let jsonDecoder = JSONDecoder()
     private let jsonEncoder: JSONEncoder = {
         let enc = JSONEncoder()
-        enc.outputFormatting = [.prettyPrinted, .sortedKeys]
+        enc.outputFormatting = [.sortedKeys]
         return enc
     }()
 
@@ -74,7 +74,7 @@ final class OpenAIProvider: LLMProviderAdapter {
             }
 
             guard (200...299).contains(httpResponse.statusCode) else {
-                let data = try await consumeStreamBytes(bytes: bytes)
+                let data = try await LLMProviderHelpers.consumeStreamBytes(bytes: bytes)
 
                 if shouldFallbackReasoningToHigh(
                     currentEffort: activeRequestBody.reasoning?.effort,
@@ -203,7 +203,7 @@ final class OpenAIProvider: LLMProviderAdapter {
             throw ProjectChatService.ServiceError.networkFailed(String(localized: "llm.error.invalid_response"))
         }
         guard (200...299).contains(httpResponse.statusCode) else {
-            let data = try await consumeStreamBytes(bytes: bytes)
+            let data = try await LLMProviderHelpers.consumeStreamBytes(bytes: bytes)
             let message = LLMProviderHelpers.parseErrorMessage(from: data)
                 ?? HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
             throw ProjectChatService.ServiceError.networkFailed(String(format: String(localized: "llm.error.request_failed_format"), message))
@@ -229,7 +229,7 @@ final class OpenAIProvider: LLMProviderAdapter {
         onStreamedText: (@MainActor (String) -> Void)?,
         onUsage: ((Int?, Int?) -> Void)?
     ) async throws -> AgentLLMResponse {
-        try await withTimeout(seconds: timeoutSeconds + configuration.streamCompletionGraceSeconds) { [self] in
+        try await LLMProviderHelpers.withStreamTimeout(seconds: timeoutSeconds + configuration.streamCompletionGraceSeconds) { [self] in
             var streamedText = ""
             var toolCalls: [AgentToolCall] = []
             var usage: ResponsesUsage?
@@ -482,7 +482,7 @@ final class OpenAIProvider: LLMProviderAdapter {
         timeoutSeconds: TimeInterval,
         requestLabel: String
     ) async throws -> StreamingResponseResult {
-        try await withTimeout(seconds: timeoutSeconds + configuration.streamCompletionGraceSeconds) { [self] in
+        try await LLMProviderHelpers.withStreamTimeout(seconds: timeoutSeconds + configuration.streamCompletionGraceSeconds) { [self] in
             var streamedText = ""
             var completedResponseText: String?
             var usage: ResponsesUsage?
@@ -654,28 +654,6 @@ final class OpenAIProvider: LLMProviderAdapter {
         return host == "chatgpt.com" && path.contains("/backend-api/codex")
     }
 
-    private func withTimeout<T>(seconds: TimeInterval, operation: @escaping () async throws -> T) async throws -> T {
-        try await withThrowingTaskGroup(of: T.self) { group in
-            group.addTask { try await operation() }
-            group.addTask {
-                let nanoseconds = UInt64(max(1, seconds) * 1_000_000_000)
-                try await Task.sleep(nanoseconds: nanoseconds)
-                throw ProjectChatService.ServiceError.networkFailed(String(localized: "llm.error.request_timeout"))
-            }
-            guard let first = try await group.next() else {
-                group.cancelAll()
-                throw ProjectChatService.ServiceError.networkFailed(String(localized: "llm.error.request_failed"))
-            }
-            group.cancelAll()
-            return first
-        }
-    }
-
-    private func consumeStreamBytes(bytes: URLSession.AsyncBytes) async throws -> Data {
-        var data = Data()
-        for try await byte in bytes { data.append(byte) }
-        return data
-    }
 
     private func decodeSSEEvent(from payload: String) -> ([String: Any], String)? {
         guard let data = payload.data(using: .utf8),

@@ -12,7 +12,7 @@ final class AnthropicProvider: LLMProviderAdapter {
     private let jsonDecoder = JSONDecoder()
     private let jsonEncoder: JSONEncoder = {
         let enc = JSONEncoder()
-        enc.outputFormatting = [.prettyPrinted, .sortedKeys]
+        enc.outputFormatting = [.sortedKeys]
         return enc
     }()
 
@@ -48,8 +48,10 @@ final class AnthropicProvider: LLMProviderAdapter {
             request.httpMethod = "POST"
             request.timeoutInterval = timeoutSeconds
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
             request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+            // TODO: Update to newer anthropic-version when prompt caching graduates from beta.
+            request.setValue("prompt-caching-2024-07-31", forHTTPHeaderField: "anthropic-beta")
             applyAuthorizationHeaders(to: &request, credential: credential)
 
             let messages = LLMProviderHelpers.normalizedConversationMessages(
@@ -61,15 +63,19 @@ final class AnthropicProvider: LLMProviderAdapter {
                 )
             }
             let normalizedInstruction = developerInstruction.trimmingCharacters(in: .whitespacesAndNewlines)
+            let systemBlocks: [AnthropicSystemBlock]? = normalizedInstruction.isEmpty
+                ? nil
+                : [.text(normalizedInstruction, cache: true)]
             let modelMaxOutput = credential.profile.maxOutputTokens
             let thinkingBudget = includeThinking
                 ? configuration.anthropicThinkingBudget(maxOutputTokens: modelMaxOutput, effort: initialReasoningEffort)
                 : 0
             let requestBody = AnthropicMessageRequest(
                 model: model,
-                system: normalizedInstruction.isEmpty ? nil : normalizedInstruction,
+                system: systemBlocks,
                 messages: messages,
                 maxTokens: modelMaxOutput,
+                stream: true,
                 thinking: includeThinking
                     ? .init(type: "enabled", budgetTokens: thinkingBudget)
                     : nil,
@@ -77,11 +83,12 @@ final class AnthropicProvider: LLMProviderAdapter {
             )
             request.httpBody = try jsonEncoder.encode(requestBody)
 
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (bytes, response) = try await URLSession.shared.bytes(for: request)
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw ProjectChatService.ServiceError.networkFailed(String(localized: "llm.error.invalid_response"))
             }
             guard (200...299).contains(httpResponse.statusCode) else {
+                let data = try await LLMProviderHelpers.consumeStreamBytes(bytes: bytes)
                 if includeThinking, LLMProviderHelpers.shouldFallbackThinkingConfiguration(responseBodyData: data) {
                     includeThinking = false
                     continue
@@ -99,24 +106,90 @@ final class AnthropicProvider: LLMProviderAdapter {
                 throw ProjectChatService.ServiceError.networkFailed(String(format: String(localized: "llm.error.request_failed_format"), message))
             }
 
-            guard let decoded = try? jsonDecoder.decode(AnthropicMessageResponse.self, from: data) else {
-                throw ProjectChatService.ServiceError.invalidResponse
+            return try await consumeAnthropicStreamingResponse(
+                bytes: bytes, model: model, credential: credential,
+                projectUsageIdentifier: projectUsageIdentifier,
+                timeoutSeconds: timeoutSeconds,
+                onStreamedText: onStreamedText, onUsage: onUsage
+            )
+        }
+    }
+
+    // MARK: - Non-Tool-Use SSE Stream Consumer
+
+    private func consumeAnthropicStreamingResponse(
+        bytes: URLSession.AsyncBytes,
+        model: String,
+        credential: ProjectChatService.ProviderCredential,
+        projectUsageIdentifier: String?,
+        timeoutSeconds: TimeInterval,
+        onStreamedText: (@MainActor (String) -> Void)?,
+        onUsage: ((Int?, Int?) -> Void)?
+    ) async throws -> String {
+        try await LLMProviderHelpers.withStreamTimeout(seconds: timeoutSeconds + configuration.streamCompletionGraceSeconds) { [self] in
+            var streamedText = ""
+            var inputTokens: Int?
+            var outputTokens: Int?
+
+            for try await rawLine in bytes.lines {
+                let line = rawLine.trimmingCharacters(in: .newlines)
+                guard line.hasPrefix("data:") else { continue }
+                var dataLine = String(line.dropFirst(5))
+                if dataLine.hasPrefix(" ") { dataLine.removeFirst() }
+                let trimmed = dataLine.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { continue }
+
+                guard let eventData = trimmed.data(using: .utf8),
+                      let eventObject = try? JSONSerialization.jsonObject(with: eventData) as? [String: Any],
+                      let eventType = eventObject["type"] as? String
+                else { continue }
+
+                switch eventType {
+                case "message_start":
+                    if let message = eventObject["message"] as? [String: Any],
+                       let usage = message["usage"] as? [String: Any] {
+                        inputTokens = usage["input_tokens"] as? Int
+                    }
+
+                case "content_block_delta":
+                    guard let delta = eventObject["delta"] as? [String: Any],
+                          let deltaType = delta["type"] as? String
+                    else { continue }
+                    if deltaType == "text_delta", let text = delta["text"] as? String, !text.isEmpty {
+                        streamedText.append(text)
+                        if let onStreamedText { await onStreamedText(streamedText) }
+                    }
+
+                case "message_delta":
+                    if let usage = eventObject["usage"] as? [String: Any] {
+                        outputTokens = usage["output_tokens"] as? Int
+                    }
+
+                case "error":
+                    let message = (eventObject["error"] as? [String: Any])?["message"] as? String
+                        ?? String(localized: "llm.error.stream_failed")
+                    throw ProjectChatService.ServiceError.networkFailed(
+                        String(format: String(localized: "llm.error.request_failed_format"), message)
+                    )
+
+                default:
+                    continue
+                }
             }
-            let finalResponseText = extractAnthropicText(from: decoded, rawResponseData: data)
-            guard !finalResponseText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+
+            guard !streamedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 throw ProjectChatService.ServiceError.invalidResponse
             }
 
-            if let onStreamedText { await onStreamedText(finalResponseText) }
-
-            tokenUsageStore.recordUsage(
+            self.tokenUsageStore.recordUsage(
                 providerID: credential.providerID, providerLabel: credential.providerLabel,
                 model: model,
-                inputTokens: decoded.usage?.inputTokens, outputTokens: decoded.usage?.outputTokens,
+                inputTokens: inputTokens, outputTokens: outputTokens,
                 projectIdentifier: projectUsageIdentifier
             )
-            onUsage?(decoded.usage?.inputTokens, decoded.usage?.outputTokens)
-            return finalResponseText
+            onUsage?(inputTokens, outputTokens)
+
+            return streamedText
         }
     }
 
@@ -136,13 +209,20 @@ final class AnthropicProvider: LLMProviderAdapter {
         let url = credential.baseURL.appendingPathComponent("messages")
 
         let messages = buildToolUseMessages(from: conversationItems)
-        let toolDefinitions = tools.map { tool in
+
+        // Build tool definitions with cache_control on the last tool
+        // so the entire tools array is cached across agent loop iterations.
+        let toolDefinitions: [AnthropicToolDefinitionItem] = tools.enumerated().map { index, tool in
             AnthropicToolDefinitionItem(
                 name: tool.name,
                 description: tool.description,
-                inputSchema: tool.parameters
+                inputSchema: tool.parameters,
+                cacheControl: index == tools.count - 1 ? .ephemeral : nil
             )
         }
+
+        // System prompt as cached block
+        let systemBlocks = [AnthropicSystemBlock.text(systemInstruction, cache: true)]
 
         let effort = executionOptions.reasoningEffort
         let timeoutSeconds = LLMProviderHelpers.timeoutSeconds(for: effort, configuration: configuration)
@@ -160,7 +240,7 @@ final class AnthropicProvider: LLMProviderAdapter {
 
             let requestBody = AnthropicToolUseRequest(
                 model: model,
-                system: systemInstruction,
+                system: systemBlocks,
                 messages: messages,
                 tools: toolDefinitions,
                 maxTokens: modelMaxOutput,
@@ -176,6 +256,7 @@ final class AnthropicProvider: LLMProviderAdapter {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
             request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+            request.setValue("prompt-caching-2024-07-31", forHTTPHeaderField: "anthropic-beta")
             applyAuthorizationHeaders(to: &request, credential: credential)
             request.httpBody = try jsonEncoder.encode(requestBody)
 
@@ -185,7 +266,7 @@ final class AnthropicProvider: LLMProviderAdapter {
             }
 
             if !(200...299).contains(httpResponse.statusCode) {
-                let data = try await consumeStreamBytes(bytes: bytes)
+                let data = try await LLMProviderHelpers.consumeStreamBytes(bytes: bytes)
                 if includeThinking,
                    LLMProviderHelpers.shouldFallbackThinkingConfiguration(responseBodyData: data) {
                     includeThinking = false
@@ -218,7 +299,7 @@ final class AnthropicProvider: LLMProviderAdapter {
         onStreamedText: (@MainActor (String) -> Void)?,
         onUsage: ((Int?, Int?) -> Void)?
     ) async throws -> AgentLLMResponse {
-        try await withAnthropicTimeout(seconds: timeoutSeconds + configuration.streamCompletionGraceSeconds) { [self] in
+        try await LLMProviderHelpers.withStreamTimeout(seconds: timeoutSeconds + configuration.streamCompletionGraceSeconds) { [self] in
             var streamedText = ""
             var thinkingText = ""
             var toolCalls: [AgentToolCall] = []
@@ -358,28 +439,6 @@ final class AnthropicProvider: LLMProviderAdapter {
         }
     }
 
-    private func consumeStreamBytes(bytes: URLSession.AsyncBytes) async throws -> Data {
-        var data = Data()
-        for try await byte in bytes { data.append(byte) }
-        return data
-    }
-
-    private func withAnthropicTimeout<T>(seconds: TimeInterval, operation: @escaping () async throws -> T) async throws -> T {
-        try await withThrowingTaskGroup(of: T.self) { group in
-            group.addTask { try await operation() }
-            group.addTask {
-                let nanoseconds = UInt64(max(1, seconds) * 1_000_000_000)
-                try await Task.sleep(nanoseconds: nanoseconds)
-                throw ProjectChatService.ServiceError.networkFailed(String(localized: "llm.error.request_timeout"))
-            }
-            guard let first = try await group.next() else {
-                group.cancelAll()
-                throw ProjectChatService.ServiceError.networkFailed(String(localized: "llm.error.request_failed"))
-            }
-            group.cancelAll()
-            return first
-        }
-    }
 
     // MARK: - Build Messages
 
@@ -457,45 +516,6 @@ final class AnthropicProvider: LLMProviderAdapter {
         return hints.contains { message.contains($0) }
     }
 
-    private func extractAnthropicText(from response: AnthropicMessageResponse, rawResponseData: Data) -> String {
-        let textFromContentBlocks = (response.content ?? [])
-            .compactMap { content -> String? in
-                guard (content.type?.lowercased() ?? "text") == "text" else { return nil }
-                let text = content.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                return text.isEmpty ? nil : text
-            }
-            .joined(separator: "\n")
-        if !textFromContentBlocks.isEmpty { return textFromContentBlocks }
-
-        guard let object = try? JSONSerialization.jsonObject(with: rawResponseData) as? [String: Any],
-              let contentBlocks = object["content"] as? [Any]
-        else { return "" }
-
-        let extracted = contentBlocks.compactMap { block -> String? in
-            guard let dictionary = block as? [String: Any] else { return nil }
-            if let text = dictionary["text"] as? String {
-                let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                return normalized.isEmpty ? nil : normalized
-            }
-            if let jsonPayload = dictionary["json"] {
-                return serializedJSONObjectString(from: jsonPayload)
-            }
-            if let inputPayload = dictionary["input"] {
-                return serializedJSONObjectString(from: inputPayload)
-            }
-            return nil
-        }
-        return extracted.joined(separator: "\n")
-    }
-
-    private func serializedJSONObjectString(from object: Any) -> String? {
-        guard JSONSerialization.isValidJSONObject(object),
-              let data = try? JSONSerialization.data(withJSONObject: object)
-        else { return nil }
-        let text = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return text.isEmpty ? nil : text
-    }
-
     // MARK: - Private types for non-tool-use requests
 
     private struct AnthropicMessageRequest: Encodable {
@@ -526,34 +546,19 @@ final class AnthropicProvider: LLMProviderAdapter {
         }
 
         let model: String
-        let system: String?
+        let system: [AnthropicSystemBlock]?
         let messages: [Message]
         let maxTokens: Int
+        let stream: Bool
         let thinking: Thinking?
         let outputConfig: OutputConfig?
 
         private enum CodingKeys: String, CodingKey {
-            case model, system, messages
+            case model, system, messages, stream
             case maxTokens = "max_tokens"
             case thinking
             case outputConfig = "output_config"
         }
     }
 
-    private struct AnthropicMessageResponse: Decodable {
-        struct Content: Decodable {
-            let type: String?
-            let text: String?
-        }
-        struct Usage: Decodable {
-            let inputTokens: Int?
-            let outputTokens: Int?
-            private enum CodingKeys: String, CodingKey {
-                case inputTokens = "input_tokens"
-                case outputTokens = "output_tokens"
-            }
-        }
-        let content: [Content]?
-        let usage: Usage?
-    }
 }

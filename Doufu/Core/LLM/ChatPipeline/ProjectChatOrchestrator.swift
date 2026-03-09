@@ -11,12 +11,18 @@ final class ProjectChatOrchestrator {
     private actor UsageAccumulator {
         private(set) var inputTokens: Int64 = 0
         private(set) var outputTokens: Int64 = 0
+        /// Most recent input token count from a single API call — used for
+        /// context-window-aware compaction decisions.
+        private(set) var lastSingleCallInputTokens: Int?
 
         func record(inputTokens: Int?, outputTokens: Int?) {
             let normalizedInput = max(0, inputTokens ?? 0)
             let normalizedOutput = max(0, outputTokens ?? 0)
             self.inputTokens += Int64(normalizedInput)
             self.outputTokens += Int64(normalizedOutput)
+            if normalizedInput > 0 {
+                lastSingleCallInputTokens = normalizedInput
+            }
         }
 
         var usage: ProjectChatService.RequestTokenUsage? {
@@ -145,12 +151,18 @@ final class ProjectChatOrchestrator {
         for iteration in 0 ..< configuration.maxAgentIterations {
             try Task.checkCancellation()
 
-            // Inject budget warning when approaching iteration limit
+            // Inject budget warning when approaching iteration limit.
+            // Append as a system-like user message. If the last item is already
+            // a userMessage (e.g. a continuation prompt), merge into it to
+            // avoid violating the user/assistant alternation constraint.
             if iteration == budgetWarningThreshold {
                 let remaining = configuration.maxAgentIterations - iteration
-                conversation.append(.userMessage(
-                    "[System: You have \(remaining) tool-use iterations remaining. Please complete your current task and provide a summary. Do not start new tasks.]"
-                ))
+                let warning = "[System: You have \(remaining) tool-use iterations remaining. Please complete your current task and provide a summary. Do not start new tasks.]"
+                if case let .userMessage(existingText) = conversation.last {
+                    conversation[conversation.count - 1] = .userMessage(existingText + "\n\n" + warning)
+                } else {
+                    conversation.append(.userMessage(warning))
+                }
             }
 
             // Stream text from the LLM response to the UI in real-time.
@@ -166,7 +178,8 @@ final class ProjectChatOrchestrator {
                 }
             }
 
-            compactConversationIfNeeded(&conversation, credential: credential)
+            let lastInputTokens = await usageAccumulator.lastSingleCallInputTokens
+            compactConversationIfNeeded(&conversation, credential: credential, lastInputTokens: lastInputTokens)
 
             let response = try await streamingClient.requestWithTools(
                 systemInstruction: systemPrompt,
@@ -201,7 +214,7 @@ final class ProjectChatOrchestrator {
                 if response.stopReason == .maxTokens {
                     conversation.append(.assistantMessage(text: responseText, toolCalls: []))
                     conversation.append(.userMessage("Please continue from where you left off."))
-                    debugLog("[Doufu Agent] response truncated (max_tokens), requesting continuation")
+                    LLMProviderHelpers.debugLog("[Doufu Agent] response truncated (max_tokens), requesting continuation")
                     continue
                 }
 
@@ -285,7 +298,7 @@ final class ProjectChatOrchestrator {
 
                 totalToolCalls += 1
                 if totalToolCalls > configuration.maxAgentIterations * configuration.maxToolCallsPerIteration {
-                    debugLog("[Doufu Agent] exceeded maximum total tool calls, stopping")
+                    LLMProviderHelpers.debugLog("[Doufu Agent] exceeded maximum total tool calls, stopping")
                     break
                 }
 
@@ -321,7 +334,7 @@ final class ProjectChatOrchestrator {
                 ))
             }
 
-            debugLog("[Doufu Agent] iteration \(iteration + 1): \(response.toolCalls.count) tool calls executed, \(allChangedPaths.count) files changed total")
+            LLMProviderHelpers.debugLog("[Doufu Agent] iteration \(iteration + 1): \(response.toolCalls.count) tool calls executed, \(allChangedPaths.count) files changed total")
         }
 
         // Max iterations reached
@@ -429,21 +442,28 @@ final class ProjectChatOrchestrator {
             try gitService.ensureRepository(at: projectURL)
             try gitService.createCheckpoint(projectURL: projectURL, userMessage: userMessage)
         } catch {
-            debugLog("[Doufu Agent] git checkpoint failed: \(error.localizedDescription)")
+            LLMProviderHelpers.debugLog("[Doufu Agent] git checkpoint failed: \(error.localizedDescription)")
         }
     }
 
     private func truncateToolResult(_ output: String) -> String {
-        guard output.count > configuration.maxToolResultCharacters else { return output }
-        return String(output.prefix(configuration.maxToolResultCharacters))
-            + "\n\n[Output truncated at \(configuration.maxToolResultCharacters) characters]"
+        let maxChars = configuration.maxToolResultCharacters
+        guard output.count > maxChars else { return output }
+        let cutoff = output.prefix(maxChars)
+        // Prefer cutting at a newline boundary to avoid mid-line truncation
+        if let lastNewline = cutoff.lastIndex(of: "\n") {
+            return String(cutoff[...lastNewline])
+                + "\n[Output truncated at \(maxChars) characters]"
+        }
+        return String(cutoff)
+            + "\n\n[Output truncated at \(maxChars) characters]"
     }
 
     /// Compact the conversation when it approaches the model's context window.
     ///
-    /// The budget is derived from the active model's known context window size
-    /// (via `ProjectChatConfiguration.maxConversationCharacters`), keeping a
-    /// safety margin for the system prompt and the next response.
+    /// When actual token counts from the API are available (after the first
+    /// iteration), compaction uses them directly for an accurate measurement.
+    /// Otherwise it falls back to character-based estimation.
     ///
     /// Compaction proceeds in four passes, each increasingly aggressive:
     /// 1. Compact re-readable tool results (read_file, list_directory) — model can re-read.
@@ -452,14 +472,29 @@ final class ProjectChatOrchestrator {
     /// 4. Drop the oldest conversation turns (preserving the most recent N items).
     private func compactConversationIfNeeded(
         _ conversation: inout [AgentConversationItem],
-        credential: ProjectChatService.ProviderCredential
+        credential: ProjectChatService.ProviderCredential,
+        lastInputTokens: Int? = nil
     ) {
-        let maxConversationChars = configuration.maxConversationCharacters(
-            contextWindowTokens: credential.profile.contextWindowTokens
-        )
+        let contextWindow = credential.profile.contextWindowTokens
 
-        var totalChars = conversationCharacterCount(conversation)
-        guard totalChars > maxConversationChars else { return }
+        // If we have actual token counts from the last API call, use them
+        // directly — this is far more accurate than character estimation.
+        if let inputTokens = lastInputTokens {
+            let usageRatio = Double(inputTokens) / Double(contextWindow)
+            guard usageRatio > configuration.compactionTargetRatio else { return }
+        } else {
+            let maxConversationChars = configuration.maxConversationCharacters(
+                contextWindowTokens: contextWindow
+            )
+            let totalChars = conversationCharacterCount(conversation)
+            guard totalChars > maxConversationChars else { return }
+        }
+
+        // Compaction target: character-based budget (used for pass thresholds)
+        let maxConversationChars = configuration.maxConversationCharacters(
+            contextWindowTokens: contextWindow
+        )
+        let totalChars = conversationCharacterCount(conversation)
 
         let protectedTail = configuration.compactionProtectedTailItems
         let compactableEnd = max(0, conversation.count - protectedTail)
@@ -685,9 +720,4 @@ final class ProjectChatOrchestrator {
         return (update, cleaned)
     }
 
-    private func debugLog(_ message: @autoclosure () -> String) {
-#if DEBUG
-        print(message())
-#endif
-    }
 }

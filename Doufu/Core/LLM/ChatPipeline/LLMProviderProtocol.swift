@@ -140,6 +140,31 @@ struct LLMProviderHelpers {
 #endif
     }
 
+    /// Shared stream-with-timeout wrapper used by both Anthropic and OpenAI providers.
+    static func withStreamTimeout<T>(seconds: TimeInterval, operation: @escaping () async throws -> T) async throws -> T {
+        try await withThrowingTaskGroup(of: T.self) { group in
+            group.addTask { try await operation() }
+            group.addTask {
+                let nanoseconds = UInt64(max(1, seconds) * 1_000_000_000)
+                try await Task.sleep(nanoseconds: nanoseconds)
+                throw ProjectChatService.ServiceError.networkFailed(String(localized: "llm.error.request_timeout"))
+            }
+            guard let first = try await group.next() else {
+                group.cancelAll()
+                throw ProjectChatService.ServiceError.networkFailed(String(localized: "llm.error.request_failed"))
+            }
+            group.cancelAll()
+            return first
+        }
+    }
+
+    /// Consume all remaining bytes from an async stream into Data (for error responses).
+    static func consumeStreamBytes(bytes: URLSession.AsyncBytes) async throws -> Data {
+        var data = Data()
+        for try await byte in bytes { data.append(byte) }
+        return data
+    }
+
     static func logFailedResponse(
         request: URLRequest,
         httpResponse: HTTPURLResponse,
