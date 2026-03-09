@@ -86,6 +86,15 @@
 3. `ResolvedModelProfile` 包含：reasoningEfforts, thinkingSupported, thinkingCanDisable, structuredOutputSupported, maxOutputTokens, contextWindowTokens。
 4. 下游消费者不应直接读取 model record，而是使用 resolved profile。
 
+## CDN 缓存注意事项
+
+1. URL 改写仅作用于 `handleStaticFileRequest` 返回的 HTML/CSS，不影响 JS 动态创建的元素。
+2. 改写只匹配 `https://` 绝对 URL，相对路径、`data:`、`blob:` 不受影响。
+3. `cache=1` 是缓存信号；JS 层 fetch/XHR 代理不携带此参数，因此 API 调用不会被缓存。
+4. 缓存目录位于系统 `Caches/CDNCache/`，iOS 可在存储压力时自动清除。
+5. 缓存写入在串行队列异步执行，不阻塞响应返回。
+6. 淘汰策略基于文件修改时间（读取时 touch），按 LRU 从 200 MB 淘汰到 150 MB。
+
 ## 调试与排障
 
 1. 聊天异常时优先看控制台：

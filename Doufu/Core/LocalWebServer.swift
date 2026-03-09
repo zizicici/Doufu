@@ -5,6 +5,7 @@
 //  Created by Codex on 2026/03/08.
 //
 
+import CryptoKit
 import Foundation
 import Network
 
@@ -256,6 +257,19 @@ final class LocalWebServer: @unchecked Sendable {
             return
         }
 
+        let shouldCache = parseQueryParam(named: "cache", from: request.query) == "1"
+
+        // If caching is enabled, try returning from disk cache first
+        if shouldCache, let cached = cdnCache.read(for: targetURLString) {
+            completion(self.buildResponse(
+                statusCode: cached.statusCode,
+                statusText: "OK",
+                body: cached.data,
+                contentType: cached.contentType
+            ))
+            return
+        }
+
         var urlRequest = URLRequest(url: targetURL)
         urlRequest.httpMethod = request.method
 
@@ -270,6 +284,16 @@ final class LocalWebServer: @unchecked Sendable {
             guard let self else { return }
 
             guard let httpResponse = response as? HTTPURLResponse else {
+                // Network failed — try stale cache as offline fallback
+                if shouldCache, let cached = self.cdnCache.read(for: targetURLString) {
+                    completion(self.buildResponse(
+                        statusCode: cached.statusCode,
+                        statusText: "OK",
+                        body: cached.data,
+                        contentType: cached.contentType
+                    ))
+                    return
+                }
                 let errorMessage = error?.localizedDescription ?? "Proxy request failed"
                 completion(self.buildResponse(
                     statusCode: 502,
@@ -281,6 +305,17 @@ final class LocalWebServer: @unchecked Sendable {
             }
 
             let responseBody = data ?? Data()
+
+            // Cache successful responses for CDN resources
+            if shouldCache, (200..<300).contains(httpResponse.statusCode) {
+                let ct = httpResponse.value(forHTTPHeaderField: "Content-Type") ?? "application/octet-stream"
+                self.cdnCache.write(
+                    for: targetURLString,
+                    data: responseBody,
+                    contentType: ct,
+                    statusCode: httpResponse.statusCode
+                )
+            }
 
             // Build raw HTTP response, forwarding status and headers
             let statusText = HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
@@ -337,8 +372,20 @@ final class LocalWebServer: @unchecked Sendable {
                                  body: Data("Not Found".utf8), contentType: "text/plain")
         }
 
-        let contentType = mimeType(for: finalURL.pathExtension)
-        return buildResponse(statusCode: 200, statusText: "OK", body: fileData, contentType: contentType)
+        let ext = finalURL.pathExtension.lowercased()
+        let contentType = mimeType(for: ext)
+
+        // Rewrite external URLs in HTML/CSS so CDN resources go through the local proxy
+        let body: Data
+        if (ext == "html" || ext == "htm"), let text = String(data: fileData, encoding: .utf8) {
+            body = Data(rewriteExternalURLsInHTML(text).utf8)
+        } else if ext == "css", let text = String(data: fileData, encoding: .utf8) {
+            body = Data(rewriteExternalURLsInCSS(text).utf8)
+        } else {
+            body = fileData
+        }
+
+        return buildResponse(statusCode: 200, statusText: "OK", body: body, contentType: contentType)
     }
 
     // MARK: - Response Builder
@@ -355,6 +402,72 @@ final class LocalWebServer: @unchecked Sendable {
         var response = Data(header.utf8)
         response.append(body)
         return response
+    }
+
+    // MARK: - CDN Cache
+
+    private lazy var cdnCache = CDNResourceCache()
+
+    /// Clears all cached CDN resources from disk.
+    func clearCDNCache() {
+        cdnCache.clearAll()
+    }
+
+    // MARK: - URL Rewriting
+
+    /// Rewrites external `https://` URLs in HTML content to go through the local proxy.
+    private func rewriteExternalURLsInHTML(_ html: String) -> String {
+        var result = html
+
+        // Rewrite src="https://..." and href="https://..."
+        let attrPattern = #"((?:src|href)\s*=\s*["'])(https://[^"']+)(["'])"#
+        result = rewriteMatches(in: result, pattern: attrPattern, urlGroup: 2, prefixGroup: 1, suffixGroup: 3)
+
+        // Rewrite url(https://...) in inline styles
+        result = rewriteExternalURLsInCSS(result)
+
+        return result
+    }
+
+    /// Rewrites external `https://` URLs in CSS `url(...)` references.
+    private func rewriteExternalURLsInCSS(_ css: String) -> String {
+        let urlPattern = #"(url\(\s*["']?)(https://[^"')]+)(["']?\s*\))"#
+        return rewriteMatches(in: css, pattern: urlPattern, urlGroup: 2, prefixGroup: 1, suffixGroup: 3)
+    }
+
+    /// Replaces regex matches, percent-encoding the captured URL into a proxy path.
+    private func rewriteMatches(in source: String, pattern: String, urlGroup: Int, prefixGroup: Int, suffixGroup: Int) -> String {
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { return source }
+        let nsString = source as NSString
+        let fullRange = NSRange(location: 0, length: nsString.length)
+        var result = ""
+        var lastEnd = 0
+
+        regex.enumerateMatches(in: source, range: fullRange) { match, _, _ in
+            guard let match else { return }
+            let prefixRange = match.range(at: prefixGroup)
+            let urlRange = match.range(at: urlGroup)
+            let suffixRange = match.range(at: suffixGroup)
+
+            // Append text before this match
+            result += nsString.substring(with: NSRange(location: lastEnd, length: match.range.location - lastEnd))
+
+            let prefix = nsString.substring(with: prefixRange)
+            let rawURL = nsString.substring(with: urlRange)
+            let suffix = nsString.substring(with: suffixRange)
+
+            // Must encode &, =, ?, #, + so the URL doesn't break the proxy query string
+            var allowed = CharacterSet.urlQueryAllowed
+            allowed.remove(charactersIn: "&=?#+")
+            let encoded = rawURL.addingPercentEncoding(withAllowedCharacters: allowed) ?? rawURL
+            result += "\(prefix)/__doufu_proxy__?url=\(encoded)&cache=1\(suffix)"
+
+            lastEnd = match.range.location + match.range.length
+        }
+
+        // Append remaining text
+        result += nsString.substring(from: lastEnd)
+        return result
     }
 
     // MARK: - MIME Types
@@ -385,6 +498,129 @@ final class LocalWebServer: @unchecked Sendable {
         case "md":            return "text/markdown; charset=utf-8"
         case "pdf":           return "application/pdf"
         default:              return "application/octet-stream"
+        }
+    }
+}
+
+// MARK: - CDN Resource Disk Cache
+
+/// Disk-based cache for CDN resources, stored in `Caches/CDNCache/`.
+/// Thread-safe via a serial dispatch queue. Enforces a 200 MB cap with LRU eviction.
+private final class CDNResourceCache: @unchecked Sendable {
+
+    struct CachedEntry {
+        let data: Data
+        let contentType: String
+        let statusCode: Int
+    }
+
+    private struct Meta: Codable {
+        let contentType: String
+        let statusCode: Int
+        let url: String
+    }
+
+    private let cacheDir: URL
+    private let queue = DispatchQueue(label: "com.doufu.cdncache")
+    private let maxBytes: Int = 200 * 1024 * 1024       // 200 MB
+    private let evictTargetBytes: Int = 150 * 1024 * 1024 // 150 MB
+
+    init() {
+        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        cacheDir = caches.appendingPathComponent("CDNCache", isDirectory: true)
+        try? FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
+    }
+
+    // MARK: Key derivation
+
+    private func cacheKey(for url: String) -> String {
+        let digest = SHA256.hash(data: Data(url.utf8))
+        return digest.map { String(format: "%02x", $0) }.joined()
+    }
+
+    private func dataFile(for key: String) -> URL { cacheDir.appendingPathComponent("\(key).data") }
+    private func metaFile(for key: String) -> URL { cacheDir.appendingPathComponent("\(key).meta") }
+
+    // MARK: Read
+
+    func read(for url: String) -> CachedEntry? {
+        queue.sync {
+            let key = cacheKey(for: url)
+            let df = dataFile(for: key)
+            let mf = metaFile(for: key)
+
+            guard let data = try? Data(contentsOf: df),
+                  let metaData = try? Data(contentsOf: mf),
+                  let meta = try? JSONDecoder().decode(Meta.self, from: metaData) else {
+                return nil
+            }
+
+            // Touch access date for LRU
+            let now = Date()
+            try? FileManager.default.setAttributes([.modificationDate: now], ofItemAtPath: df.path)
+            try? FileManager.default.setAttributes([.modificationDate: now], ofItemAtPath: mf.path)
+
+            return CachedEntry(data: data, contentType: meta.contentType, statusCode: meta.statusCode)
+        }
+    }
+
+    // MARK: Write
+
+    func write(for url: String, data: Data, contentType: String, statusCode: Int) {
+        queue.async { [self] in
+            let key = cacheKey(for: url)
+            let meta = Meta(contentType: contentType, statusCode: statusCode, url: url)
+
+            try? data.write(to: dataFile(for: key), options: .atomic)
+            if let metaData = try? JSONEncoder().encode(meta) {
+                try? metaData.write(to: metaFile(for: key), options: .atomic)
+            }
+
+            evictIfNeeded()
+        }
+    }
+
+    // MARK: Clear
+
+    func clearAll() {
+        queue.async { [self] in
+            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
+        }
+    }
+
+    // MARK: Eviction
+
+    private func evictIfNeeded() {
+        // dispatchPrecondition(condition: .onQueue(queue)) — called from queue.async already
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(at: cacheDir, includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey]) else { return }
+
+        var totalSize: Int = 0
+        struct FileInfo {
+            let url: URL
+            let size: Int
+            let modified: Date
+        }
+        var infos: [FileInfo] = []
+
+        for file in files {
+            guard let vals = try? file.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]) else { continue }
+            let size = vals.fileSize ?? 0
+            let date = vals.contentModificationDate ?? .distantPast
+            totalSize += size
+            infos.append(FileInfo(url: file, size: size, modified: date))
+        }
+
+        guard totalSize > maxBytes else { return }
+
+        // Sort oldest-accessed first
+        infos.sort { $0.modified < $1.modified }
+
+        for info in infos {
+            guard totalSize > evictTargetBytes else { break }
+            try? fm.removeItem(at: info.url)
+            totalSize -= info.size
         }
     }
 }

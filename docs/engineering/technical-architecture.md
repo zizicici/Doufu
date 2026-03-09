@@ -75,7 +75,7 @@
    - 设置风格复用 Cell 组件。
 8. `Doufu/Core/`
    - `UIColor+Doufu`：自定义颜色扩展。
-   - `LocalWebServer`：本地 Web 服务。
+   - `LocalWebServer`：本地 Web 服务，含 CDN 资源代理缓存。
    - `DoufuBridge`：JS 桥接。
    - `PiPProgressManager`：画中画进度管理。
 
@@ -198,3 +198,12 @@
 3. 密钥不写入项目目录，只在 Keychain 中保存。
 4. 调试日志默认脱敏请求体，避免泄露凭证。
 5. 工具权限分级，危险操作需用户确认。
+
+## CDN 资源缓存
+
+1. `LocalWebServer` 在返回 HTML/CSS 文件时，将 `https://` 外部资源 URL 改写为走本地 `/__doufu_proxy__?url=<encoded>&cache=1` 代理路径。
+2. Proxy 端检测 `cache=1` 参数时启用磁盘缓存（`Caches/CDNCache/`）：命中缓存直接返回，未命中则网络请求后缓存，网络失败时回退旧缓存。
+3. 缓存 Key 为 URL 的 SHA256，存储 `<hash>.data` + `<hash>.meta`（JSON: contentType, statusCode, url）。
+4. 容量上限 200 MB，超出按 LRU 淘汰到 150 MB；系统存储压力时可自动清除。
+5. fetch/XHR 发起的 API 请求不带 `cache=1`，不会被缓存。
+6. 提供 `clearCDNCache()` 公开方法供外部调用。
