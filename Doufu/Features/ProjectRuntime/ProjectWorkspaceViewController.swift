@@ -8,6 +8,12 @@
 import UIKit
 import WebKit
 
+class WK2WebView: WKWebView {
+    override var inputAccessoryView: UIView? {
+        return nil
+    }
+}
+
 final class ProjectWorkspaceViewController: UIViewController {
 
     private enum PanelSide {
@@ -65,11 +71,12 @@ final class ProjectWorkspaceViewController: UIViewController {
         )
         configuration.userContentController.addUserScript(script)
         configuration.userContentController.add(jsErrorMessageProxy, name: jsErrorHandlerName)
-        let view = WKWebView(frame: .zero, configuration: configuration)
+        let view = WK2WebView(frame: .zero, configuration: configuration)
         view.translatesAutoresizingMaskIntoConstraints = false
         view.navigationDelegate = self
         view.backgroundColor = .systemBackground
         view.scrollView.contentInsetAdjustmentBehavior = .never
+        view.setKeyboardRequiresUserInteraction(false)
         return view
     }()
 
