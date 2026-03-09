@@ -9,8 +9,17 @@ import UIKit
 import WebKit
 
 class WK2WebView: WKWebView {
+    /// Called before every reload so the caller can refresh injected user scripts.
+    var onBeforeReload: (() -> Void)?
+
     override var inputAccessoryView: UIView? {
         return nil
+    }
+
+    @discardableResult
+    override func reload() -> WKNavigation? {
+        onBeforeReload?()
+        return super.reload()
     }
 }
 
@@ -77,6 +86,16 @@ final class ProjectWorkspaceViewController: UIViewController {
         view.backgroundColor = .systemBackground
         view.scrollView.contentInsetAdjustmentBehavior = .never
         view.setKeyboardRequiresUserInteraction(false)
+        view.onBeforeReload = { [weak self] in
+            guard let self else { return }
+            self.doufuBridge.refreshStorageScript(on: configuration)
+            let errorScript = WKUserScript(
+                source: self.jsErrorBridgeScriptSource(),
+                injectionTime: .atDocumentStart,
+                forMainFrameOnly: false
+            )
+            configuration.userContentController.addUserScript(errorScript)
+        }
         return view
     }()
 
@@ -393,21 +412,6 @@ final class ProjectWorkspaceViewController: UIViewController {
         }
     }
 
-    /// Reload the WebView after refreshing the bridge's localStorage script
-    /// so the page sees the latest persisted data instead of a stale snapshot.
-    private func reloadWebView() {
-        let config = webView.configuration
-        doufuBridge.refreshStorageScript(on: config)
-        // Re-add the JS error capture script removed by refreshStorageScript.
-        let errorScript = WKUserScript(
-            source: jsErrorBridgeScriptSource(),
-            injectionTime: .atDocumentStart,
-            forMainFrameOnly: false
-        )
-        config.userContentController.addUserScript(errorScript)
-        webView.reload()
-    }
-
     private func currentSafeFrame() -> CGRect {
         view.safeAreaLayoutGuide.layoutFrame.insetBy(dx: panelMargin, dy: panelMargin)
     }
@@ -680,7 +684,7 @@ final class ProjectWorkspaceViewController: UIViewController {
     @objc
     private func didTapRefresh() {
         scheduleAutoCollapse()
-        reloadWebView()
+        webView.reload()
     }
 
     @objc
@@ -768,7 +772,7 @@ final class ProjectWorkspaceViewController: UIViewController {
             guard let self else { return }
             self.hasProjectBeenModified = true
             self.projectStore.touchProjectUpdatedAt(projectURL: self.projectURL)
-            self.reloadWebView()
+            self.webView.reload()
         }
 
         let navigationController = UINavigationController(rootViewController: chatController)
@@ -800,7 +804,7 @@ final class ProjectWorkspaceViewController: UIViewController {
             )
             self.title = updatedProjectName
             self.hasProjectBeenModified = true
-            self.reloadWebView()
+            self.webView.reload()
         }
         let navigationController = UINavigationController(rootViewController: settingsController)
         navigationController.modalPresentationStyle = .pageSheet
