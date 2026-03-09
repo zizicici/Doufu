@@ -394,7 +394,7 @@ final class AgentToolProvider {
                         "description": .string("Optional glob pattern to filter files, e.g. '*.js', '*.{html,css}'. Only files matching this pattern will be searched.")
                     ])
                 ]),
-                "required": .array([.string("query")]),
+                "required": .array([.string("query"), .string("path"), .string("include")]),
                 "additionalProperties": .bool(false)
             ])
         )
@@ -424,7 +424,7 @@ final class AgentToolProvider {
                         "description": .string("Whether the search is case-sensitive. Defaults to false.")
                     ])
                 ]),
-                "required": .array([.string("pattern")]),
+                "required": .array([.string("pattern"), .string("path"), .string("include"), .string("case_sensitive")]),
                 "additionalProperties": .bool(false)
             ])
         )
@@ -446,7 +446,7 @@ final class AgentToolProvider {
                         "description": .string("Optional directory to search in, relative to project root. Defaults to project root.")
                     ])
                 ]),
-                "required": .array([.string("pattern")]),
+                "required": .array([.string("pattern"), .string("path")]),
                 "additionalProperties": .bool(false)
             ])
         )
