@@ -294,7 +294,7 @@ final class AppProjectStore {
         <html lang="zh-CN">
           <head>
             <meta charset="UTF-8" />
-            <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+            <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
             <title>\(name)</title>
             <link rel="stylesheet" href="./style.css" />
           </head>
@@ -319,29 +319,37 @@ final class AppProjectStore {
 
         * {
           box-sizing: border-box;
+          -webkit-tap-highlight-color: transparent;
         }
 
-        body {
+        html, body {
           margin: 0;
-          min-height: 100dvh;
+          padding: 0;
+          height: 100dvh;
+          overflow: hidden;
           font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+          -webkit-text-size-adjust: 100%;
           background: #f8fafc;
           color: #0f172a;
         }
 
         .screen {
-          min-height: 100dvh;
+          height: 100dvh;
           padding:
-            calc(env(safe-area-inset-top) + 20px)
-            16px
-            calc(env(safe-area-inset-bottom) + 20px);
+            env(safe-area-inset-top)
+            env(safe-area-inset-right)
+            env(safe-area-inset-bottom)
+            env(safe-area-inset-left);
           display: flex;
           align-items: center;
           justify-content: center;
+          overflow-y: auto;
+          overscroll-behavior: contain;
         }
 
         .empty-card {
           width: min(520px, 100%);
+          margin: 20px 16px;
           background: #ffffff;
           border-radius: 18px;
           border: 1px solid #e2e8f0;
@@ -354,6 +362,8 @@ final class AppProjectStore {
           font-size: 12px;
           font-weight: 600;
           color: #64748b;
+          user-select: none;
+          -webkit-touch-callout: none;
         }
 
         h1 {
@@ -384,8 +394,9 @@ final class AppProjectStore {
         - Prioritize native-like interaction and behavior over visual decoration.
 
         ## Mobile-first requirements (MUST)
-        - Treat iPhone portrait as the default viewport.
-        - Respect Safe Area using `env(safe-area-inset-top/right/bottom/left)`.
+        - Treat iPhone portrait as the default viewport; however, landscape rotation may occur.
+          Layouts must remain usable in both orientations — do not hard-code portrait-only dimensions.
+        - Respect Safe Area using `env(safe-area-inset-top/right/bottom/left)` (insets change between orientations).
         - Keep the primary layout single-column unless explicitly requested.
         - Ensure touch targets are at least 44px tall.
         - Avoid desktop-only interaction patterns such as hover-dependent controls.
@@ -400,14 +411,16 @@ final class AppProjectStore {
         ## Selection policy (MUST)
         - Non-content UI text must be non-selectable:
           nav bars, tabs, buttons, chips, badges, card titles, tool labels.
+          Apply `user-select: none; -webkit-touch-callout: none` to these elements.
         - Only content text and form controls (`input`, `textarea`) may allow text selection.
-        - Disable long-press callout on non-content UI (`-webkit-touch-callout: none`).
+        - A convenient pattern: set `user-select: none` on the app root, then opt-in with `user-select: text` on content areas.
 
         ## Scroll model (MUST)
         - Use exactly one primary scroll container for page content.
-        - `html` and `body` must not be scrollable.
+        - `html` and `body` must not be scrollable (`overflow: hidden; height: 100dvh`).
+        - The main content container should use `overflow-y: auto; overscroll-behavior: contain`.
         - If content fits within the viewport, dragging must not move/stretch the whole page.
-        - Any secondary scrollable area must scroll only inside its own bounds.
+        - Any secondary scrollable area must scroll only inside its own bounds (`overscroll-behavior: contain`).
         - Prevent scroll chaining between nested containers.
 
         ## Layout & containment (MUST)

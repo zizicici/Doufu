@@ -43,20 +43,10 @@ final class PromptBuilder {
         - **Validate**: `validate_code` to check HTML/JS files for errors by loading them in a hidden browser. Validate once after completing a group of related changes — not after every single edit. If errors are found, fix them and validate again.
 
         ## Doufu Runtime Environment
-        Pages run inside a native iOS app (WKWebView served via localhost). The runtime provides these transparent enhancements — you do NOT need any special API:
-        - **fetch()**: Cross-origin requests work without CORS issues. Just use standard `fetch('https://...')` — the app automatically proxies them through the native network stack.
-        - **localStorage**: `localStorage.setItem/getItem/removeItem/clear` all work normally AND persist outside the browser — data survives cache clears and reinstalls. Use it confidently for app data storage.
-        - **IndexedDB**: Fully supported and persistent. Each project has an isolated data store, so databases won't conflict between projects. Use it for structured or large-volume data (e.g. offline records, media caches).
-
-        Because of these, you can freely `fetch()` any external API and use `localStorage` / `IndexedDB` for persistent data without worrying about CORS or data loss.
+        Pages run inside a native iOS app (WKWebView served via localhost). `fetch()` is CORS-free, `localStorage` and `IndexedDB` are natively persisted. No special SDK needed — see the project's AGENTS.md for full details.
 
         ## Mobile Web Guidelines
-        The default target device is an iPhone in portrait orientation. Follow these rules unless the user explicitly requests otherwise:
-        - Mobile-first layout: default to a single column; avoid desktop-style multi-column layouts.
-        - Handle Safe Area insets correctly (top/right/bottom/left via env(safe-area-inset-*)).
-        - Interactive controls must have a minimum touch target height of 44px.
-        - Do not rely on hover for critical interactions.
-        - Styling should be restrained, clear, and lightweight — closer to a native app than a traditional web page.
+        The default target device is an iPhone in portrait orientation. The project's AGENTS.md contains the authoritative mobile UX rules (Safe Area, scroll model, selection policy, etc.). Always follow AGENTS.md — it takes highest priority.
 
         ## Session Memory
         You receive a `<session-memory>` block with the current objective, constraints, changed files, and TODOs.
