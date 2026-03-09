@@ -28,7 +28,6 @@ final class ProjectSettingsViewController: UITableViewController {
     }
 
     private enum CheckpointRow: Int, CaseIterable {
-        case undo
         case history
     }
 
@@ -61,11 +60,6 @@ final class ProjectSettingsViewController: UITableViewController {
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "CheckpointCell")
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "ChatSettingCell")
 
-        navigationItem.leftBarButtonItem = UIBarButtonItem(
-            barButtonSystemItem: .close,
-            target: self,
-            action: #selector(didTapClose)
-        )
     }
 
     override func numberOfSections(in tableView: UITableView) -> Int {
@@ -175,22 +169,6 @@ final class ProjectSettingsViewController: UITableViewController {
             }
 
             switch row {
-            case .undo:
-                guard
-                    let cell = tableView.dequeueReusableCell(
-                        withIdentifier: SettingsCenteredButtonCell.reuseIdentifier,
-                        for: indexPath
-                    ) as? SettingsCenteredButtonCell
-                else {
-                    return UITableViewCell()
-                }
-                let hasCheckpoint = gitService.hasCheckpoint(projectURL: projectURL)
-                cell.configure(
-                    title: String(localized: "project_settings.checkpoint.undo_button"),
-                    isEnabled: hasCheckpoint
-                )
-                return cell
-
             case .history:
                 let cell = tableView.dequeueReusableCell(withIdentifier: "CheckpointCell", for: indexPath)
                 var configuration = cell.defaultContentConfiguration()
@@ -233,8 +211,6 @@ final class ProjectSettingsViewController: UITableViewController {
         case .checkpoints:
             guard let row = CheckpointRow(rawValue: indexPath.row) else { return }
             switch row {
-            case .undo:
-                undoLastCheckpoint()
             case .history:
                 openCheckpointsPage()
             }
@@ -309,52 +285,6 @@ final class ProjectSettingsViewController: UITableViewController {
     }
 
     // MARK: - Actions
-
-    @objc
-    private func didTapClose() {
-        dismiss(animated: true)
-    }
-
-    private func undoLastCheckpoint() {
-        let alert = UIAlertController(
-            title: String(localized: "checkpoint.alert.undo.title"),
-            message: String(localized: "checkpoint.alert.undo.message"),
-            preferredStyle: .alert
-        )
-        alert.addAction(UIAlertAction(title: String(localized: "common.action.cancel"), style: .cancel))
-        alert.addAction(UIAlertAction(title: String(localized: "checkpoint.action.undo"), style: .destructive) { [weak self] _ in
-            self?.performUndo()
-        })
-        present(alert, animated: true)
-    }
-
-    private func performUndo() {
-        do {
-            let didUndo = try gitService.undo(projectURL: projectURL)
-            if didUndo {
-                let latestProjectName = store.loadProjectName(projectURL: projectURL)
-                projectNameText = latestProjectName
-                onProjectUpdated?(latestProjectName)
-                tableView.reloadData()
-
-                let alert = UIAlertController(
-                    title: String(localized: "checkpoint.alert.undo_done.title"),
-                    message: String(localized: "checkpoint.alert.undo_done.message"),
-                    preferredStyle: .alert
-                )
-                alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
-                present(alert, animated: true)
-            }
-        } catch {
-            let alert = UIAlertController(
-                title: String(localized: "checkpoint.alert.undo_failed.title"),
-                message: error.localizedDescription,
-                preferredStyle: .alert
-            )
-            alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
-            present(alert, animated: true)
-        }
-    }
 
     private func openCheckpointsPage() {
         let controller = ProjectCheckpointsViewController(projectURL: projectURL)

@@ -286,7 +286,7 @@ final class ProjectChatViewController: UIViewController {
         do {
             threadIndex = try threadStore.loadOrCreateIndex(projectURL: projectURL)
             if let currentThreadID = threadIndex?.currentThreadID {
-                try switchToThread(threadID: currentThreadID, appendStatusMessage: false)
+                try switchToThread(threadID: currentThreadID)
             }
         } catch {
             appendMessage(role: .system, text: error.localizedDescription)
@@ -357,7 +357,6 @@ final class ProjectChatViewController: UIViewController {
                 selectedModelID = providerSelectedModel
             }
 
-            appendProviderStatusIfNeeded()
             refreshNavigationItems()
             refreshOfficialModels()
         } catch {
@@ -394,22 +393,6 @@ final class ProjectChatViewController: UIViewController {
             .contains(where: { $0.normalizedID == trimmed.lowercased() })
     }
 
-    private func appendProviderStatusIfNeeded() {
-        guard let credential = providerCredential else {
-            return
-        }
-        guard messages.isEmpty else {
-            return
-        }
-        _ = appendMessage(
-            role: .system,
-            text: String(
-                format: String(localized: "chat.system.provider_connected.message_format"),
-                credential.providerLabel
-            )
-        )
-        persistCurrentThreadMessages()
-    }
 
     private func refreshOfficialModels() {
         let providers = providerStore.loadProviders()
@@ -596,23 +579,17 @@ final class ProjectChatViewController: UIViewController {
     }
 
     private func buildThreadMenu() -> UIMenu {
-        let threadActions: [UIAction]
+        let threadActions: [UIMenuElement]
         if let index = threadIndex, !index.threads.isEmpty {
-            threadActions = index.threads
-                .sorted { lhs, rhs in
-                    if lhs.updatedAt == rhs.updatedAt {
-                        return lhs.createdAt > rhs.createdAt
-                    }
-                    return lhs.updatedAt > rhs.updatedAt
+            // Use index.threads order directly (matches management page order)
+            threadActions = index.threads.map { thread in
+                UIAction(
+                    title: thread.title,
+                    state: thread.id == currentThread?.id ? .on : .off
+                ) { [weak self] _ in
+                    self?.handleSwitchThread(threadID: thread.id)
                 }
-                .map { thread in
-                    UIAction(
-                        title: thread.title,
-                        state: thread.id == currentThread?.id ? .on : .off
-                    ) { [weak self] _ in
-                        self?.handleSwitchThread(threadID: thread.id)
-                    }
-                }
+            }
         } else {
             threadActions = [
                 UIAction(title: String(localized: "chat.menu.no_thread"), attributes: .disabled) { _ in }
@@ -625,7 +602,14 @@ final class ProjectChatViewController: UIViewController {
         ) { [weak self] _ in
             self?.createAndSwitchThread()
         }
-        return UIMenu(title: String(localized: "chat.thread.button_title"), children: threadActions + [createAction])
+        let manageAction = UIAction(
+            title: String(localized: "chat.menu.manage_threads"),
+            image: UIImage(systemName: "list.bullet")
+        ) { [weak self] _ in
+            self?.presentThreadManagement()
+        }
+        let actionsSubmenu = UIMenu(title: "", options: .displayInline, children: [createAction, manageAction])
+        return UIMenu(title: String(localized: "chat.thread.button_title"), children: threadActions + [actionsSubmenu])
     }
 
     private func buildMoreMenu() -> UIMenu {
@@ -1055,7 +1039,7 @@ final class ProjectChatViewController: UIViewController {
             return
         }
         do {
-            try switchToThread(threadID: threadID, appendStatusMessage: true)
+            try switchToThread(threadID: threadID)
         } catch {
             appendMessage(role: .system, text: error.localizedDescription)
         }
@@ -1072,8 +1056,7 @@ final class ProjectChatViewController: UIViewController {
             guard let currentThreadID = threadIndex?.currentThreadID else {
                 throw LocalError.noThreadAvailable
             }
-            try switchToThread(threadID: currentThreadID, appendStatusMessage: false)
-            _ = appendMessage(role: .system, text: String(localized: "chat.system.thread_created"))
+            try switchToThread(threadID: currentThreadID)
             persistCurrentThreadMessages()
             refreshNavigationItems()
         } catch {
@@ -1081,7 +1064,30 @@ final class ProjectChatViewController: UIViewController {
         }
     }
 
-    private func switchToThread(threadID: String, appendStatusMessage: Bool) throws {
+    private func presentThreadManagement() {
+        guard !isSending else { return }
+        let vc = ThreadManagementViewController(projectURL: projectURL)
+        vc.onChanged = { [weak self] in
+            guard let self else { return }
+            do {
+                threadIndex = try threadStore.loadOrCreateIndex(projectURL: projectURL)
+                if let currentThreadID = threadIndex?.currentThreadID,
+                   currentThreadID != currentThread?.id {
+                    try switchToThread(threadID: currentThreadID)
+                } else if let currentThreadID = threadIndex?.currentThreadID {
+                    // Reload in case rename happened
+                    currentThread = threadIndex?.threads.first(where: { $0.id == currentThreadID })
+                }
+                refreshNavigationItems()
+            } catch {
+                appendMessage(role: .system, text: error.localizedDescription)
+            }
+        }
+        let nav = UINavigationController(rootViewController: vc)
+        present(nav, animated: true)
+    }
+
+    private func switchToThread(threadID: String) throws {
         persistCurrentThreadMessages()
         persistCurrentThreadModelSelection()
         if let currentThread {
@@ -1135,14 +1141,6 @@ final class ProjectChatViewController: UIViewController {
                 toolSummary: persistedMessage.toolSummary
             )
         }
-
-        if appendStatusMessage {
-            _ = appendMessage(
-                role: .system,
-                text: String(format: String(localized: "chat.system.thread_switched.message_format"), switched.title)
-            )
-        }
-        appendProviderStatusIfNeeded()
 
         tableView.reloadData()
         scrollToBottomIfNeeded()

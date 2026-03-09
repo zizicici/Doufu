@@ -13,7 +13,7 @@ final class ProjectTokenUsageViewController: TokenUsageDashboardViewController {
         super.init(
             titleText: String(localized: "chat.project_usage.title"),
             projectIdentifier: projectUsageIdentifier,
-            includeDoneButton: true
+            includeDoneButton: false
         )
     }
 

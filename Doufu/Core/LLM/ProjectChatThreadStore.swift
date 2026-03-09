@@ -206,6 +206,81 @@ final class ProjectChatThreadStore {
         return thread
     }
 
+    func renameThread(projectURL: URL, threadID: String, newTitle: String) throws {
+        var index = try loadOrCreateIndex(projectURL: projectURL)
+        guard let threadIndex = index.threads.firstIndex(where: { $0.id == threadID }) else {
+            throw ProjectChatThreadStoreError.threadNotFound
+        }
+        let trimmed = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        index.threads[threadIndex].title = trimmed
+        index.threads[threadIndex].updatedAt = Date()
+        try saveIndex(index, projectURL: projectURL)
+    }
+
+    func deleteThread(projectURL: URL, threadID: String) throws {
+        var index = try loadOrCreateIndex(projectURL: projectURL)
+        guard let threadIndex = index.threads.firstIndex(where: { $0.id == threadID }) else {
+            throw ProjectChatThreadStoreError.threadNotFound
+        }
+        let thread = index.threads[threadIndex]
+        index.threads.remove(at: threadIndex)
+
+        // Clean up message file
+        let messagesURL = messagesFileURL(projectURL: projectURL, threadID: threadID)
+        try? fileManager.removeItem(at: messagesURL)
+
+        // Clean up memory files
+        for version in 0 ... thread.currentVersion {
+            let memoryURL = threadMemoryFileURL(projectURL: projectURL, threadID: threadID, version: version)
+            try? fileManager.removeItem(at: memoryURL)
+        }
+
+        // If deleted thread was current, switch to another
+        if index.currentThreadID == threadID {
+            index.currentThreadID = index.threads.first?.id ?? ""
+        }
+
+        if index.threads.isEmpty {
+            // Create a fresh default thread
+            let now = Date()
+            let newThread = ProjectChatThreadRecord(
+                id: makeThreadID(),
+                title: String(localized: "thread.default_title"),
+                createdAt: now,
+                updatedAt: now,
+                currentVersion: 0
+            )
+            index.threads.append(newThread)
+            index.currentThreadID = newThread.id
+            try writeThreadMemory(
+                projectURL: projectURL,
+                threadID: newThread.id,
+                version: 0,
+                content: initialThreadMemoryContent(threadID: newThread.id, version: 0, previousSummary: nil)
+            )
+        }
+
+        try saveIndex(index, projectURL: projectURL)
+    }
+
+    func reorderThreads(projectURL: URL, orderedIDs: [String]) throws {
+        var index = try loadOrCreateIndex(projectURL: projectURL)
+        let lookup = Dictionary(uniqueKeysWithValues: index.threads.map { ($0.id, $0) })
+        var reordered: [ProjectChatThreadRecord] = []
+        for id in orderedIDs {
+            if let thread = lookup[id] {
+                reordered.append(thread)
+            }
+        }
+        // Append any threads not in orderedIDs (safety)
+        for thread in index.threads where !orderedIDs.contains(thread.id) {
+            reordered.append(thread)
+        }
+        index.threads = reordered
+        try saveIndex(index, projectURL: projectURL)
+    }
+
     func loadMessages(projectURL: URL, threadID: String) -> [ProjectChatPersistedMessage] {
         let fileURL = messagesFileURL(projectURL: projectURL, threadID: threadID)
         guard let data = try? Data(contentsOf: fileURL) else {

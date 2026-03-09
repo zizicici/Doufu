@@ -26,12 +26,18 @@ final class ChatMessageCell: UITableViewCell {
         return view
     }()
 
-    private let messageLabel: UILabel = {
-        let label = UILabel()
-        label.translatesAutoresizingMaskIntoConstraints = false
-        label.numberOfLines = 0
-        label.font = .systemFont(ofSize: 15)
-        return label
+    private let messageTextView: UITextView = {
+        let tv = UITextView()
+        tv.translatesAutoresizingMaskIntoConstraints = false
+        tv.isEditable = false
+        tv.isScrollEnabled = false
+        tv.isSelectable = true
+        tv.font = .systemFont(ofSize: 15)
+        tv.backgroundColor = .clear
+        tv.textContainerInset = .zero
+        tv.textContainer.lineFragmentPadding = 0
+        tv.dataDetectorTypes = .link
+        return tv
     }()
 
     private let metaLabel: UILabel = {
@@ -52,7 +58,7 @@ final class ChatMessageCell: UITableViewCell {
         contentView.backgroundColor = .clear
 
         contentView.addSubview(bubbleContainer)
-        bubbleContainer.addSubview(messageLabel)
+        bubbleContainer.addSubview(messageTextView)
         bubbleContainer.addSubview(metaLabel)
 
         leadingConstraint = bubbleContainer.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 10)
@@ -65,10 +71,10 @@ final class ChatMessageCell: UITableViewCell {
             trailingConstraint,
             bubbleContainer.widthAnchor.constraint(lessThanOrEqualTo: contentView.widthAnchor, multiplier: 0.92),
 
-            messageLabel.topAnchor.constraint(equalTo: bubbleContainer.topAnchor, constant: 10),
-            messageLabel.leadingAnchor.constraint(equalTo: bubbleContainer.leadingAnchor, constant: 12),
-            messageLabel.trailingAnchor.constraint(equalTo: bubbleContainer.trailingAnchor, constant: -12),
-            metaLabel.topAnchor.constraint(equalTo: messageLabel.bottomAnchor, constant: 8),
+            messageTextView.topAnchor.constraint(equalTo: bubbleContainer.topAnchor, constant: 10),
+            messageTextView.leadingAnchor.constraint(equalTo: bubbleContainer.leadingAnchor, constant: 12),
+            messageTextView.trailingAnchor.constraint(equalTo: bubbleContainer.trailingAnchor, constant: -12),
+            metaLabel.topAnchor.constraint(equalTo: messageTextView.bottomAnchor, constant: 8),
             metaLabel.leadingAnchor.constraint(equalTo: bubbleContainer.leadingAnchor, constant: 12),
             metaLabel.trailingAnchor.constraint(equalTo: bubbleContainer.trailingAnchor, constant: -12),
             metaLabel.bottomAnchor.constraint(equalTo: bubbleContainer.bottomAnchor, constant: -10)
@@ -86,11 +92,12 @@ final class ChatMessageCell: UITableViewCell {
         let useMarkdown = message.role == .assistant && (message.finishedAt != nil || !message.isProgress)
 
         if useMarkdown {
-            messageLabel.attributedText = MarkdownRenderer.render(message.text)
+            messageTextView.attributedText = MarkdownRenderer.render(message.text)
         } else {
             let animatedText = displayText(for: message, now: now)
-            messageLabel.attributedText = nil
-            messageLabel.text = animatedText
+            messageTextView.attributedText = nil
+            messageTextView.text = animatedText
+            messageTextView.font = .systemFont(ofSize: 15)
         }
 
         switch message.role {
@@ -99,8 +106,9 @@ final class ChatMessageCell: UITableViewCell {
             leadingConstraint.isActive = false
             bubbleContainer.backgroundColor = tintColor
             if !useMarkdown {
-                messageLabel.textColor = .white
+                messageTextView.textColor = .white
             }
+            messageTextView.linkTextAttributes = [.foregroundColor: UIColor.white, .underlineStyle: NSUnderlineStyle.single.rawValue]
             metaLabel.textColor = UIColor.white.withAlphaComponent(0.78)
             bubbleContainer.layer.borderColor = UIColor.clear.cgColor
         case .assistant:
@@ -108,8 +116,9 @@ final class ChatMessageCell: UITableViewCell {
             leadingConstraint.isActive = true
             bubbleContainer.backgroundColor = .secondarySystemGroupedBackground
             if !useMarkdown {
-                messageLabel.textColor = .label
+                messageTextView.textColor = .label
             }
+            messageTextView.linkTextAttributes = [.foregroundColor: UIColor.systemBlue, .underlineStyle: NSUnderlineStyle.single.rawValue]
             metaLabel.textColor = .secondaryLabel
             if message.isProgress && message.finishedAt == nil {
                 bubbleContainer.layer.borderColor = tintColor.withAlphaComponent(0.45).cgColor
@@ -120,7 +129,8 @@ final class ChatMessageCell: UITableViewCell {
             trailingConstraint.isActive = false
             leadingConstraint.isActive = true
             bubbleContainer.backgroundColor = UIColor.systemYellow.withAlphaComponent(0.24)
-            messageLabel.textColor = .secondaryLabel
+            messageTextView.textColor = .secondaryLabel
+            messageTextView.linkTextAttributes = [.foregroundColor: UIColor.systemBlue, .underlineStyle: NSUnderlineStyle.single.rawValue]
             metaLabel.textColor = .tertiaryLabel
             bubbleContainer.layer.borderColor = UIColor.clear.cgColor
         }
