@@ -71,7 +71,7 @@ final class PiPProgressManager: NSObject {
     // MARK: - App Lifecycle
 
     @objc private func appWillResignActive() {
-        guard isActive, isEnabled, (hasActiveTask || isFinished) else { return }
+        guard isActive, isEnabled, hasActiveTask else { return }
         startAudioPlayer()
         pipController?.startPictureInPicture()
     }
@@ -122,34 +122,36 @@ final class PiPProgressManager: NSObject {
 
     /// Call when the task completes successfully.
     func taskDidComplete() {
-        guard isActive else {
-            hasActiveTask = false
-            return
-        }
         hasActiveTask = false
-        isFinished = true
-        finishedStatusText = String(localized: "pip.status.completed")
-        stopAudioPlayer()
-        stopRefreshTimer()
-        freezeElapsedTime()
-        pushFrame()
-        playChime()
+        guard isActive else { return }
+        if isPiPShowing {
+            isFinished = true
+            finishedStatusText = String(localized: "pip.status.completed")
+            stopAudioPlayer()
+            stopRefreshTimer()
+            freezeElapsedTime()
+            pushFrame()
+            playChime()
+        } else {
+            tearDown()
+        }
     }
 
     /// Call when the task fails with an error.
     func taskDidFail(_ message: String? = nil) {
-        guard isActive else {
-            hasActiveTask = false
-            return
-        }
         hasActiveTask = false
-        isFinished = true
-        finishedStatusText = message ?? String(localized: "pip.status.failed")
-        stopAudioPlayer()
-        stopRefreshTimer()
-        freezeElapsedTime()
-        pushFrame()
-        playChime()
+        guard isActive else { return }
+        if isPiPShowing {
+            isFinished = true
+            finishedStatusText = message ?? String(localized: "pip.status.failed")
+            stopAudioPlayer()
+            stopRefreshTimer()
+            freezeElapsedTime()
+            pushFrame()
+            playChime()
+        } else {
+            tearDown()
+        }
     }
 
     /// Call when the task is cancelled.
