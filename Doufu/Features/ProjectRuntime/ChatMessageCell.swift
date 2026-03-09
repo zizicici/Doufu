@@ -48,6 +48,17 @@ final class ChatMessageCell: UITableViewCell {
         return label
     }()
 
+    private let expandButton: UIButton = {
+        let button = UIButton(type: .system)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        let config = UIImage.SymbolConfiguration(pointSize: 13, weight: .medium)
+        button.setImage(UIImage(systemName: "chevron.right.circle", withConfiguration: config), for: .normal)
+        button.isHidden = true
+        return button
+    }()
+
+    var onExpandTapped: (() -> Void)?
+
     private var leadingConstraint: NSLayoutConstraint!
     private var trailingConstraint: NSLayoutConstraint!
 
@@ -60,6 +71,9 @@ final class ChatMessageCell: UITableViewCell {
         contentView.addSubview(bubbleContainer)
         bubbleContainer.addSubview(messageTextView)
         bubbleContainer.addSubview(metaLabel)
+        bubbleContainer.addSubview(expandButton)
+
+        expandButton.addTarget(self, action: #selector(expandButtonTapped), for: .touchUpInside)
 
         leadingConstraint = bubbleContainer.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 10)
         trailingConstraint = bubbleContainer.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -10)
@@ -76,14 +90,25 @@ final class ChatMessageCell: UITableViewCell {
             messageTextView.trailingAnchor.constraint(equalTo: bubbleContainer.trailingAnchor, constant: -12),
             metaLabel.topAnchor.constraint(equalTo: messageTextView.bottomAnchor, constant: 8),
             metaLabel.leadingAnchor.constraint(equalTo: bubbleContainer.leadingAnchor, constant: 12),
-            metaLabel.trailingAnchor.constraint(equalTo: bubbleContainer.trailingAnchor, constant: -12),
-            metaLabel.bottomAnchor.constraint(equalTo: bubbleContainer.bottomAnchor, constant: -10)
+            metaLabel.bottomAnchor.constraint(equalTo: bubbleContainer.bottomAnchor, constant: -10),
+
+            expandButton.centerYAnchor.constraint(equalTo: metaLabel.centerYAnchor),
+            expandButton.trailingAnchor.constraint(equalTo: bubbleContainer.trailingAnchor, constant: -12),
+            expandButton.leadingAnchor.constraint(greaterThanOrEqualTo: metaLabel.trailingAnchor, constant: 8),
         ])
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        onExpandTapped = nil
+        expandButton.isHidden = true
+        messageTextView.textContainer.maximumNumberOfLines = 0
+        messageTextView.textContainer.lineBreakMode = .byWordWrapping
     }
 
     func configure(message: ProjectChatViewController.Message, now: Date) {
@@ -98,6 +123,16 @@ final class ChatMessageCell: UITableViewCell {
             messageTextView.attributedText = nil
             messageTextView.text = animatedText
             messageTextView.font = .systemFont(ofSize: 15)
+        }
+
+        if message.isProgress {
+            messageTextView.textContainer.maximumNumberOfLines = 6
+            messageTextView.textContainer.lineBreakMode = .byTruncatingTail
+            expandButton.isHidden = false
+        } else {
+            messageTextView.textContainer.maximumNumberOfLines = 0
+            messageTextView.textContainer.lineBreakMode = .byWordWrapping
+            expandButton.isHidden = true
         }
 
         switch message.role {
@@ -134,6 +169,10 @@ final class ChatMessageCell: UITableViewCell {
             metaLabel.textColor = .tertiaryLabel
             bubbleContainer.layer.borderColor = UIColor.clear.cgColor
         }
+    }
+
+    @objc private func expandButtonTapped() {
+        onExpandTapped?()
     }
 
     private func displayText(for message: ProjectChatViewController.Message, now: Date) -> String {

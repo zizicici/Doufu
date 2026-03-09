@@ -32,6 +32,7 @@ final class PiPProgressManager: NSObject {
     private var hasActiveTask = false
     private var isPiPShowing = false
     private var isFinished = false
+    private var needsUserAction = false
 
     // MARK: - PiP Infrastructure
 
@@ -125,6 +126,16 @@ final class PiPProgressManager: NSObject {
     func updateStatus(_ text: String) {
         guard hasActiveTask else { return }
         currentStatusText = text
+        needsUserAction = false
+        if isActive {
+            pushFrame()
+        }
+    }
+
+    /// Call when the task is waiting for user confirmation (e.g. tool authorization).
+    func setNeedsUserAction() {
+        guard hasActiveTask else { return }
+        needsUserAction = true
         if isActive {
             pushFrame()
         }
@@ -440,6 +451,28 @@ final class PiPProgressManager: NSObject {
             (finishedText as NSString).draw(
                 at: CGPoint(x: bannerTextX, y: bannerTextY),
                 withAttributes: bannerAttributes
+            )
+            y += 36
+        }
+
+        // User action needed banner
+        if needsUserAction {
+            let actionText = String(localized: "pip.status.needs_action")
+            let actionBannerRect = CGRect(x: padding, y: y, width: contentWidth, height: 30)
+            UIColor.systemOrange.withAlphaComponent(0.9).setFill()
+            UIBezierPath(roundedRect: actionBannerRect, cornerRadius: 6).fill()
+
+            let actionFont = UIFont.systemFont(ofSize: 14, weight: .semibold)
+            let actionAttributes: [NSAttributedString.Key: Any] = [
+                .font: actionFont,
+                .foregroundColor: UIColor.white,
+            ]
+            let actionTextSize = (actionText as NSString).size(withAttributes: actionAttributes)
+            let actionTextX = padding + (contentWidth - actionTextSize.width) / 2
+            let actionTextY = y + (30 - actionTextSize.height) / 2
+            (actionText as NSString).draw(
+                at: CGPoint(x: actionTextX, y: actionTextY),
+                withAttributes: actionAttributes
             )
             y += 36
         }

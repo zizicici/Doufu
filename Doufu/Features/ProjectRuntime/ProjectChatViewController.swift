@@ -58,15 +58,17 @@ final class ProjectChatViewController: UIViewController {
     private var selectedProviderID: String?
     private var sessionMemory: ProjectChatService.SessionMemory?
     private var threadSessionMemories: [String: ProjectChatService.SessionMemory] = [:]
-    private var isSending = false
-    private var sendTask: Task<Void, Never>?
-    private var didCancelCurrentRequest = false
+    private lazy var taskCoordinator: ChatTaskCoordinator = {
+        let coordinator = ChatTaskCoordinator(chatService: chatService)
+        coordinator.delegate = self
+        return coordinator
+    }()
     private var didAppendCancelMessage = false
     private var lastProgressPhaseText: String?
     private var activeProgressMessageID: UUID?
     private var currentRequestStartedAt: Date?
     private var progressUIUpdateTimer: Timer?
-    private var streamedCharacterCount: Int = 0
+    private var streamedTextBuffer: String = ""
     private var threadIndex: ProjectChatThreadIndex?
     private var currentThread: ProjectChatThreadRecord?
     private var selectedModelID: String?
@@ -204,7 +206,7 @@ final class ProjectChatViewController: UIViewController {
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        if isSending {
+        if taskCoordinator.isExecuting {
             startProgressUIUpdateTimerIfNeeded()
         }
         refreshVisibleMessageCellsForDynamicState()
@@ -225,17 +227,18 @@ final class ProjectChatViewController: UIViewController {
     }
 
     private func refreshNavigationItems() {
+        let isExecuting = taskCoordinator.isExecuting
         threadBarButtonItem.title = currentThread?.title ?? String(localized: "chat.thread.button_title")
-        threadBarButtonItem.menu = isSending ? nil : buildThreadMenu()
-        threadBarButtonItem.isEnabled = !isSending
+        threadBarButtonItem.menu = isExecuting ? nil : buildThreadMenu()
+        threadBarButtonItem.isEnabled = !isExecuting
         navigationItem.leftBarButtonItem = threadBarButtonItem
         modelBarButtonItem.image = UIImage(systemName: "theatermask.and.paintbrush")
         modelBarButtonItem.accessibilityLabel = currentModelMenuButtonTitle()
         modelBarButtonItem.menu = nil
-        modelBarButtonItem.isEnabled = !isSending && providerCredential != nil
-        usageBarButtonItem.isEnabled = !isSending
-        moreBarButtonItem.menu = isSending ? nil : buildMoreMenu()
-        moreBarButtonItem.isEnabled = !isSending
+        modelBarButtonItem.isEnabled = !isExecuting && providerCredential != nil
+        usageBarButtonItem.isEnabled = true
+        moreBarButtonItem.menu = isExecuting ? buildExecutingMoreMenu() : buildMoreMenu()
+        moreBarButtonItem.isEnabled = true
     }
 
     private func configureLayout() {
@@ -625,6 +628,27 @@ final class ProjectChatViewController: UIViewController {
         ) { [weak self] _ in
             self?.presentProjectSettings()
         }
+        let closeAction = UIAction(
+            title: String(localized: "common.action.close"),
+            image: UIImage(systemName: "xmark"),
+            attributes: .destructive
+        ) { [weak self] _ in
+            self?.didTapClose()
+        }
+        return UIMenu(children: [filesAction, settingsAction, closeAction])
+    }
+
+    private func buildExecutingMoreMenu() -> UIMenu {
+        let filesAction = UIAction(
+            title: String(localized: "workspace.panel.files"),
+            image: UIImage(systemName: "folder"),
+            attributes: .disabled
+        ) { _ in }
+        let settingsAction = UIAction(
+            title: String(localized: "workspace.panel.settings"),
+            image: UIImage(systemName: "gearshape"),
+            attributes: .disabled
+        ) { _ in }
         let closeAction = UIAction(
             title: String(localized: "common.action.close"),
             image: UIImage(systemName: "xmark"),
@@ -1035,7 +1059,7 @@ final class ProjectChatViewController: UIViewController {
     }
 
     private func handleSwitchThread(threadID: String) {
-        guard !isSending else {
+        guard !taskCoordinator.isExecuting else {
             return
         }
         do {
@@ -1046,7 +1070,7 @@ final class ProjectChatViewController: UIViewController {
     }
 
     private func createAndSwitchThread() {
-        guard !isSending else {
+        guard !taskCoordinator.isExecuting else {
             return
         }
         do {
@@ -1065,7 +1089,7 @@ final class ProjectChatViewController: UIViewController {
     }
 
     private func presentThreadManagement() {
-        guard !isSending else { return }
+        guard !taskCoordinator.isExecuting else { return }
         let vc = ThreadManagementViewController(projectURL: projectURL)
         vc.onChanged = { [weak self] in
             guard let self else { return }
@@ -1283,6 +1307,7 @@ final class ProjectChatViewController: UIViewController {
     private func stopProgressUIUpdateTimer() {
         progressUIUpdateTimer?.invalidate()
         progressUIUpdateTimer = nil
+        refreshVisibleMessageCellsForDynamicState()
     }
 
     private func refreshVisibleMessageCellsForDynamicState() {
@@ -1297,6 +1322,9 @@ final class ProjectChatViewController: UIViewController {
             }
             cell.configure(message: messages[indexPath.row], now: now)
         }
+        // Trigger row height recalculation after cell content changes.
+        tableView.beginUpdates()
+        tableView.endUpdates()
     }
 
     private func scrollToBottomIfNeeded() {
@@ -1339,7 +1367,7 @@ final class ProjectChatViewController: UIViewController {
         let now = Date()
         finalizeActiveProgressMessage(finishedAt: now)
         lastProgressPhaseText = normalizedText
-        streamedCharacterCount = 0
+        streamedTextBuffer = ""
         if let index = appendMessage(
             role: .assistant,
             text: normalizedText,
@@ -1352,21 +1380,20 @@ final class ProjectChatViewController: UIViewController {
     }
 
     private func updateStreamedProgress(_ chunk: String) {
-        streamedCharacterCount += chunk.count
+        streamedTextBuffer = chunk
         guard let activeProgressMessageID,
               let index = messages.firstIndex(where: { $0.id == activeProgressMessageID }),
               let baseText = lastProgressPhaseText else {
             return
         }
-        let countText: String
-        if streamedCharacterCount >= 1000 {
-            countText = String(format: "%.1fK", Double(streamedCharacterCount) / 1000)
+        let trimmed = streamedTextBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            messages[index].text = baseText
         } else {
-            countText = "\(streamedCharacterCount)"
+            messages[index].text = baseText + "\n" + trimmed
         }
-        let updatedText = baseText + String(format: String(localized: "chat.streaming.char_count_format"), countText)
-        messages[index].text = updatedText
-        refreshVisibleMessageCellsForDynamicState()
+        // UI refresh is handled by the 0.4s progressUIUpdateTimer;
+        // no need to refresh on every streaming chunk.
     }
 
     private func currentInputText() -> String {
@@ -1393,7 +1420,7 @@ final class ProjectChatViewController: UIViewController {
         let hasText = !currentInputText().isEmpty
         let hasProvider = providerCredential != nil
         let hasThread = currentThread != nil
-        if isSending {
+        if taskCoordinator.isExecuting {
             sendButton.isEnabled = true
             var configuration = sendButton.configuration ?? UIButton.Configuration.filled()
             configuration.image = UIImage(systemName: "stop")
@@ -1412,8 +1439,8 @@ final class ProjectChatViewController: UIViewController {
             sendButton.configuration = configuration
             sendButton.accessibilityLabel = String(localized: "chat.action.send")
         }
-        inputTextView.isEditable = !isSending
-        inputTextView.alpha = isSending ? 0.72 : 1.0
+        inputTextView.isEditable = !taskCoordinator.isExecuting
+        inputTextView.alpha = taskCoordinator.isExecuting ? 0.72 : 1.0
         refreshNavigationItems()
     }
 
@@ -1460,7 +1487,7 @@ final class ProjectChatViewController: UIViewController {
 
     @objc
     private func didTapModelSettings() {
-        guard !isSending else {
+        guard !taskCoordinator.isExecuting else {
             return
         }
 
@@ -1523,9 +1550,6 @@ final class ProjectChatViewController: UIViewController {
 
     @objc
     private func didTapProjectUsage() {
-        guard !isSending else {
-            return
-        }
         let controller = ProjectTokenUsageViewController(
             projectUsageIdentifier: projectIdentifier
         )
@@ -1654,7 +1678,7 @@ final class ProjectChatViewController: UIViewController {
 
     @objc
     private func didTapSend() {
-        if isSending {
+        if taskCoordinator.isExecuting {
             cancelCurrentRequest(showMessage: true)
             return
         }
@@ -1667,166 +1691,53 @@ final class ProjectChatViewController: UIViewController {
             _ = appendMessage(role: .system, text: LocalError.noAvailableProvider.localizedDescription)
             return
         }
-        guard let currentThread else {
+        guard currentThread != nil else {
             _ = appendMessage(role: .system, text: LocalError.noThreadAvailable.localizedDescription)
             return
         }
         guard ensureModelSelectionForSend(providerCredential: baseProviderCredential) else {
             return
         }
-        let providerCredential = runtimeCredential(from: baseProviderCredential)
+        let credential = runtimeCredential(from: baseProviderCredential)
 
         inputTextView.text = ""
         refreshInputPlaceholder()
         updateInputTextViewHeight()
         _ = appendMessage(role: .user, text: userInput)
         inputTextView.resignFirstResponder()
+
         let historyTurns = buildHistoryTurns()
         currentRequestStartedAt = Date()
-        isSending = true
-        didCancelCurrentRequest = false
         didAppendCancelMessage = false
         lastProgressPhaseText = nil
         activeProgressMessageID = nil
-        streamedCharacterCount = 0
+        streamedTextBuffer = ""
         startProgressUIUpdateTimerIfNeeded()
-        PiPProgressManager.shared.taskDidStart(projectName: projectName, projectURL: projectURL)
         persistCurrentThreadMessages()
+
+        let request = ChatTaskCoordinator.Request(
+            userMessage: userInput,
+            history: historyTurns,
+            projectIdentifier: projectIdentifier,
+            projectName: projectName,
+            projectURL: projectURL,
+            credential: credential,
+            memory: sessionMemory,
+            executionOptions: executionOptions(for: credential),
+            confirmationHandler: self,
+            permissionMode: toolPermissionMode,
+            validationServerBaseURL: validationServerBaseURL,
+            validationBridge: validationBridge
+        )
+        taskCoordinator.execute(request)
         refreshSendButton()
-
-        sendTask = Task { [weak self] in
-            guard let self else { return }
-            defer {
-                finalizeActiveProgressMessage()
-                stopProgressUIUpdateTimer()
-                sendTask = nil
-                didCancelCurrentRequest = false
-                didAppendCancelMessage = false
-                lastProgressPhaseText = nil
-                activeProgressMessageID = nil
-                currentRequestStartedAt = nil
-                isSending = false
-                refreshSendButton()
-                persistCurrentThreadMessages()
-            }
-
-            do {
-                let requestExecutionOptions = self.executionOptions(for: providerCredential)
-                let result = try await chatService.sendAndApply(
-                    userMessage: userInput,
-                    history: historyTurns,
-                    projectIdentifier: projectIdentifier,
-                    projectURL: projectURL,
-                    credential: providerCredential,
-                    memory: sessionMemory,
-                    executionOptions: requestExecutionOptions,
-                    confirmationHandler: self,
-                    permissionMode: toolPermissionMode,
-                    validationServerBaseURL: validationServerBaseURL,
-                    validationBridge: validationBridge,
-                    onStreamedText: { [weak self] chunk in
-                        guard let self else {
-                            return
-                        }
-                        self.updateStreamedProgress(chunk)
-                    },
-                    onProgress: { [weak self] event in
-                        guard let self else {
-                            return
-                        }
-                        self.handleToolProgressEvent(event)
-                    }
-                )
-
-                sessionMemory = result.updatedMemory
-                threadSessionMemories[currentThread.id] = result.updatedMemory
-
-                finalizeActiveProgressMessage()
-                var assistantText = result.assistantMessage
-                if !result.changedPaths.isEmpty {
-                    let changesSummary = result.changedPaths.joined(separator: ", ")
-                    assistantText += String(
-                        format: String(localized: "chat.system.files_updated.append_format"),
-                        changesSummary
-                    )
-                }
-                _ = appendMessage(
-                    role: .assistant,
-                    text: assistantText,
-                    startedAt: currentRequestStartedAt,
-                    requestTokenUsage: result.requestTokenUsage,
-                    toolSummary: result.toolActivitySummary
-                )
-
-                do {
-                    try threadStore.touchThread(
-                        projectURL: projectURL,
-                        threadID: currentThread.id
-                    )
-                    // Refresh the thread record's updatedAt
-                    if var index = self.threadIndex {
-                        if let threadIdx = index.threads.firstIndex(where: { $0.id == currentThread.id }) {
-                            index.threads[threadIdx].updatedAt = Date()
-                            self.threadIndex = index
-                        }
-                    }
-                } catch {
-                    _ = appendMessage(
-                        role: .system,
-                        text: String(
-                            format: String(localized: "chat.system.memory_update_failed.message_format"),
-                            error.localizedDescription
-                        )
-                    )
-                }
-
-                if !result.changedPaths.isEmpty {
-                    onProjectFilesUpdated?()
-                }
-
-                PiPProgressManager.shared.taskDidComplete()
-            } catch is CancellationError {
-                finalizeActiveProgressMessage()
-                if !didAppendCancelMessage {
-                    _ = appendMessage(
-                        role: .system,
-                        text: String(localized: "chat.system.request_cancelled"),
-                        startedAt: currentRequestStartedAt
-                    )
-                    didAppendCancelMessage = true
-                }
-                PiPProgressManager.shared.taskDidCancel()
-            } catch {
-                if didCancelCurrentRequest {
-                    finalizeActiveProgressMessage()
-                    if !didAppendCancelMessage {
-                        _ = appendMessage(
-                            role: .system,
-                            text: String(localized: "chat.system.request_cancelled"),
-                            startedAt: currentRequestStartedAt
-                        )
-                        didAppendCancelMessage = true
-                    }
-                    PiPProgressManager.shared.taskDidCancel()
-                    return
-                }
-                finalizeActiveProgressMessage()
-                _ = appendMessage(
-                    role: .system,
-                    text: error.localizedDescription,
-                    startedAt: currentRequestStartedAt
-                )
-                PiPProgressManager.shared.taskDidFail(error.localizedDescription)
-            }
-        }
     }
 
     private func cancelCurrentRequest(showMessage: Bool) {
-        guard isSending else {
+        guard taskCoordinator.isExecuting else {
             return
         }
-        didCancelCurrentRequest = true
-        sendTask?.cancel()
+        taskCoordinator.cancel()
         if showMessage, !didAppendCancelMessage {
             _ = appendMessage(
                 role: .system,
@@ -1855,6 +1766,21 @@ extension ProjectChatViewController: UITableViewDataSource {
 
         let message = messages[indexPath.row]
         cell.configure(message: message, now: Date())
+
+        if message.isProgress {
+            cell.onExpandTapped = { [weak self] in
+                guard let self else { return }
+                let fullText = self.messages[indexPath.row].text
+                let detailVC = MessageDetailViewController(text: fullText)
+                let nav = UINavigationController(rootViewController: detailVC)
+                nav.modalPresentationStyle = .pageSheet
+                if let sheet = nav.sheetPresentationController {
+                    sheet.detents = [.large()]
+                }
+                self.present(nav, animated: true)
+            }
+        }
+
         return cell
     }
 }
@@ -1875,7 +1801,8 @@ extension ProjectChatViewController: ToolConfirmationHandler {
         tier: ToolPermissionTier,
         description: String
     ) async -> Bool {
-        await withCheckedContinuation { continuation in
+        PiPProgressManager.shared.setNeedsUserAction()
+        return await withCheckedContinuation { continuation in
             let title: String
             let allowStyle: UIAlertAction.Style
             switch tier {
@@ -1939,6 +1866,98 @@ extension ProjectChatViewController {
             displayText = event.displayText
         }
         appendProgressMessageIfNeeded(displayText)
-        PiPProgressManager.shared.updateStatus(event.displayText)
+    }
+}
+
+// MARK: - ChatTaskCoordinatorDelegate
+
+extension ProjectChatViewController: ChatTaskCoordinatorDelegate {
+    func coordinatorDidReceiveStreamedText(_ chunk: String) {
+        updateStreamedProgress(chunk)
+    }
+
+    func coordinatorDidReceiveProgressEvent(_ event: ToolProgressEvent) {
+        handleToolProgressEvent(event)
+    }
+
+    func coordinatorDidCompleteWithResult(_ result: ChatTaskResult) {
+        guard let currentThread else { return }
+
+        sessionMemory = result.updatedMemory
+        threadSessionMemories[currentThread.id] = result.updatedMemory
+
+        finalizeActiveProgressMessage()
+        var assistantText = result.assistantMessage
+        if !result.changedPaths.isEmpty {
+            let changesSummary = result.changedPaths.joined(separator: ", ")
+            assistantText += String(
+                format: String(localized: "chat.system.files_updated.append_format"),
+                changesSummary
+            )
+        }
+        _ = appendMessage(
+            role: .assistant,
+            text: assistantText,
+            startedAt: currentRequestStartedAt,
+            requestTokenUsage: result.requestTokenUsage,
+            toolSummary: result.toolActivitySummary
+        )
+
+        do {
+            try threadStore.touchThread(
+                projectURL: projectURL,
+                threadID: currentThread.id
+            )
+            if var index = self.threadIndex {
+                if let threadIdx = index.threads.firstIndex(where: { $0.id == currentThread.id }) {
+                    index.threads[threadIdx].updatedAt = Date()
+                    self.threadIndex = index
+                }
+            }
+        } catch {
+            _ = appendMessage(
+                role: .system,
+                text: String(
+                    format: String(localized: "chat.system.memory_update_failed.message_format"),
+                    error.localizedDescription
+                )
+            )
+        }
+
+        if !result.changedPaths.isEmpty {
+            onProjectFilesUpdated?()
+        }
+    }
+
+    func coordinatorDidCancel() {
+        finalizeActiveProgressMessage()
+        if !didAppendCancelMessage {
+            _ = appendMessage(
+                role: .system,
+                text: String(localized: "chat.system.request_cancelled"),
+                startedAt: currentRequestStartedAt
+            )
+            didAppendCancelMessage = true
+        }
+    }
+
+    func coordinatorDidFailWithError(_ error: Error) {
+        finalizeActiveProgressMessage()
+        _ = appendMessage(
+            role: .system,
+            text: error.localizedDescription,
+            startedAt: currentRequestStartedAt
+        )
+    }
+
+    func coordinatorDidFinishExecution() {
+        finalizeActiveProgressMessage()
+        stopProgressUIUpdateTimer()
+        didAppendCancelMessage = false
+        lastProgressPhaseText = nil
+        activeProgressMessageID = nil
+        currentRequestStartedAt = nil
+        refreshSendButton()
+        persistCurrentThreadMessages()
     }
 }
