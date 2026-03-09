@@ -163,6 +163,7 @@ final class ProjectChatService {
     func sendAndApply(
         userMessage: String,
         history: [ChatTurn],
+        projectIdentifier: String,
         projectURL: URL,
         credential: ProviderCredential,
         memory: SessionMemory? = nil,
@@ -178,6 +179,7 @@ final class ProjectChatService {
         try await orchestrator.sendAndApply(
             userMessage: userMessage,
             history: history,
+            projectIdentifier: projectIdentifier,
             projectURL: projectURL,
             credential: credential,
             memory: memory,

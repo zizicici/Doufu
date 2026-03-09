@@ -20,8 +20,7 @@ final class ProjectWorkspaceViewController: UIViewController {
         case collapsed(PanelSide)
     }
 
-    private var projectName: String
-    private let projectURL: URL
+    private(set) var project: AppProjectRecord
     private let isNewlyCreated: Bool
     private let projectStore = AppProjectStore.shared
     var onDismissed: (() -> Void)?
@@ -53,8 +52,7 @@ final class ProjectWorkspaceViewController: UIViewController {
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
         // Per-project data store: IndexedDB, cookies, cache are isolated per project
         // and persist independently of git checkpoints.
-        let projectID = projectURL.lastPathComponent
-        if let storeID = UUID(uuidString: String(projectID.dropFirst("project-".count))) {
+        if let storeID = UUID(uuidString: String(projectIdentifier.dropFirst("project-".count))) {
             configuration.websiteDataStore = WKWebsiteDataStore(forIdentifier: storeID)
         }
         // Doufu Bridge (fetch proxy + localStorage persistence) — must be first
@@ -180,12 +178,15 @@ final class ProjectWorkspaceViewController: UIViewController {
         return button
     }()
 
-    init(projectName: String, projectURL: URL, isNewlyCreated: Bool) {
-        self.projectName = projectName
-        self.projectURL = projectURL
+    private var projectIdentifier: String { project.id }
+    private var projectName: String { project.name }
+    private var projectURL: URL { project.projectURL }
+
+    init(project: AppProjectRecord, isNewlyCreated: Bool) {
+        self.project = project
         self.isNewlyCreated = isNewlyCreated
-        self.webServer = LocalWebServer(projectURL: projectURL)
-        self.doufuBridge = DoufuBridge(projectURL: projectURL)
+        self.webServer = LocalWebServer(projectURL: project.projectURL)
+        self.doufuBridge = DoufuBridge(projectURL: project.projectURL)
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -733,13 +734,13 @@ final class ProjectWorkspaceViewController: UIViewController {
     }
 
     private func presentChatController(readOnly: Bool) {
-        let chatController = ProjectChatViewController(projectName: projectName, projectURL: projectURL)
+        let chatController = ProjectChatViewController(project: project)
         chatController.isReadOnly = readOnly
         chatController.validationServerBaseURL = webServer.baseURL
         // Use a temp bridge for validation so localStorage writes don't pollute real user data.
         let tempStorageDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("doufu_validation", isDirectory: true)
-            .appendingPathComponent(projectURL.lastPathComponent, isDirectory: true)
+            .appendingPathComponent(projectIdentifier, isDirectory: true)
         chatController.validationBridge = DoufuBridge(projectURL: projectURL, storageDirectoryOverride: tempStorageDir)
         chatController.onProjectFilesUpdated = { [weak self] in
             guard let self else { return }
@@ -767,7 +768,14 @@ final class ProjectWorkspaceViewController: UIViewController {
         )
         settingsController.onProjectUpdated = { [weak self] updatedProjectName in
             guard let self else { return }
-            self.projectName = updatedProjectName
+            self.project = AppProjectRecord(
+                id: self.project.id,
+                name: updatedProjectName,
+                projectURL: self.project.projectURL,
+                entryFileURL: self.project.entryFileURL,
+                createdAt: self.project.createdAt,
+                updatedAt: Date()
+            )
             self.title = updatedProjectName
             self.hasProjectBeenModified = true
             self.webView.reload()

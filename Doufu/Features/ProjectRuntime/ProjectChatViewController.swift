@@ -45,8 +45,7 @@ final class ProjectChatViewController: UIViewController {
         let toolSummary: String?
     }
 
-    private var projectName: String
-    private let projectURL: URL
+    private var project: AppProjectRecord
     private let chatService = ProjectChatService()
     private let providerStore = LLMProviderSettingsStore.shared
     private let projectModelStore = ProjectModelSelectionStore.shared
@@ -167,9 +166,12 @@ final class ProjectChatViewController: UIViewController {
         return button
     }()
 
-    init(projectName: String, projectURL: URL) {
-        self.projectName = projectName
-        self.projectURL = projectURL
+    private var projectIdentifier: String { project.id }
+    private var projectName: String { project.name }
+    private var projectURL: URL { project.projectURL }
+
+    init(project: AppProjectRecord) {
+        self.project = project
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -1517,7 +1519,7 @@ final class ProjectChatViewController: UIViewController {
         let controller = ProjectModelConfigurationViewController(
             providers: availableProviderCredentials,
             initialState: selectionState,
-            projectUsageIdentifier: projectURL.standardizedFileURL.path
+            projectUsageIdentifier: projectIdentifier
         )
         controller.onSelectionStateChanged = { [weak self] state in
             self?.applyModelConfigurationSelectionState(state)
@@ -1538,7 +1540,7 @@ final class ProjectChatViewController: UIViewController {
             return
         }
         let controller = ProjectTokenUsageViewController(
-            projectUsageIdentifier: projectURL.standardizedFileURL.path
+            projectUsageIdentifier: projectIdentifier
         )
         let navigationController = UINavigationController(rootViewController: controller)
         navigationController.modalPresentationStyle = .pageSheet
@@ -1635,7 +1637,14 @@ final class ProjectChatViewController: UIViewController {
         )
         settingsController.onProjectUpdated = { [weak self] updatedProjectName in
             guard let self else { return }
-            self.projectName = updatedProjectName
+            self.project = AppProjectRecord(
+                id: self.project.id,
+                name: updatedProjectName,
+                projectURL: self.project.projectURL,
+                entryFileURL: self.project.entryFileURL,
+                createdAt: self.project.createdAt,
+                updatedAt: Date()
+            )
             self.onProjectFilesUpdated?()
         }
         settingsController.onToolPermissionModeChanged = { [weak self] mode in
@@ -1720,6 +1729,7 @@ final class ProjectChatViewController: UIViewController {
                 let result = try await chatService.sendAndApply(
                     userMessage: userInput,
                     history: historyTurns,
+                    projectIdentifier: projectIdentifier,
                     projectURL: projectURL,
                     credential: providerCredential,
                     memory: sessionMemory,

@@ -51,6 +51,7 @@ final class ProjectChatOrchestrator {
     func sendAndApply(
         userMessage: String,
         history: [ProjectChatService.ChatTurn],
+        projectIdentifier: String,
         projectURL: URL,
         credential: ProjectChatService.ProviderCredential,
         memory: ProjectChatService.SessionMemory? = nil,
@@ -172,7 +173,7 @@ final class ProjectChatOrchestrator {
                 conversationItems: conversation,
                 tools: toolProvider.toolDefinitions(),
                 credential: credential,
-                projectUsageIdentifier: projectURL.standardizedFileURL.path,
+                projectUsageIdentifier: projectIdentifier,
                 executionOptions: executionOptions,
                 onStreamedText: streamCallback,
                 onUsage: { inputTokens, outputTokens in

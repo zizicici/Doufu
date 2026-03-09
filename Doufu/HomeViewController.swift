@@ -137,7 +137,7 @@ final class HomeViewController: UIViewController {
         do {
             let project = try projectStore.createBlankProject()
             reloadProjects()
-            openProject(name: project.name, projectURL: project.projectURL, isNewlyCreated: true, cellIndexPath: nil)
+            openProject(project, isNewlyCreated: true, cellIndexPath: nil)
         } catch {
             showPlaceholderAlert(title: String(localized: "home.alert.create_failed.title"), message: error.localizedDescription)
         }
@@ -408,10 +408,18 @@ final class HomeViewController: UIViewController {
     }
 
     private func openProject(_ project: HomeProjectItem, at indexPath: IndexPath? = nil) {
-        openProject(name: project.name, projectURL: project.projectURL, isNewlyCreated: false, cellIndexPath: indexPath)
+        let record = AppProjectRecord(
+            id: project.id,
+            name: project.name,
+            projectURL: project.projectURL,
+            entryFileURL: project.projectURL.appendingPathComponent("index.html"),
+            createdAt: project.updatedAt,
+            updatedAt: project.updatedAt
+        )
+        openProject(record, isNewlyCreated: false, cellIndexPath: indexPath)
     }
 
-    private func openProject(name: String, projectURL: URL, isNewlyCreated: Bool, cellIndexPath: IndexPath? = nil) {
+    private func openProject(_ project: AppProjectRecord, isNewlyCreated: Bool, cellIndexPath: IndexPath? = nil) {
         // Compute origin frame from the tapped cell
         if let indexPath = cellIndexPath,
            let cell = collectionView.cellForItem(at: indexPath) {
@@ -428,8 +436,7 @@ final class HomeViewController: UIViewController {
         }
 
         let controller = ProjectWorkspaceViewController(
-            projectName: name,
-            projectURL: projectURL,
+            project: project,
             isNewlyCreated: isNewlyCreated
         )
         controller.modalPresentationStyle = .fullScreen

@@ -496,16 +496,17 @@ class TokenUsageDashboardViewController: UITableViewController {
         providerByID: [String: LLMProviderRecord]
     ) -> DisplayDailyRecord {
         let deletedProvider = String(localized: "chat.project_usage.deleted_provider")
-        let deletedModel = String(localized: "chat.project_usage.deleted_model")
 
         if let provider = providerByID[record.providerID] {
             let normalizedProviderLabel = provider.label.trimmingCharacters(in: .whitespacesAndNewlines)
             let providerTitle = normalizedProviderLabel.isEmpty ? provider.kind.displayName : normalizedProviderLabel
 
-            let isModelAvailable = provider.availableModels.contains {
+            // Use the display name from the model record if available,
+            // otherwise fall back to the raw model ID stored in usage data.
+            let matchedModel = provider.availableModels.first {
                 $0.modelID.caseInsensitiveCompare(record.model) == .orderedSame
             }
-            let modelTitle = isModelAvailable ? record.model : deletedModel
+            let modelTitle = matchedModel?.effectiveDisplayName ?? record.model
             return DisplayDailyRecord(
                 dayKey: record.dayKey,
                 providerTitle: providerTitle,
@@ -518,7 +519,7 @@ class TokenUsageDashboardViewController: UITableViewController {
         return DisplayDailyRecord(
             dayKey: record.dayKey,
             providerTitle: deletedProvider,
-            modelTitle: deletedModel,
+            modelTitle: record.model,
             inputTokens: record.inputTokens,
             outputTokens: record.outputTokens
         )

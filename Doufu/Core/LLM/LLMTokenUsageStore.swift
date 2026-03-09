@@ -53,13 +53,14 @@ final class LLMTokenUsageStore {
     private let decoder = JSONDecoder()
     private let recordsKey = "llm.token_usage.records.v1"
     private let dailyRecordsKey = "llm.token_usage.daily_records.v1"
+    private let queue = DispatchQueue(label: "com.doufu.token-usage-store", qos: .utility)
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
     }
 
     func loadRecords(projectIdentifier: String? = nil) -> [LLMTokenUsageRecord] {
-        let rawRecords = loadRawRecords()
+        let rawRecords = queue.sync { loadRawRecords() }
         let normalizedProjectIdentifier = normalizeProjectIdentifier(projectIdentifier)
         let filteredRecords: [LLMTokenUsageRecord]
         if let normalizedProjectIdentifier {
@@ -94,7 +95,7 @@ final class LLMTokenUsageStore {
     }
 
     func loadDailyRecords(projectIdentifier: String? = nil) -> [LLMTokenUsageDailyRecord] {
-        let rawRecords = loadRawDailyRecords()
+        let rawRecords = queue.sync { loadRawDailyRecords() }
         let normalizedProjectIdentifier = normalizeProjectIdentifier(projectIdentifier)
         let filteredRecords: [LLMTokenUsageDailyRecord]
         if let normalizedProjectIdentifier {
@@ -147,64 +148,70 @@ final class LLMTokenUsageStore {
             return
         }
 
-        var records = loadRawRecords()
-        let now = Date()
-        let lookupKey = usageLookupKey(
-            providerID: normalizedProviderID,
-            model: normalizedModel,
-            projectIdentifier: normalizedProjectIdentifier
-        )
-        if let index = records.firstIndex(where: {
-            usageLookupKey(
-                providerID: $0.providerID,
-                model: $0.model,
-                projectIdentifier: normalizeProjectIdentifier($0.projectIdentifier)
-            ) == lookupKey
-        }) {
-            let existing = records[index]
-            records[index] = LLMTokenUsageRecord(
-                projectIdentifier: normalizedProjectIdentifier,
-                providerID: existing.providerID,
-                providerLabel: normalizedProviderLabel.isEmpty ? existing.providerLabel : normalizedProviderLabel,
-                model: existing.model,
-                inputTokens: existing.inputTokens + Int64(normalizedInput),
-                outputTokens: existing.outputTokens + Int64(normalizedOutput),
-                updatedAt: now
+        queue.sync {
+            var records = loadRawRecords()
+            let now = Date()
+            let lookupKey = usageLookupKey(
+                providerID: normalizedProviderID,
+                model: normalizedModel,
+                projectIdentifier: normalizedProjectIdentifier
             )
-        } else {
-            records.append(
-                LLMTokenUsageRecord(
+            if let index = records.firstIndex(where: {
+                usageLookupKey(
+                    providerID: $0.providerID,
+                    model: $0.model,
+                    projectIdentifier: normalizeProjectIdentifier($0.projectIdentifier)
+                ) == lookupKey
+            }) {
+                let existing = records[index]
+                records[index] = LLMTokenUsageRecord(
                     projectIdentifier: normalizedProjectIdentifier,
-                    providerID: normalizedProviderID,
-                    providerLabel: normalizedProviderLabel.isEmpty ? normalizedProviderID : normalizedProviderLabel,
-                    model: normalizedModel,
-                    inputTokens: Int64(normalizedInput),
-                    outputTokens: Int64(normalizedOutput),
+                    providerID: existing.providerID,
+                    providerLabel: normalizedProviderLabel.isEmpty ? existing.providerLabel : normalizedProviderLabel,
+                    model: existing.model,
+                    inputTokens: existing.inputTokens + Int64(normalizedInput),
+                    outputTokens: existing.outputTokens + Int64(normalizedOutput),
                     updatedAt: now
                 )
+            } else {
+                records.append(
+                    LLMTokenUsageRecord(
+                        projectIdentifier: normalizedProjectIdentifier,
+                        providerID: normalizedProviderID,
+                        providerLabel: normalizedProviderLabel.isEmpty ? normalizedProviderID : normalizedProviderLabel,
+                        model: normalizedModel,
+                        inputTokens: Int64(normalizedInput),
+                        outputTokens: Int64(normalizedOutput),
+                        updatedAt: now
+                    )
+                )
+            }
+
+            saveRecords(records)
+            upsertDailyUsageRecord(
+                providerID: normalizedProviderID,
+                providerLabel: normalizedProviderLabel.isEmpty ? normalizedProviderID : normalizedProviderLabel,
+                model: normalizedModel,
+                inputTokens: Int64(normalizedInput),
+                outputTokens: Int64(normalizedOutput),
+                projectIdentifier: normalizedProjectIdentifier,
+                timestamp: now
             )
         }
-
-        saveRecords(records)
-        upsertDailyUsageRecord(
-            providerID: normalizedProviderID,
-            providerLabel: normalizedProviderLabel.isEmpty ? normalizedProviderID : normalizedProviderLabel,
-            model: normalizedModel,
-            inputTokens: Int64(normalizedInput),
-            outputTokens: Int64(normalizedOutput),
-            projectIdentifier: normalizedProjectIdentifier,
-            timestamp: now
-        )
     }
 
     private func loadRawRecords() -> [LLMTokenUsageRecord] {
-        guard
-            let data = defaults.data(forKey: recordsKey),
-            let records = try? decoder.decode([LLMTokenUsageRecord].self, from: data)
-        else {
+        guard let data = defaults.data(forKey: recordsKey) else {
             return []
         }
-        return records
+        do {
+            return try decoder.decode([LLMTokenUsageRecord].self, from: data)
+        } catch {
+            #if DEBUG
+            print("[LLMTokenUsageStore] Failed to decode records: \(error)")
+            #endif
+            return []
+        }
     }
 
     private func aggregateRecords(
@@ -251,13 +258,17 @@ final class LLMTokenUsageStore {
     }
 
     private func loadRawDailyRecords() -> [LLMTokenUsageDailyRecord] {
-        guard
-            let data = defaults.data(forKey: dailyRecordsKey),
-            let records = try? decoder.decode([LLMTokenUsageDailyRecord].self, from: data)
-        else {
+        guard let data = defaults.data(forKey: dailyRecordsKey) else {
             return []
         }
-        return records
+        do {
+            return try decoder.decode([LLMTokenUsageDailyRecord].self, from: data)
+        } catch {
+            #if DEBUG
+            print("[LLMTokenUsageStore] Failed to decode daily records: \(error)")
+            #endif
+            return []
+        }
     }
 
     private func upsertDailyUsageRecord(
