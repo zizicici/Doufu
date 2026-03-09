@@ -1856,12 +1856,7 @@ extension ProjectChatViewController {
         case let .searchCompleted(desc, count):
             displayText = String(format: String(localized: "chat.progress.search_completed_format"), desc, count)
         case let .thinking(content):
-            // Show a truncated preview of the thinking content — full content
-            // is available as a collapsible area if the UI supports it.
-            let truncated = content.count > 200
-                ? String(content.prefix(200)) + "…"
-                : content
-            displayText = "💭 \(truncated)"
+            displayText = content
         default:
             displayText = event.displayText
         }

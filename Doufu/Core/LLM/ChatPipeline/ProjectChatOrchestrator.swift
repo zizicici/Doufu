@@ -142,7 +142,7 @@ final class ProjectChatOrchestrator {
         var toolActivityLog: [String] = []
 
         if let onProgress {
-            await onProgress(.text("正在思考..."))
+            await onProgress(.text(String(localized: "orchestrator.thinking")))
         }
 
         let budgetWarningThreshold = Int(Double(configuration.maxAgentIterations) * 0.8)
@@ -217,10 +217,10 @@ final class ProjectChatOrchestrator {
                     continue
                 }
 
-                let rawFinalMessage = accumulatedText.isEmpty ? "已完成。" : accumulatedText
+                let rawFinalMessage = accumulatedText.isEmpty ? String(localized: "orchestrator.done") : accumulatedText
                 let (modelMemoryUpdate, afterMemory) = extractMemoryUpdate(from: rawFinalMessage)
                 let cleanedFinalMessage = extractAndPersistDoufuUpdate(from: afterMemory, projectURL: projectURL)
-                let finalMessage = cleanedFinalMessage.isEmpty ? "已完成。" : cleanedFinalMessage
+                let finalMessage = cleanedFinalMessage.isEmpty ? String(localized: "orchestrator.done") : cleanedFinalMessage
 
                 if let onStreamedText, cleanedFinalMessage != rawFinalMessage {
                     await onStreamedText(finalMessage)
@@ -342,8 +342,8 @@ final class ProjectChatOrchestrator {
 
         // Max iterations reached
         let rawMaxMessage = accumulatedText.isEmpty
-            ? "已达到最大执行步骤数。请再发一条消息继续。"
-            : accumulatedText + "\n\n（已达到最大执行步骤数）"
+            ? String(localized: "orchestrator.max_iterations_reached")
+            : accumulatedText + "\n\n" + String(localized: "orchestrator.max_iterations_suffix")
         let (maxModelMemoryUpdate, afterMaxMemory) = extractMemoryUpdate(from: rawMaxMessage)
         let finalMessage = extractAndPersistDoufuUpdate(from: afterMaxMemory, projectURL: projectURL)
 
