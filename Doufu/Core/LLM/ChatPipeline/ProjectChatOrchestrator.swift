@@ -85,8 +85,9 @@ final class ProjectChatOrchestrator {
         toolProvider.validationServerBaseURL = validationServerBaseURL
         toolProvider.validationBridge = validationBridge
 
-        // Create git checkpoint before agent loop starts
-        createCheckpointBeforeAgentLoop(projectURL: projectURL, userMessage: trimmedMessage)
+        // Auto-save any uncommitted changes (e.g. user manual edits)
+        // before the agent starts, so they are preserved for undo.
+        autoSaveBeforeAgentLoop(projectURL: projectURL)
 
         // Read AGENTS.md and DOUFU.MD if present
         let agentsMarkdown = readAgentsMarkdown(projectURL: projectURL)
@@ -228,6 +229,7 @@ final class ProjectChatOrchestrator {
 
                 if !allChangedPaths.isEmpty {
                     AppProjectStore.shared.touchProjectUpdatedAt(projectURL: projectURL)
+                    createCheckpointAfterAgentLoop(projectURL: projectURL, userMessage: trimmedMessage)
                 }
 
                 let updatedMemory = memoryManager.buildRolledMemory(
@@ -346,6 +348,7 @@ final class ProjectChatOrchestrator {
 
         if !allChangedPaths.isEmpty {
             AppProjectStore.shared.touchProjectUpdatedAt(projectURL: projectURL)
+            createCheckpointAfterAgentLoop(projectURL: projectURL, userMessage: trimmedMessage)
         }
 
         let updatedMemory = memoryManager.buildRolledMemory(
@@ -437,9 +440,17 @@ final class ProjectChatOrchestrator {
         return content
     }
 
-    private func createCheckpointBeforeAgentLoop(projectURL: URL, userMessage: String) {
+    private func autoSaveBeforeAgentLoop(projectURL: URL) {
         do {
             try gitService.ensureRepository(at: projectURL)
+            try gitService.autoSaveIfDirty(projectURL: projectURL)
+        } catch {
+            LLMProviderHelpers.debugLog("[Doufu Agent] git auto-save failed: \(error.localizedDescription)")
+        }
+    }
+
+    private func createCheckpointAfterAgentLoop(projectURL: URL, userMessage: String) {
+        do {
             try gitService.createCheckpoint(projectURL: projectURL, userMessage: userMessage)
         } catch {
             LLMProviderHelpers.debugLog("[Doufu Agent] git checkpoint failed: \(error.localizedDescription)")

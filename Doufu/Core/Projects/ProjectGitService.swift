@@ -33,11 +33,23 @@ final class ProjectGitService {
         try initializeRepository(at: projectURL)
     }
 
-    // MARK: - Checkpoint (Claude Code alignment)
+    // MARK: - Pre-Agent Auto-Save
 
-    /// Create a checkpoint commit before an agent loop begins.
-    /// Stages all current changes and commits with a checkpoint prefix.
-    /// Returns the checkpoint commit message, or nil if there was nothing to commit.
+    /// Quietly commit any uncommitted changes (e.g. user manual edits) before
+    /// an agent loop starts.  This is NOT a checkpoint — it simply preserves
+    /// the working-tree state so that an undo can restore to it.
+    func autoSaveIfDirty(projectURL: URL) throws {
+        let repo = try openRepository(at: projectURL)
+        try addAll(repo: repo, projectURL: projectURL)
+        guard hasChangesToCommit(repo: repo) else { return }
+        try repo.commit(message: "[doufu-autosave]")
+    }
+
+    // MARK: - Checkpoint
+
+    /// Create a checkpoint commit **after** an agent loop completes.
+    /// Should only be called when the agent actually changed files.
+    /// The commit message records the user's original request.
     @discardableResult
     func createCheckpoint(projectURL: URL, userMessage: String) throws -> String? {
         let repo = try openRepository(at: projectURL)
@@ -55,7 +67,9 @@ final class ProjectGitService {
 
     // MARK: - Undo
 
-    /// Undo: reset to the most recent checkpoint commit.
+    /// Undo: reset to the state **before** the most recent checkpoint
+    /// (i.e. the checkpoint's parent commit).  This discards all changes
+    /// the agent made in that run.
     /// Returns true if undo was performed, false if no checkpoint found.
     func undo(projectURL: URL) throws -> Bool {
         let repo = try openRepository(at: projectURL)
@@ -64,7 +78,12 @@ final class ProjectGitService {
             return false
         }
 
-        try repo.reset(to: checkpointCommit, mode: .hard)
+        // Reset to the parent of the checkpoint — the state before the agent ran.
+        guard let parent = checkpointCommit.parents.first else {
+            return false
+        }
+
+        try repo.reset(to: parent, mode: .hard)
         return true
     }
 
