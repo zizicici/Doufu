@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import UIKit
 
 struct AppProjectRecord: Equatable, Hashable {
     let id: String
@@ -384,15 +385,32 @@ final class AppProjectStore {
         (() => {})();
         """
 
+        let isIPad = UIDevice.current.userInterfaceIdiom == .pad
+
         let projectAgentsInstructions = """
         # AGENTS.md
 
-        This project targets iPhone-first web UX.
+        \(isIPad
+        ? "This project targets iPad web UX — the app window can be resized at any time (full screen, Split View, Slide Over)."
+        : "This project targets iPhone-first web UX.")
 
         ## Core principle
-        - Treat this as an iPhone app-like experience, not a desktop web page.
-        - Prioritize native-like interaction and behavior over visual decoration.
+        - This is a mobile app built with web technologies — embrace what web does well (rich visuals, flexible styling, smooth animations).
+        - Do NOT try to imitate native iOS controls (e.g. UIKit/SwiftUI look-alikes). Instead, create polished, modern mobile UI with its own visual identity.
 
+        \(isIPad
+        ? """
+        ## Responsive layout requirements (MUST)
+        - Layouts MUST be responsive — adapt from compact width (~320pt) to full iPad width (~1024pt).
+        - Use CSS media queries or container queries to switch between layout modes.
+        - At narrow widths (compact): use single-column layout, similar to iPhone.
+        - At wider widths (regular): optionally use multi-column layouts (side-by-side panels, master-detail, grid).
+        - Respect Safe Area using `env(safe-area-inset-top/right/bottom/left)` (insets vary by window configuration).
+        - Ensure touch targets are at least 44px tall.
+        - Avoid desktop-only interaction patterns such as hover-dependent controls.
+        - Design should feel polished and modern — not like a traditional desktop website.
+        """
+        : """
         ## Mobile-first requirements (MUST)
         - Treat iPhone portrait as the default viewport; however, landscape rotation may occur.
           Layouts must remain usable in both orientations — do not hard-code portrait-only dimensions.
@@ -400,7 +418,8 @@ final class AppProjectStore {
         - Keep the primary layout single-column unless explicitly requested.
         - Ensure touch targets are at least 44px tall.
         - Avoid desktop-only interaction patterns such as hover-dependent controls.
-        - Avoid strong "desktop web" visual style; prefer a clean, native-like iOS feel.
+        - Design should feel polished and modern — not like a traditional desktop website.
+        """)
 
         ## Zoom & viewport policy (MUST)
         - Disable zoom by default (including pinch and double-tap zoom).
@@ -436,12 +455,12 @@ final class AppProjectStore {
 
         ## Interaction polish
         - Use `touch-action: manipulation` on tappable controls where appropriate.
-        - Keep motion subtle and meaningful; avoid flashy web-like transitions.
+        - Use smooth transitions and micro-animations to make interactions feel responsive (150–300ms).
 
         ## Styling guidance
-        - Prioritize readability and spacing on small screens.
-        - Prefer system-like typography and restrained visual decoration.
-        - Keep contrast and hierarchy clear without heavy borders/shadows.
+        - Prioritize readability and generous spacing on small screens.
+        - Use modern web design: gradients, subtle shadows, rounded corners, color accents — make the app visually appealing.
+        - Keep typography clean and hierarchy clear. The `-apple-system` font stack is fine, but don't restrict yourself to mimicking system UI.
 
         ## Doufu Runtime
         The app serves pages via a local HTTP server. Standard web APIs are transparently enhanced:
@@ -467,7 +486,7 @@ final class AppProjectStore {
 
         ## Architecture
         - Runtime: Static web app (html/css/js) served via localhost HTTP server in WKWebView.
-        - Default device target: iPhone portrait.
+        - Default device target: \(isIPad ? "iPad (responsive, compact to full width)." : "iPhone portrait.")
         - Key constraints are defined in AGENTS.md.
         - fetch() is CORS-free (proxied through host app).
         - localStorage is natively persisted (survives cache clears).
@@ -481,7 +500,7 @@ final class AppProjectStore {
         - DOUFU.MD: Long-lived project memory and architecture notes.
 
         ## Product Intent
-        - This project should feel like a mobile-native app, not a desktop webpage.
+        - This project should feel like a polished mobile app — not a desktop webpage, and not a crude imitation of native iOS controls.
         - Prefer simple, maintainable structure over heavy frameworks.
 
         ## Important Notes

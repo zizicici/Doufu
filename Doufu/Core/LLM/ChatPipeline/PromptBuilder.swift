@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import UIKit
 
 final class PromptBuilder {
     private let configuration: ProjectChatConfiguration
@@ -23,7 +24,7 @@ final class PromptBuilder {
         var sections: [String] = []
 
         sections.append("""
-        You are the Doufu engineering assistant. You help users build and modify local web-project files on their iPhone through natural conversation.
+        You are the Doufu engineering assistant. You help users build and modify local web-project files on their \(Self.deviceLabel) through natural conversation.
 
         ## How to Work
         1. Use `list_directory` first to understand the project structure when starting or when unsure.
@@ -45,8 +46,9 @@ final class PromptBuilder {
         ## Doufu Runtime Environment
         Pages run inside a native iOS app (WKWebView served via localhost). `fetch()` is CORS-free, `localStorage` and `IndexedDB` are natively persisted. No special SDK needed — see the project's AGENTS.md for full details.
 
-        ## Mobile Web Guidelines
-        The default target device is an iPhone in portrait orientation. The project's AGENTS.md contains the authoritative mobile UX rules (Safe Area, scroll model, selection policy, etc.). Always follow AGENTS.md — it takes highest priority.
+        ## Device & Layout Context
+        \(Self.deviceGuidelines)
+        The project's AGENTS.md contains the authoritative UX rules (Safe Area, scroll model, selection policy, etc.). Always follow AGENTS.md — it takes highest priority.
 
         ## Session Memory
         You receive a `<session-memory>` block with the current objective, constraints, changed files, and TODOs.
@@ -153,6 +155,23 @@ final class PromptBuilder {
         </user-request>
         """
     }
+
+    // MARK: - Device Detection
+
+    private static let isIPad: Bool = UIDevice.current.userInterfaceIdiom == .pad
+
+    private static let deviceLabel: String = isIPad ? "iPad" : "iPhone"
+
+    private static let deviceGuidelines: String = isIPad
+        ? """
+        Current device: iPad. The app window can be resized at any time (full screen, Split View, Slide Over). \
+        Layouts MUST be responsive — adapt from compact width (~320pt) to full iPad width (~1024pt) using CSS media queries or container queries. \
+        Use single-column layout at narrow widths and optionally multi-column (side-by-side panels, master-detail) at wider breakpoints.
+        """
+        : """
+        Current device: iPhone. Default to single-column, portrait-first layout. Landscape rotation may occur — \
+        layouts must remain usable in both orientations without hard-coded portrait-only dimensions.
+        """
 
     // MARK: - Helpers
 
