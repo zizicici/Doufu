@@ -19,9 +19,10 @@
 1. 文件读写和生成操作放到后台线程。
 2. UI 更新回主线程，避免并发错误。
 3. 对超大生成内容设置大小与超时保护。
-4. 聊天请求超时：
-   - `reasoning=high`：400s
-   - `reasoning=xhigh`：600s
+4. Agent 循环迭代次数有上限（`maxAgentIterations`），接近时注入系统提示收尾。
+5. 只读工具并行执行以提升吞吐；写入工具顺序执行以保证数据一致性。
+6. `validate_code` 使用共享 WKWebView，不可并行。
+7. `UsageAccumulator` 使用 actor 保证 token 计数线程安全。
 
 ## 安全与隐私
 
@@ -29,31 +30,37 @@
 2. 项目之间目录隔离，不共享私有数据。
 3. API Key / Bearer Token 必须存储在 Keychain，不写入项目目录。
 4. 分享前提示用户检查敏感信息。
+5. 工具权限分三级（autoAllow / confirmOnce / alwaysConfirm），危险操作需用户确认。
 
-## 聊天协议注意事项
+## Agent 工具注意事项
 
-1. 调用 `responses` 接口时，历史消息 content type 必须和角色匹配：
-   - `user -> input_text`
-   - `assistant -> output_text`
-2. 聊天链路是三路执行：
-   - `direct_answer`：直接回答问题，不改文件。
-   - `single_pass`：单次改动路径。
-   - `multi_task`：任务规划 + 逐任务检索 + 逐任务补丁。
-3. 复杂改动路径中，文件检索阶段返回 `selected_paths`，补丁阶段返回 `assistant_message + changes/search_replace_changes`。
-4. 请求体的结构化输出优先走 `text.format = json_schema`，后端不支持时要自动降级重试。
-5. 返回流需要兼容多种事件形态：
-   - 标准 SSE 事件
-   - newline-delimited JSON（无空行分隔）
-6. JSON 补丁落盘前必须做路径安全检查：
-   - 仅允许相对路径
-   - 禁止 `..` 与绝对路径
-7. 对 `xhigh` 不支持的后端要自动降级为 `high` 重试。
-8. `json_schema` 被拒绝时要自动降级并重试。
-9. 历史对话与文件上下文都要做预算裁剪，避免 token 失控。
-10. 维护结构化会话记忆（`objective/constraints/changed_files/todo_items`）并与 thread memory 同步。
-11. 多任务执行时，每个子任务落盘后刷新文件候选，避免后续任务基于旧代码。
-12. 取消请求必须透传到路由/规划/检索/生成全链路，不允许被 fallback 吞掉。
-13. 若后端在 `200 + SSE` 阶段返回失败事件，仍需走与 4xx 一致的降级重试策略。
+1. 工具定义与执行集中在 `AgentTools.swift` 和 `AgentToolProvider`。
+2. 工具按危险程度分级：
+   - `autoAllow`：read_file, list_directory, search_files, grep_files, glob_files, validate_code, diff_file, changed_files
+   - `confirmOnce`：write_file, edit_file, move_file, revert_file
+   - `alwaysConfirm`：delete_file, web_search, web_fetch
+3. 三种权限模式：
+   - `standard`：默认模式，写入工具首次确认，危险工具每次确认。
+   - `autoApproveNonDestructive`：非危险操作自动通过。
+   - `fullAutoApprove`：所有操作自动通过。
+4. 工具结果需截断以控制上下文膨胀。
+5. 工具执行分流：
+   - 只读工具使用 TaskGroup 并行执行。
+   - 写入工具顺序执行。
+   - `validate_code` 串行（共享 WKWebView）。
+6. 进度事件需覆盖所有工具操作阶段（`ToolProgressEvent` 枚举）。
+
+## 对话上下文管理
+
+1. 4 阶段自适应压缩：
+   - 激进压缩可重读的工具结果（如 read_file）
+   - 适度压缩搜索结果
+   - 压缩剩余大型非错误结果
+   - 丢弃最旧对话轮次（保持工具结果配对完整）
+2. 历史对话与文件上下文都要做预算裁剪，避免 token 失控。
+3. 维护结构化会话记忆（`objective/constraints/changed_files/todo_items`）并与 thread memory 同步。
+4. 迭代次数预算控制，接近上限时注入系统提示要求收尾。
+5. 响应被 `max_tokens` 截断时自动请求续传。
 
 ## 多 Provider 请求注意事项
 
@@ -63,6 +70,21 @@
 4. 不同 Provider 的鉴权头不同：
    - API Key 模式：Provider 特定 header（例如 `x-api-key`）。
    - OAuth 模式：`Authorization: Bearer ...`。
+5. 模型能力统一通过 `LLMModelRegistry.resolve()` 获取 `ResolvedModelProfile`。
+
+## Git 检查点注意事项
+
+1. Agent loop 开始前通过 `ProjectGitService.createCheckpoint()` 创建检查点。
+2. 检查点 commit message 格式：`[doufu-checkpoint] {用户消息前 120 字}`。
+3. `undo()` 回退到最近检查点 commit。
+4. 项目创建时自动初始化 Git 仓库。
+
+## 模型能力解析注意事项
+
+1. 所有模型能力信息统一通过 `LLMModelRegistry.resolve()` 获取。
+2. 解析优先级：用户自定义 > 内置注册表 > 发现记录 > 保守回退。
+3. `ResolvedModelProfile` 包含：reasoningEfforts, thinkingSupported, thinkingCanDisable, structuredOutputSupported, maxOutputTokens, contextWindowTokens。
+4. 下游消费者不应直接读取 model record，而是使用 resolved profile。
 
 ## 调试与排障
 
@@ -73,21 +95,25 @@
 2. 调试日志必须脱敏：
    - 可以保留请求标签、响应头、SSE 事件
    - 禁止输出完整请求体与任何 Bearer Token/API Key
-3. 请求日志中需要区分阶段标签（如 `dispatch_or_answer`、`plan_tasks`、`select_context_files`、`generate_patch`）。
+3. Agent 循环日志标注迭代次数和工具调用详情。
 
 ## 测试建议
 
 1. 单元测试优先覆盖：
-   - 路径校验与补丁安全写入
+   - 路径校验与安全写入
    - 项目创建/删除/改名
    - Provider 存储与 Keychain 读写
    - 线程索引与 thread memory rollover
+   - `LLMModelRegistry.resolve()` 各优先级场景
+   - 工具权限分级逻辑
 2. UI 测试至少覆盖：
    - 首页新建与项目打开
    - 空状态显示
    - Add Provider 表单启用态
    - 项目创建后的列表刷新与排序
    - 聊天中取消请求与阶段气泡展示
+   - 工具确认对话框流程
+   - 默认模型选择与 LLM 快速设置
 
 ## 变更流程
 

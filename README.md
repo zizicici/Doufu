@@ -28,7 +28,7 @@
 3. 项目设置与快照：
    - 项目名修改。
    - 手动快照最多 10 条、自动快照最多 10 条。
-   - 支持“载入快照”恢复。
+   - 支持"载入快照"恢复。
 4. 文件浏览与编辑：
    - 内置项目文件浏览器，支持二级目录。
    - 文件内容页支持编辑与保存。
@@ -38,17 +38,35 @@
    - 支持 `OpenAI Compatible`、`Anthropic`、`Google Gemini`。
    - 每个 Provider 支持 `API Key` 与 `OAuth` 模式。
    - Provider 元数据在 `UserDefaults`，凭证在 `Keychain`。
-6. 聊天改工程（Project Chat）：
+   - 支持模型列表管理（发现/自定义/编辑能力参数）。
+6. Agent 聊天改工程（Project Chat）：
    - 会话支持多线程（thread）持久化，可切换历史线程。
-   - 执行路由支持三种模式：`direct_answer` / `single_pass` / `multi_task`。
-   - 支持结构化输出（`json_schema`）、整文件覆盖与 `search_replace_changes` 增量修改。
-   - 支持任务进度分气泡展示、取消请求、请求级 token 用量展示。
+   - 基于 **tool-use agent loop** 架构：模型自主调用工具完成任务。
+   - 内置 15 种工具：文件读写/编辑/删除/移动/回退、目录浏览、搜索/grep/glob、diff/changed_files、web_search/web_fetch、validate_code。
+   - 工具权限分三级（autoAllow / confirmOnce / alwaysConfirm），支持三种权限模式（standard / autoApproveNonDestructive / fullAutoApprove）。
+   - 只读工具并行执行，写入工具顺序执行。
+   - 支持 extended thinking 内容展示（如 Claude thinking blocks）。
    - 聊天成功改动后自动快照。
-7. Token Usage：
+   - Git 检查点：Agent 循环前自动创建 checkpoint commit，支持 undo 回退。
+   - 对话上下文 4 阶段自适应压缩，控制 token 预算。
+   - 支持任务进度分气泡展示、取消请求、请求级 token 用量展示。
+7. 模型管理：
+   - `LLMModelRegistry` 统一模型能力解析（reasoning effort / thinking / structured output / token 预算）。
+   - 解析优先级：用户自定义 > 内置注册表 > 发现记录 > 保守回退。
+   - 支持项目级和线程级模型选择持久化（`.doufu_project_config.json` / `.doufu_thread_selections.json`）。
+   - 设置页支持选择默认模型。
+   - 首次使用聊天时提供 LLM 快速设置引导。
+8. Token Usage：
    - 设置页和项目页共用 Dashboard。
    - 展示总输入/总输出、按周分页的 7 天图表、按 Provider/Model 维度切换。
    - 长按图表可查看当天分项明细。
    - 相关文案已本地化（`en / zh-Hans / zh-Hant / zh-HK`）。
+9. 代码验证：
+   - 内置 `CodeValidator`，通过隐藏 WKWebView 执行 JS 并捕获错误。
+   - 作为 `validate_code` 工具可被 Agent 自动调用。
+10. Web 能力：
+    - `WebToolProvider` 支持 web_search（DuckDuckGo / Bing / Google 多引擎）和 web_fetch。
+    - Agent 可自主搜索文档、获取网页内容辅助开发。
 
 ## 维护规则
 
@@ -56,4 +74,4 @@
 2. 新增用户可见文案时，必须同步 `Localizable.xcstrings`。
 3. 涉及架构调整时，必须同步 `technical-architecture.md` 与 `module-design.md`。
 
-文档已按当前实现同步更新（2026-03-06）。
+文档已按当前实现同步更新（2026-03-09）。
