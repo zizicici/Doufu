@@ -32,10 +32,10 @@ final class PromptBuilder {
         4. After making changes, briefly summarize what you did.
 
         ## Tool Selection Strategy
-        - **Explore**: `list_directory` to see project structure; `glob_files` to find files by name or extension (e.g. `**/*.css`).
-        - **Search**: `search_files` for simple text search; `grep_files` for regex patterns. Use the `include` parameter (e.g. `*.js`) to filter by file type when the project is large.
+        - **Explore**: `list_directory` to see project structure; `glob_files` to find files by name or extension (e.g. `**/*.css`). Use `glob_files`'s `path` parameter to limit search to a subdirectory.
+        - **Search**: `search_files` for simple text search; `grep_files` for regex patterns. Both support a `path` parameter (limit to a subdirectory) and an `include` parameter (e.g. `*.js`, `*.{html,css}`) to filter by file type.
         - **Read**: `read_file` to see current file content before editing. Batch multiple reads together when possible.
-        - **Edit**: `edit_file` for surgical changes. Edits apply sequentially in each call — earlier edits modify the file before later ones run. Provide enough surrounding lines in `old_text` to ensure a unique match; exact whitespace is not required (the tool normalizes indentation and whitespace automatically). If a match is ambiguous, include more context.
+        - **Edit**: `edit_file` for surgical changes. Edits apply sequentially — earlier edits modify the file content before later ones run, so if edit #1 changes a function signature, edit #2's `old_text` should match the *post-edit-#1* content. Provide enough surrounding lines in `old_text` to ensure a unique match; exact whitespace is not required (the tool normalizes indentation and whitespace automatically). If a match is ambiguous, include more context.
         - **Write**: `write_file` for new files or complete rewrites only.
         - **Revert**: `revert_file` to undo your changes to a single file if something went wrong.
         - **Review**: `diff_file` to see a unified diff of your changes to a file since the session started; `changed_files` to list all files you have modified in this session.
@@ -60,8 +60,13 @@ final class PromptBuilder {
 
         ## Session Memory
         You receive a `<session-memory>` block with the current objective, constraints, changed files, and TODOs.
-        When you want to update this memory (e.g. refine the objective, add constraints, mark TODOs as done, or add new TODOs), include a `<memory-update>` block at the end of your final response:
+        The `changed_files` array uses the format `"path — summary"` (e.g. `"index.html — edited 2 regions"`, `"style.css — created 30 lines"`). The part before ` — ` is the file path; the part after is a brief description of what changed.
 
+        ## Response Metadata Blocks
+        You may include these special blocks at the end of your final response. They are parsed and removed from the displayed message — the user will not see them.
+
+        ### `<memory-update>` — Update session memory
+        Use this to keep the session memory accurate (refine the objective, add constraints, update TODOs):
         ```
         <memory-update>
         {
@@ -71,26 +76,31 @@ final class PromptBuilder {
         }
         </memory-update>
         ```
-
         Supported fields (all optional — only include fields you want to change):
         - `objective` (string): The current high-level goal.
-        - `constraints` (string array): Design constraints or rules discovered during work.
-        - `todo_items` (string array): Remaining tasks. Provide the complete list — this replaces previous items.
+        - `constraints` (string array): New constraints are merged with existing ones.
+        - `todo_items` (string array): The complete list of remaining tasks — this **replaces** the previous list entirely. Omit completed items; include only what's still pending.
 
-        This block will be parsed and removed from the displayed message.
-        Use this to keep the session memory accurate — especially to update the objective after clarification, remove completed TODOs, or add discovered constraints.
+        **When to update:** Include a `<memory-update>` when you (1) clarify or change the objective, (2) complete one or more TODO items, (3) discover a new constraint, or (4) the user changes direction. Do not skip this — stale memory degrades future responses.
+
+        ## Error Recovery
+        - If `edit_file` fails with "old_text not found", do NOT retry with the same text. Use `read_file` to see the current file content, then adjust your `old_text` accordingly.
+        - If a tool fails repeatedly, consider an alternative approach instead of retrying the same action.
+        - If you are stuck, explain the situation to the user and ask for guidance.
 
         ## Important Rules
         - Always reply to the user in the same language they used.
         - File paths must be relative to the project root. Never use absolute paths or `..`.
         - Ensure modified web pages remain runnable (consistent html/css/js).
-        - Do not make changes the user did not ask for.
+        - Do not make changes the user did not ask for. Only implement what was requested — avoid adding extra features, unnecessary comments, or refactoring unrelated code.
+        - Keep solutions simple. Do not over-engineer: a few similar lines of code is better than a premature abstraction.
         """)
 
         if let agentsMarkdown, !agentsMarkdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             sections.append("""
             ## Project-Specific Rules (AGENTS.md)
-            The following rules are defined by the project and take highest priority:
+            The following project-level rules take highest priority. AGENTS.md typically contains:
+            coding conventions, preferred libraries/frameworks, file organization rules, naming patterns, or any constraints specific to this project.
 
             \(agentsMarkdown)
             """)
@@ -111,22 +121,27 @@ final class PromptBuilder {
             """)
         }
 
-        // Add auto-learning instruction when DOUFU.MD is absent or small
+        // When DOUFU.MD is absent or small, inject the <doufu-update> instruction
+        // directly after the main prompt's Response Metadata Blocks section.
+        // We insert it into sections[0] so it stays grouped with <memory-update>.
         if doufuLineCount < 10 {
-            sections.append("""
-            ## Project Memory (DOUFU.MD) — Auto-learning
-            When you discover important project patterns during your work (tech stack, code conventions, architecture decisions, recurring issues), include a `<doufu-update>` block at the end of your response to persist these learnings:
+            let doufuInstruction = """
 
+            ### `<doufu-update>` — Auto-learn project patterns
+            When you discover important project patterns during your work (tech stack, code conventions, architecture decisions, recurring issues), include a `<doufu-update>` block at the end of your response:
             ```
             <doufu-update>
             - Tech stack: vanilla JS + Tailwind CSS
             - Convention: all API calls go through api.js
             </doufu-update>
             ```
-
-            Each line is appended to DOUFU.MD. Only include genuinely useful, stable facts — not task-specific notes.
-            Do NOT repeat information already in DOUFU.MD.
-            """)
+            Each line is appended to DOUFU.MD. Only include genuinely useful, stable facts — not task-specific notes. Do NOT repeat information already in DOUFU.MD.
+            """
+            // Insert after the "## Response Metadata Blocks" section within sections[0],
+            // right before "## Error Recovery"
+            if let range = sections[0].range(of: "\n        ## Error Recovery") {
+                sections[0].insert(contentsOf: doufuInstruction, at: range.lowerBound)
+            }
         }
 
         return sections.joined(separator: "\n\n")
@@ -153,9 +168,11 @@ final class PromptBuilder {
 
     private func truncatedLongContent(_ rawText: String) -> String {
         let normalized = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard normalized.count > configuration.maxLongContentCharactersInPrompt else {
+        let limit = configuration.maxLongContentCharactersInPrompt
+        guard normalized.count > limit else {
             return normalized
         }
-        return String(normalized.prefix(configuration.maxLongContentCharactersInPrompt)) + "\n...(truncated)"
+        let omitted = normalized.count - limit
+        return String(normalized.prefix(limit)) + "\n...(\(omitted) characters truncated)"
     }
 }

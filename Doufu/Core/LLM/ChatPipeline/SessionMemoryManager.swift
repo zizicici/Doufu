@@ -114,11 +114,8 @@ final class SessionMemoryManager {
             }
             let todoItems = modelMemoryUpdate.resolvedTodoItems
             if !todoItems.isEmpty {
-                memory.todoItems = mergeUniqueItems(
-                    todoItems,
-                    memory.todoItems,
-                    limit: configuration.maxMemoryTodoItems
-                )
+                // Replace (not merge) — the model provides the complete remaining list.
+                memory.todoItems = sanitizeMemoryItems(todoItems, limit: configuration.maxMemoryTodoItems)
             }
         }
 
