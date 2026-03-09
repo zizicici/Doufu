@@ -10267,6 +10267,141 @@
         }
       }
     },
+    "tool.activity.read_file" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Read: %@" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "读取文件：%@" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "讀取檔案：%@" } },
+        "zh-HK" : { "stringUnit" : { "state" : "translated", "value" : "讀取檔案：%@" } }
+      }
+    },
+    "tool.activity.write_file" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Write: %@" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "写入文件：%@" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "寫入檔案：%@" } },
+        "zh-HK" : { "stringUnit" : { "state" : "translated", "value" : "寫入檔案：%@" } }
+      }
+    },
+    "tool.activity.edit_file" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Edit: %@ (%lld edits)" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "编辑文件：%@（%lld 处修改）" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "編輯檔案：%@（%lld 處修改）" } },
+        "zh-HK" : { "stringUnit" : { "state" : "translated", "value" : "編輯檔案：%@（%lld 處修改）" } }
+      }
+    },
+    "tool.activity.delete_file" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Delete: %@" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "删除文件：%@" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "刪除檔案：%@" } },
+        "zh-HK" : { "stringUnit" : { "state" : "translated", "value" : "刪除檔案：%@" } }
+      }
+    },
+    "tool.activity.move_file" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Move: %@ → %@" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "移动文件：%@ → %@" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "移動檔案：%@ → %@" } },
+        "zh-HK" : { "stringUnit" : { "state" : "translated", "value" : "移動檔案：%@ → %@" } }
+      }
+    },
+    "tool.activity.revert_file" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Revert: %@" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "还原文件：%@" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "還原檔案：%@" } },
+        "zh-HK" : { "stringUnit" : { "state" : "translated", "value" : "還原檔案：%@" } }
+      }
+    },
+    "tool.activity.diff_file" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Diff: %@" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "查看差异：%@" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "查看差異：%@" } },
+        "zh-HK" : { "stringUnit" : { "state" : "translated", "value" : "查看差異：%@" } }
+      }
+    },
+    "tool.activity.changed_files" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "List changed files" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "查看已更改文件" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "查看已更改檔案" } },
+        "zh-HK" : { "stringUnit" : { "state" : "translated", "value" : "查看已更改檔案" } }
+      }
+    },
+    "tool.activity.list_directory" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Browse: %@" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "浏览目录：%@" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "瀏覽目錄：%@" } },
+        "zh-HK" : { "stringUnit" : { "state" : "translated", "value" : "瀏覽目錄：%@" } }
+      }
+    },
+    "tool.activity.search_files" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Search: \"%@\"" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "搜索文件：\"%@\"" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "搜尋檔案：\"%@\"" } },
+        "zh-HK" : { "stringUnit" : { "state" : "translated", "value" : "搜尋檔案：\"%@\"" } }
+      }
+    },
+    "tool.activity.grep_files" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Grep: /%@/" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正则搜索：/%@/" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "正則搜尋：/%@/" } },
+        "zh-HK" : { "stringUnit" : { "state" : "translated", "value" : "正則搜尋：/%@/" } }
+      }
+    },
+    "tool.activity.glob_files" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Glob: %@" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "查找文件：%@" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "查找檔案：%@" } },
+        "zh-HK" : { "stringUnit" : { "state" : "translated", "value" : "查找檔案：%@" } }
+      }
+    },
+    "tool.activity.web_search" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Web search: \"%@\"" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "搜索网页：\"%@\"" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "搜尋網頁：\"%@\"" } },
+        "zh-HK" : { "stringUnit" : { "state" : "translated", "value" : "搜尋網頁：\"%@\"" } }
+      }
+    },
+    "tool.activity.web_fetch" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Fetch: %@" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "获取网页：%@" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "取得網頁：%@" } },
+        "zh-HK" : { "stringUnit" : { "state" : "translated", "value" : "取得網頁：%@" } }
+      }
+    },
+    "tool.activity.unknown" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Tool: %@" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "执行工具：%@" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "執行工具：%@" } },
+        "zh-HK" : { "stringUnit" : { "state" : "translated", "value" : "執行工具：%@" } }
+      }
+    },
     "workspace.action.discard" : {
       "extractionState" : "manual",
       "localizations" : {

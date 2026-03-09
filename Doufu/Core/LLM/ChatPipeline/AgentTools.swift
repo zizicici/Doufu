@@ -121,7 +121,8 @@ final class AgentToolProvider {
 
     static func permissionTier(for toolName: String) -> ToolPermissionTier {
         switch toolName {
-        case "read_file", "list_directory", "search_files", "grep_files", "glob_files", "validate_code":
+        case "read_file", "list_directory", "search_files", "grep_files", "glob_files", "validate_code",
+             "diff_file", "changed_files":
             return .autoAllow
         case "write_file", "edit_file", "move_file", "revert_file":
             return .confirmOnce
@@ -178,6 +179,8 @@ final class AgentToolProvider {
             deleteFileTool(),
             moveFileTool(),
             revertFileTool(),
+            diffFileTool(),
+            changedFilesTool(),
             listDirectoryTool(),
             searchFilesTool(),
             grepFilesTool(),
@@ -318,6 +321,36 @@ final class AgentToolProvider {
                     ])
                 ]),
                 "required": .array([.string("path")]),
+                "additionalProperties": .bool(false)
+            ])
+        )
+    }
+
+    private func diffFileTool() -> AgentToolDefinition {
+        AgentToolDefinition(
+            name: "diff_file",
+            description: "Show a unified diff of a file comparing the current content to its state at the start of this session (the last checkpoint). Useful for reviewing what you changed before responding to the user. Returns nothing if the file is unchanged.",
+            parameters: .object([
+                "type": .string("object"),
+                "properties": .object([
+                    "path": .object([
+                        "type": .string("string"),
+                        "description": .string("File path relative to project root")
+                    ])
+                ]),
+                "required": .array([.string("path")]),
+                "additionalProperties": .bool(false)
+            ])
+        )
+    }
+
+    private func changedFilesTool() -> AgentToolDefinition {
+        AgentToolDefinition(
+            name: "changed_files",
+            description: "List all files that have been modified, added, or deleted since the start of this session (the last checkpoint). Useful for reviewing the overall scope of changes you have made.",
+            parameters: .object([
+                "type": .string("object"),
+                "properties": .object([:]),
                 "additionalProperties": .bool(false)
             ])
         )
@@ -547,6 +580,10 @@ final class AgentToolProvider {
             return await executeMoveFile(args: args)
         case "revert_file":
             return executeRevertFile(args: args)
+        case "diff_file":
+            return executeDiffFile(args: args)
+        case "changed_files":
+            return executeChangedFiles()
         case "list_directory":
             let path = (args["path"] as? String) ?? "."
             if let onProgress { await onProgress(.listingDirectory(path: path)) }
@@ -944,6 +981,61 @@ final class AgentToolProvider {
         } catch {
             return ToolExecutionResult(
                 output: "Failed to revert \(normalizedPath): \(error.localizedDescription)",
+                isError: true,
+                changedPaths: []
+            )
+        }
+    }
+
+    // MARK: - Diff File
+
+    private func executeDiffFile(args: [String: Any]) -> ToolExecutionResult {
+        guard let path = args["path"] as? String else {
+            return ToolExecutionResult(output: "Missing required parameter: path", isError: true, changedPaths: [])
+        }
+        let normalizedPath = normalizeRelativePath(path)
+        do {
+            guard let diff = try ProjectGitService.shared.diffFileAgainstHEAD(
+                projectURL: projectURL,
+                relativePath: normalizedPath
+            ) else {
+                return ToolExecutionResult(
+                    output: "No changes to \(normalizedPath) since the start of this session.",
+                    isError: false,
+                    changedPaths: []
+                )
+            }
+            return ToolExecutionResult(output: diff, isError: false, changedPaths: [])
+        } catch {
+            return ToolExecutionResult(
+                output: "Failed to diff \(normalizedPath): \(error.localizedDescription)",
+                isError: true,
+                changedPaths: []
+            )
+        }
+    }
+
+    // MARK: - Changed Files
+
+    private func executeChangedFiles() -> ToolExecutionResult {
+        do {
+            let paths = try ProjectGitService.shared.changedFilesSinceCheckpoint(projectURL: projectURL)
+            if paths.isEmpty {
+                return ToolExecutionResult(
+                    output: "No files have been changed since the start of this session.",
+                    isError: false,
+                    changedPaths: []
+                )
+            }
+            let listing = paths.sorted().joined(separator: "\n")
+            return ToolExecutionResult(
+                output: "\(paths.count) file(s) changed:\n\(listing)",
+                isError: false,
+                changedPaths: []
+            )
+        } catch {
+            return ToolExecutionResult(
+                output: "Failed to list changed files: \(error.localizedDescription)",
                 isError: true,
                 changedPaths: []
             )

@@ -13,6 +13,11 @@ struct LLMProviderModelCapabilities: Codable, Equatable, Hashable {
     var thinkingSupported: Bool
     var thinkingCanDisable: Bool
     var structuredOutputSupported: Bool
+    /// User-specified max output tokens override.  When set, takes priority
+    /// over the built-in lookup table in `ProjectChatConfiguration`.
+    var maxOutputTokensOverride: Int?
+    /// User-specified context window override (in tokens).
+    var contextWindowTokensOverride: Int?
 
     static func defaults(
         for providerKind: LLMProviderRecord.Kind,

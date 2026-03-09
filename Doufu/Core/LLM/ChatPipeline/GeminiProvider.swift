@@ -45,7 +45,7 @@ final class GeminiProvider: LLMProviderAdapter {
 
         var includeThinkingConfig = true
         let requestedThinkingBudget = executionOptions.geminiThinkingEnabled
-            ? geminiThinkingBudget(for: initialReasoningEffort)
+            ? configuration.geminiThinkingBudget(effort: initialReasoningEffort)
             : 0
 
         while true {
@@ -156,7 +156,7 @@ final class GeminiProvider: LLMProviderAdapter {
             systemInstruction: GeminiToolUseRequest.SystemInstruction(parts: [GeminiTextPart(text: systemInstruction)]),
             generationConfig: executionOptions.geminiThinkingEnabled
                 ? GeminiToolUseRequest.GenerationConfig(
-                    thinkingConfig: .init(thinkingBudget: geminiThinkingBudget(for: effort))
+                    thinkingConfig: .init(thinkingBudget: configuration.geminiThinkingBudget(effort: effort))
                 )
                 : nil
         )
@@ -325,14 +325,7 @@ final class GeminiProvider: LLMProviderAdapter {
         return components.url
     }
 
-    private func geminiThinkingBudget(for effort: ResponsesReasoning.Effort) -> Int {
-        switch effort {
-        case .low: return 2_048
-        case .medium: return 4_096
-        case .high: return 8_192
-        case .xhigh: return 16_384
-        }
-    }
+
 
     private func geminiResponseJSONSchema(from format: ResponsesTextFormat?) -> JSONValue? {
         guard let format else { return nil }

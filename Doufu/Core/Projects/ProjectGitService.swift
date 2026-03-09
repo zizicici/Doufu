@@ -170,6 +170,133 @@ final class ProjectGitService {
         return entries.compactMap { entryPath(for: $0) }
     }
 
+    /// Generate a unified diff of a single file: working tree vs HEAD.
+    /// Returns nil if the file is unchanged or not tracked.
+    func diffFileAgainstHEAD(projectURL: URL, relativePath: String) throws -> String? {
+        let repo = try openRepository(at: projectURL)
+
+        // Read the current working tree version
+        let fileURL = projectURL.appendingPathComponent(relativePath)
+        guard FileManager.default.fileExists(atPath: fileURL.path),
+              let currentContent = try? String(contentsOf: fileURL, encoding: .utf8)
+        else {
+            return nil
+        }
+
+        // Read the HEAD version (may not exist for new files)
+        let headContent = try? fileContentAtHEAD(repo: repo, relativePath: relativePath)
+
+        if headContent == currentContent { return nil }
+
+        // Build a simple unified diff
+        let oldLines = (headContent ?? "").components(separatedBy: "\n")
+        let newLines = currentContent.components(separatedBy: "\n")
+        return buildUnifiedDiff(
+            oldLines: oldLines, newLines: newLines,
+            oldLabel: "a/\(relativePath)", newLabel: "b/\(relativePath)",
+            isNewFile: headContent == nil
+        )
+    }
+
+    /// Minimal unified-diff generator (no external dependencies).
+    private func buildUnifiedDiff(
+        oldLines: [String], newLines: [String],
+        oldLabel: String, newLabel: String,
+        isNewFile: Bool
+    ) -> String {
+        // Myers diff is overkill here — use a simple LCS-based approach
+        // that produces readable (if not perfectly minimal) output.
+        let lcs = longestCommonSubsequence(oldLines, newLines)
+
+        var result = "--- \(oldLabel)\n+++ \(newLabel)\n"
+        if isNewFile { result = "--- /dev/null\n+++ \(newLabel)\n" }
+
+        var oldIdx = 0, newIdx = 0, lcsIdx = 0
+        // Accumulate hunks
+        var hunkLines: [String] = []
+        var hunkOldStart = 1, hunkNewStart = 1
+        var hunkOldCount = 0, hunkNewCount = 0
+
+        func flushHunk() {
+            guard !hunkLines.isEmpty else { return }
+            result += "@@ -\(hunkOldStart),\(hunkOldCount) +\(hunkNewStart),\(hunkNewCount) @@\n"
+            result += hunkLines.joined(separator: "\n") + "\n"
+            hunkLines.removeAll()
+            hunkOldCount = 0
+            hunkNewCount = 0
+        }
+
+        while oldIdx < oldLines.count || newIdx < newLines.count {
+            if lcsIdx < lcs.count,
+               oldIdx < oldLines.count, newIdx < newLines.count,
+               oldLines[oldIdx] == lcs[lcsIdx], newLines[newIdx] == lcs[lcsIdx] {
+                // Context line
+                if hunkLines.isEmpty {
+                    hunkOldStart = oldIdx + 1
+                    hunkNewStart = newIdx + 1
+                }
+                hunkLines.append(" \(lcs[lcsIdx])")
+                hunkOldCount += 1
+                hunkNewCount += 1
+                oldIdx += 1; newIdx += 1; lcsIdx += 1
+            } else {
+                if hunkLines.isEmpty {
+                    hunkOldStart = oldIdx + 1
+                    hunkNewStart = newIdx + 1
+                }
+                // Removed lines
+                while oldIdx < oldLines.count &&
+                      (lcsIdx >= lcs.count || oldLines[oldIdx] != lcs[lcsIdx]) {
+                    hunkLines.append("-\(oldLines[oldIdx])")
+                    hunkOldCount += 1
+                    oldIdx += 1
+                }
+                // Added lines
+                while newIdx < newLines.count &&
+                      (lcsIdx >= lcs.count || newLines[newIdx] != lcs[lcsIdx]) {
+                    hunkLines.append("+\(newLines[newIdx])")
+                    hunkNewCount += 1
+                    newIdx += 1
+                }
+            }
+        }
+        flushHunk()
+        return result
+    }
+
+    private func longestCommonSubsequence(_ a: [String], _ b: [String]) -> [String] {
+        let m = a.count, n = b.count
+        guard m > 0, n > 0 else { return [] }
+        // Space-optimised: only keep two rows
+        var prev = [Int](repeating: 0, count: n + 1)
+        var curr = [Int](repeating: 0, count: n + 1)
+        // First pass: compute lengths
+        var dp = [[Int]](repeating: [Int](repeating: 0, count: n + 1), count: m + 1)
+        for i in 1...m {
+            for j in 1...n {
+                if a[i - 1] == b[j - 1] {
+                    dp[i][j] = dp[i - 1][j - 1] + 1
+                } else {
+                    dp[i][j] = max(dp[i - 1][j], dp[i][j - 1])
+                }
+            }
+        }
+        // Backtrack
+        var result: [String] = []
+        var i = m, j = n
+        while i > 0 && j > 0 {
+            if a[i - 1] == b[j - 1] {
+                result.append(a[i - 1])
+                i -= 1; j -= 1
+            } else if dp[i - 1][j] > dp[i][j - 1] {
+                i -= 1
+            } else {
+                j -= 1
+            }
+        }
+        return result.reversed()
+    }
+
     // MARK: - Errors
 
     enum GitServiceError: LocalizedError {

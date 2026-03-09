@@ -61,13 +61,17 @@ final class AnthropicProvider: LLMProviderAdapter {
                 )
             }
             let normalizedInstruction = developerInstruction.trimmingCharacters(in: .whitespacesAndNewlines)
+            let modelMaxOutput = configuration.maxOutputTokens(providerKind: .anthropic, modelID: model, capabilities: credential.modelCapabilities)
+            let thinkingBudget = includeThinking
+                ? configuration.anthropicThinkingBudget(modelID: model, effort: initialReasoningEffort)
+                : 0
             let requestBody = AnthropicMessageRequest(
                 model: model,
                 system: normalizedInstruction.isEmpty ? nil : normalizedInstruction,
                 messages: messages,
-                maxTokens: configuration.maxOutputTokens,
+                maxTokens: modelMaxOutput,
                 thinking: includeThinking
-                    ? .init(type: "enabled", budgetTokens: anthropicThinkingBudgetTokens(for: initialReasoningEffort))
+                    ? .init(type: "enabled", budgetTokens: thinkingBudget)
                     : nil,
                 outputConfig: includeOutputConfig ? structuredOutputConfig : nil
             )
@@ -145,15 +149,24 @@ final class AnthropicProvider: LLMProviderAdapter {
         var includeThinking = executionOptions.anthropicThinkingEnabled
 
         while true {
+            let modelMaxOutput = configuration.maxOutputTokens(providerKind: .anthropic, modelID: model, capabilities: credential.modelCapabilities)
+            // With interleaved thinking (tool use), Anthropic allows
+            // budget_tokens to exceed max_tokens — the ceiling is the
+            // context window.  So we use a separate, larger budget and
+            // keep max_tokens at the model's native output limit.
+            let thinkingBudget = includeThinking
+                ? configuration.anthropicThinkingBudgetForToolUse(effort: effort)
+                : 0
+
             let requestBody = AnthropicToolUseRequest(
                 model: model,
                 system: systemInstruction,
                 messages: messages,
                 tools: toolDefinitions,
-                maxTokens: configuration.maxOutputTokens,
+                maxTokens: modelMaxOutput,
                 stream: true,
                 thinking: includeThinking
-                    ? AnthropicThinkingConfig(type: "enabled", budgetTokens: anthropicThinkingBudgetTokens(for: effort))
+                    ? AnthropicThinkingConfig(type: "enabled", budgetTokens: thinkingBudget)
                     : nil
             )
 
@@ -310,10 +323,15 @@ final class AnthropicProvider: LLMProviderAdapter {
                 }
             }
 
-            // Finalize any remaining pending tool blocks
-            for (_, pending) in pendingToolBlocks.sorted(by: { $0.key < $1.key }) {
-                let argumentsJSON = pending.inputJSON.isEmpty ? "{}" : pending.inputJSON
-                toolCalls.append(AgentToolCall(id: pending.id, name: pending.name, argumentsJSON: argumentsJSON))
+            // Finalize any remaining pending tool blocks.
+            // When the response was truncated by max_tokens, pending blocks have
+            // incomplete JSON arguments — discard them so the orchestrator can
+            // auto-continue instead of executing malformed tool calls.
+            if stopReason != .maxTokens {
+                for (_, pending) in pendingToolBlocks.sorted(by: { $0.key < $1.key }) {
+                    let argumentsJSON = pending.inputJSON.isEmpty ? "{}" : pending.inputJSON
+                    toolCalls.append(AgentToolCall(id: pending.id, name: pending.name, argumentsJSON: argumentsJSON))
+                }
             }
 
             self.tokenUsageStore.recordUsage(
@@ -422,15 +440,6 @@ final class AnthropicProvider: LLMProviderAdapter {
     private func usesOfficialAnthropicAuthentication(_ baseURL: URL) -> Bool {
         guard let host = baseURL.host?.lowercased() else { return false }
         return host == "api.anthropic.com" || host.hasSuffix(".anthropic.com")
-    }
-
-    private func anthropicThinkingBudgetTokens(for effort: ResponsesReasoning.Effort) -> Int {
-        switch effort {
-        case .low: return 4_096
-        case .medium: return 8_192
-        case .high: return 16_384
-        case .xhigh: return 32_768
-        }
     }
 
     private func anthropicOutputConfig(from format: ResponsesTextFormat) -> AnthropicMessageRequest.OutputConfig? {

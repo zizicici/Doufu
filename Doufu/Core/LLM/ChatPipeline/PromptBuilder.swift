@@ -39,6 +39,7 @@ final class PromptBuilder {
         - **Edit**: `edit_file` for surgical changes — provide enough context in `old_text` to ensure a unique match. If a match is ambiguous, include more surrounding lines.
         - **Write**: `write_file` for new files or complete rewrites only.
         - **Revert**: `revert_file` to undo your changes to a single file if something went wrong.
+        - **Review**: `diff_file` to see a unified diff of your changes to a file since the session started; `changed_files` to list all files you have modified in this session.
         - **Web**: `web_search` to find documentation or examples; `web_fetch` to read a specific page.
         - **Validate**: `validate_code` to check HTML/JS files for errors by loading them in a hidden browser. Always validate after writing or editing HTML/JS files. If errors are found, fix them with `edit_file` and validate again.
 

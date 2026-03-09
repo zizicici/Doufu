@@ -16,6 +16,7 @@ struct OpenAIToolUseRequest: Encodable {
     let tools: [OpenAIToolDefinition]
     let stream: Bool
     let store: Bool?
+    let reasoning: ResponsesReasoning?
 }
 
 enum OpenAIToolUseInputItem: Encodable {

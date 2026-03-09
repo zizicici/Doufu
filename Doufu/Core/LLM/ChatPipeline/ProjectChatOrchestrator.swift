@@ -247,7 +247,8 @@ final class ProjectChatOrchestrator {
             conversation.append(.assistantMessage(text: responseText, toolCalls: response.toolCalls))
 
             // Partition tool calls into read-only (parallelizable) and mutating (sequential)
-            let readOnlyTools: Set<String> = ["read_file", "list_directory", "search_files", "grep_files", "glob_files", "validate_code"]
+            // validate_code uses a shared WKWebView and is NOT safe to parallelize.
+            let readOnlyTools: Set<String> = ["read_file", "list_directory", "search_files", "grep_files", "glob_files", "diff_file", "changed_files"]
             let (parallelCalls, sequentialCalls) = partitionToolCalls(response.toolCalls, readOnly: readOnlyTools)
 
             // Execute read-only tools in parallel
@@ -360,39 +361,43 @@ final class ProjectChatOrchestrator {
 
         switch toolCall.name {
         case "read_file":
-            return "读取文件：\(path ?? "?")"
+            return String(format: String(localized: "tool.activity.read_file"), path ?? "?")
         case "write_file":
-            return "写入文件：\(path ?? "?")"
+            return String(format: String(localized: "tool.activity.write_file"), path ?? "?")
         case "edit_file":
             let editsCount = (args["edits"] as? [Any])?.count ?? 0
-            return "编辑文件：\(path ?? "?")（\(editsCount) 处修改）"
+            return String(format: String(localized: "tool.activity.edit_file"), path ?? "?", editsCount)
         case "delete_file":
-            return "删除文件：\(path ?? "?")"
+            return String(format: String(localized: "tool.activity.delete_file"), path ?? "?")
         case "move_file":
             let source = args["source"] as? String ?? "?"
             let dest = args["destination"] as? String ?? "?"
-            return "移动文件：\(source) → \(dest)"
+            return String(format: String(localized: "tool.activity.move_file"), source, dest)
         case "revert_file":
-            return "还原文件：\(path ?? "?")"
+            return String(format: String(localized: "tool.activity.revert_file"), path ?? "?")
+        case "diff_file":
+            return String(format: String(localized: "tool.activity.diff_file"), path ?? "?")
+        case "changed_files":
+            return String(localized: "tool.activity.changed_files")
         case "list_directory":
-            return "浏览目录：\(path ?? ".")"
+            return String(format: String(localized: "tool.activity.list_directory"), path ?? ".")
         case "search_files":
             let query = args["query"] as? String ?? "?"
-            return "搜索文件：\"\(query)\""
+            return String(format: String(localized: "tool.activity.search_files"), query)
         case "grep_files":
             let pattern = args["pattern"] as? String ?? "?"
-            return "正则搜索：/\(pattern)/"
+            return String(format: String(localized: "tool.activity.grep_files"), pattern)
         case "glob_files":
             let pattern = args["pattern"] as? String ?? "?"
-            return "查找文件：\(pattern)"
+            return String(format: String(localized: "tool.activity.glob_files"), pattern)
         case "web_search":
             let query = args["query"] as? String ?? "?"
-            return "搜索网页：\"\(query)\""
+            return String(format: String(localized: "tool.activity.web_search"), query)
         case "web_fetch":
             let url = args["url"] as? String ?? "?"
-            return "获取网页：\(url)"
+            return String(format: String(localized: "tool.activity.web_fetch"), url)
         default:
-            return "执行工具：\(toolCall.name)"
+            return String(format: String(localized: "tool.activity.unknown"), toolCall.name)
         }
     }
 
@@ -450,7 +455,8 @@ final class ProjectChatOrchestrator {
     ) {
         let maxConversationChars = configuration.maxConversationCharacters(
             providerKind: credential.providerKind,
-            modelID: credential.modelID
+            modelID: credential.modelID,
+            capabilities: credential.modelCapabilities
         )
 
         var totalChars = conversationCharacterCount(conversation)
@@ -500,21 +506,30 @@ final class ProjectChatOrchestrator {
             }
         }
 
-        // Pass 4: drop oldest turns if still over budget.
-        // Find the earliest safe drop point — we only drop complete "turn groups"
-        // (user message + assistant reply + tool results) from the front, preserving
-        // the protected tail.
+        // Pass 4: drop oldest *complete* turn groups if still over budget.
+        // A turn group is: userMessage, followed by assistantMessage, followed
+        // by zero or more toolResult items that belong to that assistant turn.
+        // We never split a group — this guarantees every toolResult has its
+        // matching assistant tool_call in the conversation, satisfying the
+        // Anthropic/OpenAI pairing constraint.
         if excess > 0, compactableEnd > 0 {
             var dropEnd = 0
             var freedChars = 0
 
             while dropEnd < compactableEnd, freedChars < excess {
-                freedChars += conversationItemCharCount(conversation[dropEnd])
-                dropEnd += 1
+                // Find the end of the next complete turn group starting at dropEnd.
+                let groupEnd = findTurnGroupEnd(in: conversation, from: dropEnd, limit: compactableEnd)
+                guard groupEnd > dropEnd else { break } // safety: no progress
+
+                var groupChars = 0
+                for i in dropEnd..<groupEnd {
+                    groupChars += conversationItemCharCount(conversation[i])
+                }
+                dropEnd = groupEnd
+                freedChars += groupChars
             }
 
             if dropEnd > 0 {
-                // Insert a summary marker so the model knows context was dropped
                 let droppedCount = dropEnd
                 let marker = AgentConversationItem.userMessage(
                     "[System: \(droppedCount) earlier conversation items were removed to fit the context window. Use tools to re-read any files you need.]"
@@ -537,6 +552,39 @@ final class ProjectChatOrchestrator {
         case let .toolResult(_, _, content, _):
             return content.count
         }
+    }
+
+    /// Find the end index of the next complete turn group starting at `from`.
+    /// A turn group is: [userMessage] [assistantMessage] [toolResult*].
+    /// Returns `from` if no complete group can be formed before `limit`.
+    private func findTurnGroupEnd(
+        in conversation: [AgentConversationItem],
+        from start: Int,
+        limit: Int
+    ) -> Int {
+        var i = start
+
+        // Skip leading toolResults that belong to a prior (already-dropped) group.
+        while i < limit {
+            if case .toolResult = conversation[i] { i += 1 } else { break }
+        }
+
+        // Consume one userMessage (if present).
+        if i < limit, case .userMessage = conversation[i] { i += 1 }
+
+        // Consume one assistantMessage (if present).
+        if i < limit, case .assistantMessage = conversation[i] { i += 1 }
+
+        // Consume all following toolResults that belong to this assistant turn.
+        while i < limit {
+            if case .toolResult = conversation[i] { i += 1 } else { break }
+        }
+
+        // If we didn't advance at all, force advance by 1 to avoid infinite loop
+        // (shouldn't happen with well-formed conversations, but be defensive).
+        if i == start && i < limit { i += 1 }
+
+        return i
     }
 
     /// Partition tool calls into read-only (safe to parallelize) and mutating (must run sequentially).

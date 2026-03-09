@@ -18,6 +18,9 @@ final class ProjectChatService {
         let baseURL: URL
         let bearerToken: String
         let chatGPTAccountID: String?
+        /// Capabilities of the selected model — may carry user-specified
+        /// overrides for max output tokens and context window size.
+        var modelCapabilities: LLMProviderModelCapabilities?
     }
 
     enum Role: String {

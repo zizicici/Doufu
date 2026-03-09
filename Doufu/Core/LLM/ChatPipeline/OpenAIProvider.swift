@@ -179,7 +179,8 @@ final class OpenAIProvider: LLMProviderAdapter {
             input: inputItems,
             tools: toolDefinitions,
             stream: true,
-            store: isChatGPT ? false : nil
+            store: isChatGPT ? false : nil,
+            reasoning: ResponsesReasoning(effort: effort)
         )
 
         var request = URLRequest(url: credential.baseURL.appendingPathComponent("responses"))
@@ -229,6 +230,7 @@ final class OpenAIProvider: LLMProviderAdapter {
             var streamedText = ""
             var toolCalls: [AgentToolCall] = []
             var usage: ResponsesUsage?
+            var isIncomplete = false
             // Track in-progress function calls by output_index
             var pendingFuncCalls: [Int: (callID: String, name: String, arguments: String)] = [:]
             var pendingDataLines: [String] = []
@@ -240,6 +242,7 @@ final class OpenAIProvider: LLMProviderAdapter {
                         from: pendingDataLines,
                         streamedText: &streamedText, toolCalls: &toolCalls,
                         pendingFuncCalls: &pendingFuncCalls, usage: &usage,
+                        isIncomplete: &isIncomplete,
                         onStreamedText: onStreamedText
                     )
                     pendingDataLines.removeAll(keepingCapacity: true)
@@ -256,12 +259,16 @@ final class OpenAIProvider: LLMProviderAdapter {
                 from: pendingDataLines,
                 streamedText: &streamedText, toolCalls: &toolCalls,
                 pendingFuncCalls: &pendingFuncCalls, usage: &usage,
+                isIncomplete: &isIncomplete,
                 onStreamedText: onStreamedText
             )
 
-            // Finalize any pending function calls
-            for (_, pending) in pendingFuncCalls.sorted(by: { $0.key < $1.key }) {
-                toolCalls.append(AgentToolCall(id: pending.callID, name: pending.name, argumentsJSON: pending.arguments))
+            // When the response was truncated (incomplete), discard any
+            // in-progress function calls — their JSON is likely truncated.
+            if !isIncomplete {
+                for (_, pending) in pendingFuncCalls.sorted(by: { $0.key < $1.key }) {
+                    toolCalls.append(AgentToolCall(id: pending.callID, name: pending.name, argumentsJSON: pending.arguments))
+                }
             }
 
             tokenUsageStore.recordUsage(
@@ -272,7 +279,12 @@ final class OpenAIProvider: LLMProviderAdapter {
             )
             onUsage?(usage?.inputTokens, usage?.outputTokens)
 
-            let stopReason: AgentStopReason = toolCalls.isEmpty ? .endTurn : .toolUse
+            let stopReason: AgentStopReason
+            if isIncomplete {
+                stopReason = .maxTokens
+            } else {
+                stopReason = toolCalls.isEmpty ? .endTurn : .toolUse
+            }
             return AgentLLMResponse(
                 textContent: streamedText, toolCalls: toolCalls,
                 usage: usage, stopReason: stopReason,
@@ -287,6 +299,7 @@ final class OpenAIProvider: LLMProviderAdapter {
         toolCalls: inout [AgentToolCall],
         pendingFuncCalls: inout [Int: (callID: String, name: String, arguments: String)],
         usage: inout ResponsesUsage?,
+        isIncomplete: inout Bool,
         onStreamedText: (@MainActor (String) -> Void)?
     ) async throws {
         guard !dataLines.isEmpty else { return }
@@ -300,6 +313,7 @@ final class OpenAIProvider: LLMProviderAdapter {
                 obj, eventType: eventType,
                 streamedText: &streamedText, toolCalls: &toolCalls,
                 pendingFuncCalls: &pendingFuncCalls, usage: &usage,
+                isIncomplete: &isIncomplete,
                 onStreamedText: onStreamedText
             )
             return
@@ -314,6 +328,7 @@ final class OpenAIProvider: LLMProviderAdapter {
                 obj, eventType: eventType,
                 streamedText: &streamedText, toolCalls: &toolCalls,
                 pendingFuncCalls: &pendingFuncCalls, usage: &usage,
+                isIncomplete: &isIncomplete,
                 onStreamedText: onStreamedText
             )
         }
@@ -326,6 +341,7 @@ final class OpenAIProvider: LLMProviderAdapter {
         toolCalls: inout [AgentToolCall],
         pendingFuncCalls: inout [Int: (callID: String, name: String, arguments: String)],
         usage: inout ResponsesUsage?,
+        isIncomplete: inout Bool,
         onStreamedText: (@MainActor (String) -> Void)?
     ) async throws {
         switch eventType {
@@ -406,8 +422,10 @@ final class OpenAIProvider: LLMProviderAdapter {
             throw ProjectChatService.ServiceError.networkFailed(String(format: String(localized: "llm.error.request_failed_format"), message))
 
         case "response.incomplete":
-            let message = parseIncompleteReason(from: eventObject["response"]) ?? String(localized: "llm.error.response_incomplete")
-            throw ProjectChatService.ServiceError.networkFailed(String(format: String(localized: "llm.error.request_failed_format"), message))
+            // Mark as truncated so the caller returns .maxTokens instead of
+            // throwing — this lets the orchestrator auto-continue.
+            isIncomplete = true
+            LLMProviderHelpers.debugLog("[Doufu OpenAI] response.incomplete: \(parseIncompleteReason(from: eventObject["response"]) ?? "unknown")")
 
         default:
             return
