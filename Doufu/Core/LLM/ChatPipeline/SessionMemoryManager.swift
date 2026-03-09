@@ -246,10 +246,12 @@ final class SessionMemoryManager {
             let normalized = raw
                 .trimmingCharacters(in: .whitespacesAndNewlines)
                 .replacingOccurrences(of: "\\", with: "/")
-            guard isSafeRelativePath(normalized) else {
+            // Validate using the path portion only (before " — " summary)
+            let pathKey = Self.extractPathKey(from: normalized)
+            guard isSafeRelativePath(pathKey) else {
                 continue
             }
-            guard seen.insert(normalized).inserted else {
+            guard seen.insert(pathKey).inserted else {
                 continue
             }
             output.append(normalized)
@@ -266,16 +268,18 @@ final class SessionMemoryManager {
         limit: Int
     ) -> [String] {
         var output: [String] = []
-        var seen = Set<String>()
+        var seenKeys = Set<String>()
 
         for raw in preferred + existing {
             let normalized = raw
                 .trimmingCharacters(in: .whitespacesAndNewlines)
                 .replacingOccurrences(of: "\\", with: "/")
-            guard isSafeRelativePath(normalized) else {
+            // Extract the path portion before any " — " summary
+            let pathKey = Self.extractPathKey(from: normalized)
+            guard isSafeRelativePath(pathKey) else {
                 continue
             }
-            guard seen.insert(normalized).inserted else {
+            guard seenKeys.insert(pathKey).inserted else {
                 continue
             }
             output.append(normalized)
@@ -284,6 +288,13 @@ final class SessionMemoryManager {
             }
         }
         return output
+    }
+
+    private static func extractPathKey(from entry: String) -> String {
+        if let dashRange = entry.range(of: " — ") {
+            return String(entry[..<dashRange.lowerBound])
+        }
+        return entry
     }
 
     private func mergeUniqueItems(

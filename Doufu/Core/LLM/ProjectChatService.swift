@@ -89,28 +89,6 @@ final class ProjectChatService {
         )
     }
 
-    struct ThreadContext {
-        let threadID: String
-        let version: Int
-        let memoryFilePath: String
-        let memoryContent: String
-    }
-
-    struct ThreadMemoryUpdate {
-        struct MemoryDelta {
-            let objective: String?
-            let constraints: [String]
-            let todoItems: [String]
-            let notes: [String]
-        }
-
-        let memoryDelta: MemoryDelta?
-        let contentMarkdown: String?
-        let shouldRollOver: Bool
-        let nextVersionSummary: String?
-        let nextVersionContentMarkdown: String?
-    }
-
     struct RequestTokenUsage: Codable, Equatable, Hashable {
         let inputTokens: Int64
         let outputTokens: Int64
@@ -124,7 +102,6 @@ final class ProjectChatService {
         let assistantMessage: String
         let changedPaths: [String]
         let updatedMemory: SessionMemory
-        let threadMemoryUpdate: ThreadMemoryUpdate?
         let requestTokenUsage: RequestTokenUsage?
         let toolActivitySummary: String?
         /// Structured metadata from each tool execution (diff previews, file stats, etc.).
@@ -167,7 +144,6 @@ final class ProjectChatService {
         projectURL: URL,
         credential: ProviderCredential,
         memory: SessionMemory? = nil,
-        threadContext: ThreadContext?,
         executionOptions: ModelExecutionOptions,
         confirmationHandler: ToolConfirmationHandler? = nil,
         permissionMode: ToolPermissionMode = .standard,
@@ -183,7 +159,6 @@ final class ProjectChatService {
             projectURL: projectURL,
             credential: credential,
             memory: memory,
-            threadContext: threadContext,
             executionOptions: executionOptions,
             confirmationHandler: confirmationHandler,
             permissionMode: permissionMode,

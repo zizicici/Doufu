@@ -1147,19 +1147,8 @@ final class ProjectChatViewController: UIViewController {
         refreshNavigationItems()
     }
 
-    private func buildThreadContext() -> ProjectChatService.ThreadContext? {
-        guard let currentThread else {
-            return nil
-        }
-        let memoryFilePath = threadStore.currentMemoryFilePath(for: currentThread)
-        let memoryContent = threadStore.loadThreadMemory(projectURL: projectURL, thread: currentThread)
-        return ProjectChatService.ThreadContext(
-            threadID: currentThread.id,
-            version: currentThread.currentVersion,
-            memoryFilePath: memoryFilePath,
-            memoryContent: memoryContent
-        )
-    }
+    // Thread memory .md files have been removed. Threads are now pure
+    // conversation containers; cross-session knowledge lives in DOUFU.MD.
 
     private func persistCurrentThreadMessages() {
         guard let threadID = currentThread?.id else {
@@ -1722,7 +1711,6 @@ final class ProjectChatViewController: UIViewController {
             }
 
             do {
-                let threadContext = buildThreadContext()
                 let requestExecutionOptions = self.executionOptions(for: providerCredential)
                 let result = try await chatService.sendAndApply(
                     userMessage: userInput,
@@ -1731,7 +1719,6 @@ final class ProjectChatViewController: UIViewController {
                     projectURL: projectURL,
                     credential: providerCredential,
                     memory: sessionMemory,
-                    threadContext: threadContext,
                     executionOptions: requestExecutionOptions,
                     confirmationHandler: self,
                     permissionMode: toolPermissionMode,
@@ -1772,18 +1759,14 @@ final class ProjectChatViewController: UIViewController {
                 )
 
                 do {
-                    let applyResult = try threadStore.applyThreadMemoryUpdate(
+                    try threadStore.touchThread(
                         projectURL: projectURL,
-                        threadID: currentThread.id,
-                        update: result.threadMemoryUpdate,
-                        fallbackUserMessage: userInput,
-                        fallbackAssistantMessage: assistantText
+                        threadID: currentThread.id
                     )
-                    self.currentThread = applyResult.updatedThread
+                    // Refresh the thread record's updatedAt
                     if var index = self.threadIndex {
-                        if let threadIndex = index.threads.firstIndex(where: { $0.id == applyResult.updatedThread.id }) {
-                            index.threads[threadIndex] = applyResult.updatedThread
-                            index.currentThreadID = applyResult.updatedThread.id
+                        if let threadIdx = index.threads.firstIndex(where: { $0.id == currentThread.id }) {
+                            index.threads[threadIdx].updatedAt = Date()
                             self.threadIndex = index
                         }
                     }

@@ -29,7 +29,7 @@ struct ProjectChatConfiguration {
     let xhighReasoningTimeoutSeconds: TimeInterval = 600
     let streamCompletionGraceSeconds: TimeInterval = 10
 
-    let maxThreadMemoryCharactersInPrompt = 16_000
+    let maxLongContentCharactersInPrompt = 16_000
 
     let webFetchMaxBytes = 65_000
     let webFetchTimeoutSeconds: TimeInterval = 15

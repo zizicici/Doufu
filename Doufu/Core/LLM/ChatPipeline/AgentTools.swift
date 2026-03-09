@@ -234,7 +234,7 @@ final class AgentToolProvider {
     private func editFileTool() -> AgentToolDefinition {
         AgentToolDefinition(
             name: "edit_file",
-            description: "Make targeted edits to an existing file using search and replace. Each edit replaces an exact string match. Always read the file first to see the current content before editing.",
+            description: "Make targeted edits to an existing file using search and replace. Edits are applied sequentially — earlier edits change the file content before later edits run, so plan accordingly. The tool uses multi-level fuzzy matching: if an exact match isn't found, it automatically tries indentation normalization, whitespace normalization, and line-trimmed matching. You don't need to match whitespace perfectly, but provide enough unique context (a few surrounding lines) to avoid ambiguous matches. Always read the file first before editing.",
             parameters: .object([
                 "type": .string("object"),
                 "properties": .object([
@@ -250,7 +250,7 @@ final class AgentToolProvider {
                             "properties": .object([
                                 "old_text": .object([
                                     "type": .string("string"),
-                                    "description": .string("The exact text to find in the file. Must match exactly including whitespace and indentation.")
+                                    "description": .string("The text to find in the file. Include enough surrounding lines for a unique match. Whitespace and indentation differences are tolerated automatically.")
                                 ]),
                                 "new_text": .object([
                                     "type": .string("string"),
@@ -543,6 +543,9 @@ final class AgentToolProvider {
         var metadata: ToolResultMetadata?
         /// Structured progress event emitted after execution completes.
         var completionEvent: ToolProgressEvent?
+        /// Brief summary of what changed (e.g. "wrote 45 lines", "edited 2 regions").
+        /// Used to enrich `changedFiles` in session memory.
+        var changeSummary: String?
     }
 
     func execute(
@@ -553,7 +556,23 @@ final class AgentToolProvider {
             return ToolExecutionResult(output: "Operation cancelled.", isError: true, changedPaths: [])
         }
 
-        let args = toolCall.decodedArguments() ?? [:]
+        // Detect malformed tool call JSON early — give the LLM a clear signal
+        // to retry instead of a confusing "Missing required parameter" error.
+        let args: [String: Any]
+        if let decoded = toolCall.decodedArguments() {
+            args = decoded
+        } else {
+            let raw = toolCall.argumentsJSON.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !raw.isEmpty && raw != "{}" {
+                let preview = String(raw.prefix(200))
+                return ToolExecutionResult(
+                    output: "Tool call failed: the arguments JSON is malformed and could not be parsed. Raw JSON: \(preview). Please retry with valid JSON.",
+                    isError: true,
+                    changedPaths: []
+                )
+            }
+            args = [:]
+        }
 
         switch toolCall.name {
         case "read_file":
@@ -699,12 +718,15 @@ final class AgentToolProvider {
             try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
             try content.write(to: resolved, atomically: true, encoding: .utf8)
             let writtenSize = (try? Data(contentsOf: resolved).count) ?? content.utf8.count
+            let lineCount = content.components(separatedBy: .newlines).count
+            let verb = fileExists ? "overwrote" : "created"
             return ToolExecutionResult(
                 output: "Successfully wrote \(content.count) characters to \(normalizedPath)",
                 isError: false,
                 changedPaths: [normalizedPath],
                 metadata: .fileWritten(path: normalizedPath, isNew: !fileExists, sizeBytes: Int64(writtenSize)),
-                completionEvent: .fileWritten(path: normalizedPath, characterCount: content.count)
+                completionEvent: .fileWritten(path: normalizedPath, characterCount: content.count),
+                changeSummary: "\(verb) \(lineCount) lines"
             )
         } catch {
             return ToolExecutionResult(
@@ -812,6 +834,9 @@ final class AgentToolProvider {
         }
 
         let diffPreview = editDetails.joined(separator: "\n")
+        let editSummary: String? = successCount > 0
+            ? "edited \(successCount) region\(successCount == 1 ? "" : "s")"
+            : nil
 
         return ToolExecutionResult(
             output: resultLines.joined(separator: "\n"),
@@ -825,7 +850,8 @@ final class AgentToolProvider {
                 appliedCount: successCount,
                 totalCount: edits.count,
                 diffPreview: diffPreview
-            )
+            ),
+            changeSummary: editSummary
         )
     }
 
@@ -1649,6 +1675,13 @@ final class AgentToolProvider {
             }
         }
 
+        // Level 4: Line-level similarity match
+        // Slides a window over content lines, scoring each position by how many
+        // trimmed lines match. Accepts ≥80% match if the best position is unique.
+        if let result = lineSimilarityMatch(oldText: oldText, in: content) {
+            return result
+        }
+
         // All strategies failed — produce a helpful hint
         let hint = findNearestMatchHint(oldText: oldText, in: content)
         return .notFound(hint: hint)
@@ -1773,6 +1806,67 @@ final class AgentToolProvider {
         }
 
         return result
+    }
+
+    /// Level 4: Line-level similarity matching.
+    /// Slides a window of `oldLines.count` over the content lines, scoring each
+    /// position by how many trimmed lines match exactly. Returns a fuzzy match
+    /// if the best score is ≥80% and uniquely the highest.
+    private func lineSimilarityMatch(oldText: String, in content: String) -> EditMatchResult? {
+        let oldLines = oldText.split(separator: "\n", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+        guard oldLines.count >= 3 else { return nil } // too few lines for meaningful similarity
+
+        let contentLines = content.split(separator: "\n", omittingEmptySubsequences: false)
+        guard contentLines.count >= oldLines.count else { return nil }
+
+        let threshold = Int(ceil(Double(oldLines.count) * 0.8))
+        var bestScore = 0
+        var bestPositions: [Int] = []
+
+        let windowSize = oldLines.count
+        for start in 0 ... (contentLines.count - windowSize) {
+            var score = 0
+            for j in 0..<windowSize {
+                if contentLines[start + j].trimmingCharacters(in: .whitespaces) == oldLines[j] {
+                    score += 1
+                }
+            }
+            if score > bestScore {
+                bestScore = score
+                bestPositions = [start]
+            } else if score == bestScore && score >= threshold {
+                bestPositions.append(start)
+            }
+        }
+
+        guard bestScore >= threshold, bestPositions.count == 1 else { return nil }
+
+        let matchStart = bestPositions[0]
+        let matchEnd = matchStart + windowSize
+
+        // Build the range in the original content covering these lines
+        let origLines = content.split(separator: "\n", omittingEmptySubsequences: false)
+        var charOffset = 0
+        var startOffset = 0
+        var endOffset = content.count
+        for (i, line) in origLines.enumerated() {
+            if i == matchStart { startOffset = charOffset }
+            charOffset += line.count + 1 // +1 for \n
+            if i == matchEnd - 1 {
+                // Don't include trailing \n if it would go past content
+                endOffset = min(charOffset, content.count)
+                break
+            }
+        }
+
+        guard startOffset < endOffset, endOffset <= content.count else { return nil }
+
+        let startIndex = content.index(content.startIndex, offsetBy: startOffset)
+        let endIndex = content.index(content.startIndex, offsetBy: endOffset)
+        let percent = bestScore * 100 / oldLines.count
+
+        return .fuzzy(startIndex..<endIndex, strategy: "line similarity matching (\(percent)% match)")
     }
 
     /// When all matching strategies fail, find the most similar region in the content

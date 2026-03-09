@@ -17,7 +17,6 @@ final class PromptBuilder {
     // MARK: - Agent System Prompt
 
     func agentSystemPrompt(
-        threadContext: ProjectChatService.ThreadContext?,
         agentsMarkdown: String?,
         doufuMarkdown: String? = nil
     ) -> String {
@@ -36,12 +35,12 @@ final class PromptBuilder {
         - **Explore**: `list_directory` to see project structure; `glob_files` to find files by name or extension (e.g. `**/*.css`).
         - **Search**: `search_files` for simple text search; `grep_files` for regex patterns. Use the `include` parameter (e.g. `*.js`) to filter by file type when the project is large.
         - **Read**: `read_file` to see current file content before editing. Batch multiple reads together when possible.
-        - **Edit**: `edit_file` for surgical changes — provide enough context in `old_text` to ensure a unique match. If a match is ambiguous, include more surrounding lines.
+        - **Edit**: `edit_file` for surgical changes. Edits apply sequentially in each call — earlier edits modify the file before later ones run. Provide enough surrounding lines in `old_text` to ensure a unique match; exact whitespace is not required (the tool normalizes indentation and whitespace automatically). If a match is ambiguous, include more context.
         - **Write**: `write_file` for new files or complete rewrites only.
         - **Revert**: `revert_file` to undo your changes to a single file if something went wrong.
         - **Review**: `diff_file` to see a unified diff of your changes to a file since the session started; `changed_files` to list all files you have modified in this session.
         - **Web**: `web_search` to find documentation or examples; `web_fetch` to read a specific page.
-        - **Validate**: `validate_code` to check HTML/JS files for errors by loading them in a hidden browser. Always validate after writing or editing HTML/JS files. If errors are found, fix them with `edit_file` and validate again.
+        - **Validate**: `validate_code` to check HTML/JS files for errors by loading them in a hidden browser. Validate once after completing a group of related changes — not after every single edit. If errors are found, fix them and validate again.
 
         ## Doufu Runtime Environment
         Pages run inside a native iOS app (WKWebView served via localhost). The runtime provides these transparent enhancements — you do NOT need any special API:
@@ -65,11 +64,20 @@ final class PromptBuilder {
 
         ```
         <memory-update>
-        {"objective": "refined objective", "constraints": ["constraint1"], "todo_items": ["remaining task"]}
+        {
+          "objective": "refined objective",
+          "constraints": ["constraint1"],
+          "todo_items": ["remaining task"]
+        }
         </memory-update>
         ```
 
-        Only include fields you want to change. This block will be parsed and removed from the displayed message.
+        Supported fields (all optional — only include fields you want to change):
+        - `objective` (string): The current high-level goal.
+        - `constraints` (string array): Design constraints or rules discovered during work.
+        - `todo_items` (string array): Remaining tasks. Provide the complete list — this replaces previous items.
+
+        This block will be parsed and removed from the displayed message.
         Use this to keep the session memory accurate — especially to update the objective after clarification, remove completed TODOs, or add discovered constraints.
 
         ## Important Rules
@@ -88,8 +96,13 @@ final class PromptBuilder {
             """)
         }
 
+        let doufuLineCount = doufuMarkdown?
+            .components(separatedBy: .newlines)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+            .count ?? 0
+
         if let doufuMarkdown, !doufuMarkdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            let truncated = truncatedThreadMemory(doufuMarkdown)
+            let truncated = truncatedLongContent(doufuMarkdown)
             sections.append("""
             ## Project Memory (DOUFU.MD)
             Long-lived project context and architecture notes:
@@ -98,16 +111,21 @@ final class PromptBuilder {
             """)
         }
 
-        if let threadContext {
-            let memoryMarkdown = truncatedThreadMemory(threadContext.memoryContent)
+        // Add auto-learning instruction when DOUFU.MD is absent or small
+        if doufuLineCount < 10 {
             sections.append("""
-            ## Current Thread Context
-            - thread_id: \(threadContext.threadID)
-            - memory_file: \(threadContext.memoryFilePath)
-            - memory_version: \(threadContext.version)
+            ## Project Memory (DOUFU.MD) — Auto-learning
+            When you discover important project patterns during your work (tech stack, code conventions, architecture decisions, recurring issues), include a `<doufu-update>` block at the end of your response to persist these learnings:
 
-            Thread memory:
-            \(memoryMarkdown)
+            ```
+            <doufu-update>
+            - Tech stack: vanilla JS + Tailwind CSS
+            - Convention: all API calls go through api.js
+            </doufu-update>
+            ```
+
+            Each line is appended to DOUFU.MD. Only include genuinely useful, stable facts — not task-specific notes.
+            Do NOT repeat information already in DOUFU.MD.
             """)
         }
 
@@ -133,11 +151,11 @@ final class PromptBuilder {
 
     // MARK: - Helpers
 
-    private func truncatedThreadMemory(_ rawText: String) -> String {
+    private func truncatedLongContent(_ rawText: String) -> String {
         let normalized = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard normalized.count > configuration.maxThreadMemoryCharactersInPrompt else {
+        guard normalized.count > configuration.maxLongContentCharactersInPrompt else {
             return normalized
         }
-        return String(normalized.prefix(configuration.maxThreadMemoryCharactersInPrompt)) + "\n...(truncated)"
+        return String(normalized.prefix(configuration.maxLongContentCharactersInPrompt)) + "\n...(truncated)"
     }
 }

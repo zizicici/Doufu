@@ -79,21 +79,6 @@ struct ProjectChatPersistedMessage: Codable {
     }
 }
 
-struct AppliedThreadMemoryResult {
-    let updatedThread: ProjectChatThreadRecord
-    let memoryFilePath: String
-    let memoryContent: String
-}
-
-private struct ThreadMemorySections {
-    let previousSummary: String
-    let objectiveItems: [String]
-    let constraintItems: [String]
-    let appliedChangeItems: [String]
-    let todoItems: [String]
-    let rollingNotes: [String]
-}
-
 enum ProjectChatThreadStoreError: LocalizedError {
     case threadNotFound
     case invalidThreadData
@@ -114,8 +99,6 @@ final class ProjectChatThreadStore {
     private let fileManager: FileManager
     private let indexFileName = ".doufu_threads_index.json"
     private let messagesFilePrefix = ".doufu_thread_messages_"
-    private let threadMemoryPrefix = "thread_memory_"
-    private let threadMemoryExtension = ".md"
 
     init(fileManager: FileManager = .default) {
         self.fileManager = fileManager
@@ -138,12 +121,6 @@ final class ProjectChatThreadStore {
             currentVersion: 0
         )
         let index = ProjectChatThreadIndex(currentThreadID: thread.id, threads: [thread])
-        try writeThreadMemory(
-            projectURL: projectURL,
-            threadID: thread.id,
-            version: thread.currentVersion,
-            content: initialThreadMemoryContent(threadID: thread.id, version: thread.currentVersion, previousSummary: nil)
-        )
         try saveIndex(index, projectURL: projectURL)
         return index
     }
@@ -185,12 +162,6 @@ final class ProjectChatThreadStore {
         if makeCurrent {
             index.currentThreadID = thread.id
         }
-        try writeThreadMemory(
-            projectURL: projectURL,
-            threadID: thread.id,
-            version: thread.currentVersion,
-            content: initialThreadMemoryContent(threadID: thread.id, version: thread.currentVersion, previousSummary: nil)
-        )
         try saveIndex(index, projectURL: projectURL)
         return thread
     }
@@ -230,12 +201,6 @@ final class ProjectChatThreadStore {
         let messagesURL = messagesFileURL(projectURL: projectURL, threadID: threadID)
         try? fileManager.removeItem(at: messagesURL)
 
-        // Clean up memory files
-        for version in 0 ... thread.currentVersion {
-            let memoryURL = threadMemoryFileURL(projectURL: projectURL, threadID: threadID, version: version)
-            try? fileManager.removeItem(at: memoryURL)
-        }
-
         // If deleted thread was current, switch to another
         if index.currentThreadID == threadID {
             index.currentThreadID = index.threads.first?.id ?? ""
@@ -253,12 +218,6 @@ final class ProjectChatThreadStore {
             )
             index.threads.append(newThread)
             index.currentThreadID = newThread.id
-            try writeThreadMemory(
-                projectURL: projectURL,
-                threadID: newThread.id,
-                version: 0,
-                content: initialThreadMemoryContent(threadID: newThread.id, version: 0, previousSummary: nil)
-            )
         }
 
         try saveIndex(index, projectURL: projectURL)
@@ -301,115 +260,14 @@ final class ProjectChatThreadStore {
         try? data.write(to: fileURL, options: .atomic)
     }
 
-    func currentMemoryFilePath(for thread: ProjectChatThreadRecord) -> String {
-        threadMemoryFileName(threadID: thread.id, version: thread.currentVersion)
-    }
-
-    func loadThreadMemory(projectURL: URL, thread: ProjectChatThreadRecord) -> String {
-        let fileURL = threadMemoryFileURL(projectURL: projectURL, threadID: thread.id, version: thread.currentVersion)
-        if let content = try? String(contentsOf: fileURL, encoding: .utf8) {
-            return content
-        }
-        let fallback = initialThreadMemoryContent(threadID: thread.id, version: thread.currentVersion, previousSummary: nil)
-        try? fallback.write(to: fileURL, atomically: true, encoding: .utf8)
-        return fallback
-    }
-
-    @discardableResult
-    func applyThreadMemoryUpdate(
-        projectURL: URL,
-        threadID: String,
-        update: ProjectChatService.ThreadMemoryUpdate?,
-        fallbackUserMessage: String,
-        fallbackAssistantMessage: String
-    ) throws -> AppliedThreadMemoryResult {
+    /// Update a thread's `updatedAt` timestamp after a chat response.
+    func touchThread(projectURL: URL, threadID: String) throws {
         var index = try loadOrCreateIndex(projectURL: projectURL)
         guard let threadIndex = index.threads.firstIndex(where: { $0.id == threadID }) else {
             throw ProjectChatThreadStoreError.threadNotFound
         }
-        var thread = index.threads[threadIndex]
-        let currentFileURL = threadMemoryFileURL(
-            projectURL: projectURL,
-            threadID: thread.id,
-            version: thread.currentVersion
-        )
-        let currentContent = (try? String(contentsOf: currentFileURL, encoding: .utf8))
-            ?? initialThreadMemoryContent(threadID: thread.id, version: thread.currentVersion, previousSummary: nil)
-
-        let normalizedCurrent = currentContent.trimmingCharacters(in: .whitespacesAndNewlines)
-        let finalizedCurrentContent: String
-        if let update {
-            let legacyContent = update.contentMarkdown?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if !legacyContent.isEmpty {
-                finalizedCurrentContent = legacyContent
-            } else if let memoryDelta = update.memoryDelta {
-                finalizedCurrentContent = composeThreadMemoryContentFromDelta(
-                    threadID: thread.id,
-                    version: thread.currentVersion,
-                    currentContent: normalizedCurrent,
-                    memoryDelta: memoryDelta,
-                    fallbackUserMessage: fallbackUserMessage,
-                    fallbackAssistantMessage: fallbackAssistantMessage
-                )
-            } else {
-                finalizedCurrentContent = appendFallbackEntry(
-                    to: normalizedCurrent,
-                    userMessage: fallbackUserMessage,
-                    assistantMessage: fallbackAssistantMessage
-                )
-            }
-        } else {
-            finalizedCurrentContent = appendFallbackEntry(
-                to: normalizedCurrent,
-                userMessage: fallbackUserMessage,
-                assistantMessage: fallbackAssistantMessage
-            )
-        }
-
-        try finalizedCurrentContent.write(to: currentFileURL, atomically: true, encoding: .utf8)
-
-        let shouldRollOver = update?.shouldRollOver ?? false
-        if shouldRollOver {
-            let nextVersion = thread.currentVersion + 1
-            let previousSummary = (update?.nextVersionSummary?
-                .trimmingCharacters(in: .whitespacesAndNewlines))
-                .flatMap { $0.isEmpty ? nil : $0 }
-                ?? summarizeForRollover(markdown: finalizedCurrentContent)
-            let nextVersionContent = (update?.nextVersionContentMarkdown?
-                .trimmingCharacters(in: .whitespacesAndNewlines))
-                .flatMap { $0.isEmpty ? nil : $0 }
-                ?? initialThreadMemoryContent(
-                    threadID: thread.id,
-                    version: nextVersion,
-                    previousSummary: previousSummary
-                )
-            try writeThreadMemory(
-                projectURL: projectURL,
-                threadID: thread.id,
-                version: nextVersion,
-                content: nextVersionContent
-            )
-            thread.currentVersion = nextVersion
-            thread.updatedAt = Date()
-            index.threads[threadIndex] = thread
-            try saveIndex(index, projectURL: projectURL)
-
-            return AppliedThreadMemoryResult(
-                updatedThread: thread,
-                memoryFilePath: currentMemoryFilePath(for: thread),
-                memoryContent: nextVersionContent
-            )
-        }
-
-        thread.updatedAt = Date()
-        index.threads[threadIndex] = thread
+        index.threads[threadIndex].updatedAt = Date()
         try saveIndex(index, projectURL: projectURL)
-        return AppliedThreadMemoryResult(
-            updatedThread: thread,
-            memoryFilePath: currentMemoryFilePath(for: thread),
-            memoryContent: finalizedCurrentContent
-        )
     }
 
     private func sanitizeIndex(_ index: ProjectChatThreadIndex) -> ProjectChatThreadIndex {
@@ -433,24 +291,6 @@ final class ProjectChatThreadStore {
 
     private func messagesFileURL(projectURL: URL, threadID: String) -> URL {
         projectURL.appendingPathComponent("\(messagesFilePrefix)\(threadID).json")
-    }
-
-    private func threadMemoryFileName(threadID: String, version: Int) -> String {
-        "\(threadMemoryPrefix)\(threadID)_\(version)\(threadMemoryExtension)"
-    }
-
-    private func threadMemoryFileURL(projectURL: URL, threadID: String, version: Int) -> URL {
-        projectURL.appendingPathComponent(threadMemoryFileName(threadID: threadID, version: version))
-    }
-
-    private func writeThreadMemory(
-        projectURL: URL,
-        threadID: String,
-        version: Int,
-        content: String
-    ) throws {
-        let fileURL = threadMemoryFileURL(projectURL: projectURL, threadID: threadID, version: version)
-        try content.write(to: fileURL, atomically: true, encoding: .utf8)
     }
 
     private func saveIndex(_ index: ProjectChatThreadIndex, projectURL: URL) throws {
@@ -480,288 +320,5 @@ final class ProjectChatThreadStore {
     private func normalizedThreadTitle(_ rawTitle: String?, fallback: String) -> String {
         let normalized = rawTitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return normalized.isEmpty ? fallback : normalized
-    }
-
-    private func appendFallbackEntry(
-        to markdown: String,
-        userMessage: String,
-        assistantMessage: String
-    ) -> String {
-        let timestamp = ISO8601DateFormatter().string(from: Date())
-        let userLine = sanitizedSingleLine(userMessage, maxCharacters: 320)
-        let assistantLine = sanitizedSingleLine(assistantMessage, maxCharacters: 380)
-
-        var output = markdown
-        if output.isEmpty {
-            output = """
-            # Thread Memory
-
-            ## Rolling Notes
-            """
-        } else if !output.contains("## Rolling Notes") {
-            output += "\n\n## Rolling Notes"
-        }
-        output += "\n- [\(timestamp)] User: \(userLine)"
-        output += "\n- [\(timestamp)] Assistant: \(assistantLine)"
-        return output
-    }
-
-    private func composeThreadMemoryContentFromDelta(
-        threadID: String,
-        version: Int,
-        currentContent: String,
-        memoryDelta: ProjectChatService.ThreadMemoryUpdate.MemoryDelta,
-        fallbackUserMessage: String,
-        fallbackAssistantMessage: String
-    ) -> String {
-        let parsed = parseThreadMemorySections(from: currentContent)
-        let updatedAt = ISO8601DateFormatter().string(from: Date())
-        let previousSummary = parsed.previousSummary.isEmpty ? "无" : parsed.previousSummary
-
-        let objectiveItems: [String]
-        if let objective = memoryDelta.objective?.trimmingCharacters(in: .whitespacesAndNewlines), !objective.isEmpty {
-            objectiveItems = [sanitizedSingleLine(objective, maxCharacters: 260)]
-        } else {
-            objectiveItems = parsed.objectiveItems
-        }
-
-        let constraints = mergeUniqueItems(
-            preferred: memoryDelta.constraints,
-            existing: parsed.constraintItems,
-            limit: 16,
-            maxCharacters: 220
-        )
-
-        let todos: [String]
-        if !memoryDelta.todoItems.isEmpty {
-            todos = mergeUniqueItems(
-                preferred: memoryDelta.todoItems,
-                existing: [],
-                limit: 20,
-                maxCharacters: 260
-            )
-        } else {
-            todos = parsed.todoItems
-        }
-
-        let timestamp = "[\(updatedAt)]"
-        var appliedChanges = mergeUniqueItems(
-            preferred: parsed.appliedChangeItems,
-            existing: [],
-            limit: 20,
-            maxCharacters: 280
-        )
-        let appliedChangeLine = "\(timestamp) \(sanitizedSingleLine(fallbackAssistantMessage, maxCharacters: 260))"
-        if !appliedChangeLine.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            appliedChanges = mergeUniqueItems(
-                preferred: [appliedChangeLine],
-                existing: appliedChanges,
-                limit: 20,
-                maxCharacters: 280
-            )
-        }
-
-        var rollingNotes = mergeUniqueItems(
-            preferred: parsed.rollingNotes,
-            existing: [],
-            limit: 32,
-            maxCharacters: 320
-        )
-        let userNote = "\(timestamp) User: \(sanitizedSingleLine(fallbackUserMessage, maxCharacters: 220))"
-        let assistantNote = "\(timestamp) Assistant: \(sanitizedSingleLine(fallbackAssistantMessage, maxCharacters: 220))"
-        let modelNotes = memoryDelta.notes.map { "\(timestamp) \($0)" }
-        rollingNotes = mergeUniqueItems(
-            preferred: [userNote, assistantNote] + modelNotes,
-            existing: rollingNotes,
-            limit: 32,
-            maxCharacters: 320
-        )
-
-        return """
-        # Thread Memory
-
-        - Thread ID: \(threadID)
-        - Version: \(version)
-        - Updated At: \(updatedAt)
-
-        ## Previous Version Summary
-        \(previousSummary)
-
-        ## Current Objective
-        \(markdownBulletList(objectiveItems))
-
-        ## Constraints
-        \(markdownBulletList(constraints))
-
-        ## Applied Changes
-        \(markdownBulletList(appliedChanges))
-
-        ## Open Todos
-        \(markdownBulletList(todos))
-
-        ## Rolling Notes
-        \(markdownBulletList(rollingNotes))
-        """
-    }
-
-    private func parseThreadMemorySections(from markdown: String) -> ThreadMemorySections {
-        let normalized = markdown.replacingOccurrences(of: "\r\n", with: "\n")
-        let lines = normalized.components(separatedBy: "\n")
-        var sectionLines: [String: [String]] = [:]
-        var currentSection: String?
-
-        for line in lines {
-            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmed.hasPrefix("## ") {
-                let section = String(trimmed.dropFirst(3)).trimmingCharacters(in: .whitespacesAndNewlines)
-                currentSection = section
-                if sectionLines[section] == nil {
-                    sectionLines[section] = []
-                }
-                continue
-            }
-            guard let currentSection else {
-                continue
-            }
-            sectionLines[currentSection, default: []].append(line)
-        }
-
-        let previousSummary = sectionText(from: sectionLines["Previous Version Summary"] ?? [])
-        let objectiveItems = sectionItems(from: sectionLines["Current Objective"] ?? [])
-        let constraintItems = sectionItems(from: sectionLines["Constraints"] ?? [])
-        let appliedChangeItems = sectionItems(from: sectionLines["Applied Changes"] ?? [])
-        let todoItems = sectionItems(from: sectionLines["Open Todos"] ?? [])
-        let rollingNotes = sectionItems(from: sectionLines["Rolling Notes"] ?? [])
-
-        return ThreadMemorySections(
-            previousSummary: previousSummary.isEmpty ? "无" : previousSummary,
-            objectiveItems: objectiveItems,
-            constraintItems: constraintItems,
-            appliedChangeItems: appliedChangeItems,
-            todoItems: todoItems,
-            rollingNotes: rollingNotes
-        )
-    }
-
-    private func sectionText(from lines: [String]) -> String {
-        lines
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-            .joined(separator: "\n")
-    }
-
-    private func sectionItems(from lines: [String]) -> [String] {
-        var items: [String] = []
-        for raw in lines {
-            var line = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !line.isEmpty else {
-                continue
-            }
-            if line.hasPrefix("- ") {
-                line = String(line.dropFirst(2))
-            } else if line == "-" {
-                continue
-            }
-            let normalized = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !normalized.isEmpty else {
-                continue
-            }
-            items.append(normalized)
-        }
-        return items
-    }
-
-    private func markdownBulletList(_ items: [String]) -> String {
-        let normalized = items
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        guard !normalized.isEmpty else {
-            return "-"
-        }
-        return normalized.map { "- \($0)" }.joined(separator: "\n")
-    }
-
-    private func mergeUniqueItems(
-        preferred: [String],
-        existing: [String],
-        limit: Int,
-        maxCharacters: Int
-    ) -> [String] {
-        var output: [String] = []
-        var seen = Set<String>()
-        for value in preferred + existing {
-            let normalized = sanitizedSingleLine(value, maxCharacters: maxCharacters)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !normalized.isEmpty else {
-                continue
-            }
-            guard seen.insert(normalized).inserted else {
-                continue
-            }
-            output.append(normalized)
-            if output.count >= limit {
-                break
-            }
-        }
-        return output
-    }
-
-    private func summarizeForRollover(markdown: String) -> String {
-        let normalized = markdown
-            .replacingOccurrences(of: "\r\n", with: "\n")
-            .split(separator: "\n")
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        let summary = normalized.prefix(6).joined(separator: " | ")
-        let compact = summary.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !compact.isEmpty else {
-            return "上一版本总结：用户与助手完成了一轮对话与改动。"
-        }
-        return "上一版本总结：\(sanitizedSingleLine(compact, maxCharacters: 420))"
-    }
-
-    private func initialThreadMemoryContent(
-        threadID: String,
-        version: Int,
-        previousSummary: String?
-    ) -> String {
-        let now = ISO8601DateFormatter().string(from: Date())
-        let previous = previousSummary?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "无"
-        return """
-        # Thread Memory
-
-        - Thread ID: \(threadID)
-        - Version: \(version)
-        - Updated At: \(now)
-
-        ## Previous Version Summary
-        \(previous)
-
-        ## Current Objective
-        - 
-
-        ## Constraints
-        - 
-
-        ## Applied Changes
-        - 
-
-        ## Open Todos
-        - 
-
-        ## Rolling Notes
-        - 
-        """
-    }
-
-    private func sanitizedSingleLine(_ text: String, maxCharacters: Int) -> String {
-        let normalized = text
-            .replacingOccurrences(of: "\r\n", with: "\n")
-            .replacingOccurrences(of: "\n", with: " ")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard normalized.count > maxCharacters else {
-            return normalized
-        }
-        return String(normalized.prefix(maxCharacters)) + "..."
     }
 }

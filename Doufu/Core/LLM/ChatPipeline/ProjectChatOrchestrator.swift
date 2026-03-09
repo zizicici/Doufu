@@ -61,7 +61,6 @@ final class ProjectChatOrchestrator {
         projectURL: URL,
         credential: ProjectChatService.ProviderCredential,
         memory: ProjectChatService.SessionMemory? = nil,
-        threadContext: ProjectChatService.ThreadContext?,
         executionOptions: ProjectChatService.ModelExecutionOptions,
         confirmationHandler: ToolConfirmationHandler? = nil,
         permissionMode: ToolPermissionMode = .standard,
@@ -95,7 +94,6 @@ final class ProjectChatOrchestrator {
 
         // Build system prompt
         let systemPrompt = promptBuilder.agentSystemPrompt(
-            threadContext: threadContext,
             agentsMarkdown: agentsMarkdown,
             doufuMarkdown: doufuMarkdown
         )
@@ -220,7 +218,8 @@ final class ProjectChatOrchestrator {
                 }
 
                 let rawFinalMessage = accumulatedText.isEmpty ? "已完成。" : accumulatedText
-                let (modelMemoryUpdate, cleanedFinalMessage) = extractMemoryUpdate(from: rawFinalMessage)
+                let (modelMemoryUpdate, afterMemory) = extractMemoryUpdate(from: rawFinalMessage)
+                let cleanedFinalMessage = extractAndPersistDoufuUpdate(from: afterMemory, projectURL: projectURL)
                 let finalMessage = cleanedFinalMessage.isEmpty ? "已完成。" : cleanedFinalMessage
 
                 if let onStreamedText, cleanedFinalMessage != rawFinalMessage {
@@ -244,7 +243,7 @@ final class ProjectChatOrchestrator {
                     assistantMessage: finalMessage,
                     changedPaths: allChangedPaths,
                     updatedMemory: updatedMemory,
-                    threadMemoryUpdate: nil,
+
                     requestTokenUsage: await usageAccumulator.usage,
                     toolActivitySummary: toolActivityLog.isEmpty ? nil : toolActivityLog.joined(separator: "\n"),
                     toolMetadata: allToolMetadata
@@ -279,7 +278,8 @@ final class ProjectChatOrchestrator {
                 )
                 for (toolCall, result) in parallelResults {
                     if !result.changedPaths.isEmpty {
-                        mergeChangedPaths(result.changedPaths, into: &allChangedPaths)
+                        let enriched = enrichPathsWithSummary(result.changedPaths, summary: result.changeSummary)
+                        mergeChangedPaths(enriched, into: &allChangedPaths)
                     }
                     if let meta = result.metadata {
                         allToolMetadata.append(meta)
@@ -320,7 +320,8 @@ final class ProjectChatOrchestrator {
 
                 // Track changed paths and metadata
                 if !result.changedPaths.isEmpty {
-                    mergeChangedPaths(result.changedPaths, into: &allChangedPaths)
+                    let enriched = enrichPathsWithSummary(result.changedPaths, summary: result.changeSummary)
+                    mergeChangedPaths(enriched, into: &allChangedPaths)
                 }
                 if let meta = result.metadata {
                     allToolMetadata.append(meta)
@@ -343,8 +344,8 @@ final class ProjectChatOrchestrator {
         let rawMaxMessage = accumulatedText.isEmpty
             ? "已达到最大执行步骤数。请再发一条消息继续。"
             : accumulatedText + "\n\n（已达到最大执行步骤数）"
-        let (maxModelMemoryUpdate, cleanedMaxMessage) = extractMemoryUpdate(from: rawMaxMessage)
-        let finalMessage = cleanedMaxMessage
+        let (maxModelMemoryUpdate, afterMaxMemory) = extractMemoryUpdate(from: rawMaxMessage)
+        let finalMessage = extractAndPersistDoufuUpdate(from: afterMaxMemory, projectURL: projectURL)
 
         if !allChangedPaths.isEmpty {
             AppProjectStore.shared.touchProjectUpdatedAt(projectURL: projectURL)
@@ -363,7 +364,6 @@ final class ProjectChatOrchestrator {
             assistantMessage: finalMessage,
             changedPaths: allChangedPaths,
             updatedMemory: updatedMemory,
-            threadMemoryUpdate: nil,
             requestTokenUsage: await usageAccumulator.usage,
             toolActivitySummary: toolActivityLog.isEmpty ? nil : toolActivityLog.joined(separator: "\n"),
             toolMetadata: allToolMetadata
@@ -699,7 +699,112 @@ final class ProjectChatOrchestrator {
     }
 
     private func mergeChangedPaths(_ paths: [String], into target: inout [String]) {
-        ProjectPathResolver.mergeChangedPaths(paths, into: &target)
+        // Deduplicate by path prefix (before " — ") so that enriched entries
+        // update rather than duplicate plain path entries.
+        for path in paths {
+            let pathKey = Self.extractPathKey(from: path)
+            if let existingIdx = target.firstIndex(where: { Self.extractPathKey(from: $0) == pathKey }) {
+                // Replace if the new entry has a summary and the old one doesn't,
+                // or append summaries for multiple edits.
+                let existingSummary = Self.extractSummary(from: target[existingIdx])
+                let newSummary = Self.extractSummary(from: path)
+                if let new = newSummary {
+                    if let existing = existingSummary {
+                        target[existingIdx] = "\(pathKey) — \(existing), \(new)"
+                    } else {
+                        target[existingIdx] = path
+                    }
+                }
+                // If new has no summary, keep existing as-is
+            } else {
+                target.append(path)
+            }
+        }
+    }
+
+    /// Attach a change summary to each path: "index.html" + "edited 2 regions" → "index.html — edited 2 regions"
+    private func enrichPathsWithSummary(_ paths: [String], summary: String?) -> [String] {
+        guard let summary, !summary.isEmpty else { return paths }
+        let truncated = summary.count > 60 ? String(summary.prefix(60)) : summary
+        return paths.map { path in
+            // Don't double-enrich paths that already have a summary
+            if path.contains(" — ") { return path }
+            return "\(path) — \(truncated)"
+        }
+    }
+
+    private static func extractPathKey(from entry: String) -> String {
+        if let dashRange = entry.range(of: " — ") {
+            return String(entry[..<dashRange.lowerBound])
+        }
+        return entry
+    }
+
+    private static func extractSummary(from entry: String) -> String? {
+        guard let dashRange = entry.range(of: " — ") else { return nil }
+        return String(entry[dashRange.upperBound...])
+    }
+
+    /// Parse a `<doufu-update>` block from the model's response text, persist
+    /// new lines to DOUFU.MD, and return the text with the block removed.
+    @discardableResult
+    private func extractAndPersistDoufuUpdate(from text: String, projectURL: URL) -> String {
+        let openTag = "<doufu-update>"
+        let closeTag = "</doufu-update>"
+
+        guard let openRange = text.range(of: openTag),
+              let closeRange = text.range(of: closeTag, range: openRange.upperBound..<text.endIndex)
+        else {
+            return text
+        }
+
+        let blockContent = String(text[openRange.upperBound..<closeRange.lowerBound])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Remove the block from displayed text
+        let fullBlockRange = openRange.lowerBound..<closeRange.upperBound
+        var cleaned = text
+        cleaned.removeSubrange(fullBlockRange)
+        cleaned = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Parse lines to append
+        let newLines = blockContent
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+
+        guard !newLines.isEmpty else { return cleaned }
+
+        // Read existing DOUFU.MD content for deduplication
+        let doufuURL = projectURL.appendingPathComponent("DOUFU.MD")
+        let existingContent = (try? String(contentsOf: doufuURL, encoding: .utf8)) ?? ""
+        let existingLines = Set(
+            existingContent
+                .components(separatedBy: .newlines)
+                .map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
+        )
+
+        // Filter out lines that already exist (case-insensitive trimmed comparison)
+        let linesToAppend = newLines.filter { line in
+            !existingLines.contains(line.lowercased())
+        }
+
+        guard !linesToAppend.isEmpty else { return cleaned }
+
+        // Append to DOUFU.MD (create if needed)
+        do {
+            var content = existingContent
+            if !content.isEmpty && !content.hasSuffix("\n") {
+                content += "\n"
+            }
+            content += linesToAppend.joined(separator: "\n") + "\n"
+            try content.write(to: doufuURL, atomically: true, encoding: .utf8)
+            LLMProviderHelpers.debugLog("[Doufu Agent] appended \(linesToAppend.count) lines to DOUFU.MD")
+        } catch {
+            LLMProviderHelpers.debugLog("[Doufu Agent] failed to write DOUFU.MD: \(error.localizedDescription)")
+        }
+
+        return cleaned
     }
 
     /// Parse a `<memory-update>` JSON block from the model's response text.

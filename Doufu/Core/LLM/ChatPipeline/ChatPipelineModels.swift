@@ -193,116 +193,26 @@ struct MemoryPromptPayload: Encodable {
 }
 
 struct PatchMemoryUpdate: Decodable {
-    struct MemoryDelta: Decodable {
-        let objective: String?
-        let constraints: [String]
-        let todoItems: [String]
-        let notes: [String]
-
-        private enum CodingKeys: String, CodingKey {
-            case objective
-            case constraints
-            case todoItems = "todo_items"
-            case notes
-        }
-
-        init(from decoder: Decoder) throws {
-            let container = try decoder.container(keyedBy: CodingKeys.self)
-            objective = try container.decodeIfPresent(String.self, forKey: .objective)
-            constraints = try container.decodeIfPresent([String].self, forKey: .constraints) ?? []
-            todoItems = try container.decodeIfPresent([String].self, forKey: .todoItems) ?? []
-            notes = try container.decodeIfPresent([String].self, forKey: .notes) ?? []
-        }
-    }
-
     let objective: String?
     let constraints: [String]?
     let todoItems: [String]?
-    let memoryDelta: MemoryDelta?
-    let threadContentMarkdown: String?
-    let threadShouldRollOver: Bool
-    let threadNextVersionSummary: String?
-    let threadNextVersionContentMarkdown: String?
 
     private enum CodingKeys: String, CodingKey {
         case objective
         case constraints
         case todoItems = "todo_items"
-        case memoryDelta = "memory_delta"
-        case threadContentMarkdown = "thread_content_markdown"
-        case threadShouldRollOver = "thread_should_rollover"
-        case threadNextVersionSummary = "thread_next_version_summary"
-        case threadNextVersionContentMarkdown = "thread_next_version_content_markdown"
-        case threadMemory = "thread_memory"
-    }
-
-    private enum ThreadMemoryCodingKeys: String, CodingKey {
-        case contentMarkdown = "content_markdown"
-        case shouldRollOver = "should_rollover"
-        case nextVersionSummary = "next_version_summary"
-        case nextVersionContentMarkdown = "next_version_content_markdown"
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        objective = try container.decodeIfPresent(String.self, forKey: .objective)
-        constraints = try container.decodeIfPresent([String].self, forKey: .constraints)
-        todoItems = try container.decodeIfPresent([String].self, forKey: .todoItems)
-        memoryDelta = try container.decodeIfPresent(MemoryDelta.self, forKey: .memoryDelta)
-
-        if let flattened = try container.decodeIfPresent(String.self, forKey: .threadContentMarkdown) {
-            threadContentMarkdown = flattened
-        } else if container.contains(.threadMemory) {
-            let threadContainer = try container.nestedContainer(keyedBy: ThreadMemoryCodingKeys.self, forKey: .threadMemory)
-            threadContentMarkdown = try threadContainer.decodeIfPresent(String.self, forKey: .contentMarkdown)
-        } else {
-            threadContentMarkdown = nil
-        }
-
-        if let flattenedShouldRollOver = try container.decodeIfPresent(Bool.self, forKey: .threadShouldRollOver) {
-            threadShouldRollOver = flattenedShouldRollOver
-        } else if container.contains(.threadMemory) {
-            let threadContainer = try container.nestedContainer(keyedBy: ThreadMemoryCodingKeys.self, forKey: .threadMemory)
-            threadShouldRollOver = try threadContainer.decodeIfPresent(Bool.self, forKey: .shouldRollOver) ?? false
-        } else {
-            threadShouldRollOver = false
-        }
-
-        if let flattenedSummary = try container.decodeIfPresent(String.self, forKey: .threadNextVersionSummary) {
-            threadNextVersionSummary = flattenedSummary
-        } else if container.contains(.threadMemory) {
-            let threadContainer = try container.nestedContainer(keyedBy: ThreadMemoryCodingKeys.self, forKey: .threadMemory)
-            threadNextVersionSummary = try threadContainer.decodeIfPresent(String.self, forKey: .nextVersionSummary)
-        } else {
-            threadNextVersionSummary = nil
-        }
-
-        if let flattenedContent = try container.decodeIfPresent(String.self, forKey: .threadNextVersionContentMarkdown) {
-            threadNextVersionContentMarkdown = flattenedContent
-        } else if container.contains(.threadMemory) {
-            let threadContainer = try container.nestedContainer(keyedBy: ThreadMemoryCodingKeys.self, forKey: .threadMemory)
-            threadNextVersionContentMarkdown = try threadContainer.decodeIfPresent(String.self, forKey: .nextVersionContentMarkdown)
-        } else {
-            threadNextVersionContentMarkdown = nil
-        }
     }
 
     var resolvedObjective: String? {
-        memoryDelta?.objective ?? objective
+        objective
     }
 
     var resolvedConstraints: [String] {
-        let value = memoryDelta?.constraints ?? constraints ?? []
-        return value
+        constraints ?? []
     }
 
     var resolvedTodoItems: [String] {
-        let value = memoryDelta?.todoItems ?? todoItems ?? []
-        return value
-    }
-
-    var resolvedNotes: [String] {
-        memoryDelta?.notes ?? []
+        todoItems ?? []
     }
 }
 
