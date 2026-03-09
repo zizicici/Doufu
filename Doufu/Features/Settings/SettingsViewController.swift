@@ -27,6 +27,7 @@ final class SettingsViewController: UITableViewController {
 
     private enum LLMProvidersRow: Int, CaseIterable {
         case manageProviders
+        case defaultModel
         case tokenUsage
     }
 
@@ -104,7 +105,6 @@ final class SettingsViewController: UITableViewController {
         switch section {
         case .general:
             var configuration = UIListContentConfiguration.valueCell()
-            configuration.image = UIImage(systemName: "globe")
             configuration.text = String(localized: "settings.general.language.title")
             configuration.secondaryText = currentLanguageDisplayName()
             cell.contentConfiguration = configuration
@@ -115,14 +115,15 @@ final class SettingsViewController: UITableViewController {
             switch row {
             case .manageProviders:
                 let providersCount = store.loadProviders().count
-                configuration.image = UIImage(systemName: "server.rack")
-                configuration.text = String(localized: "settings.manage_providers.title")
+                configuration.text = String(localized: "settings.providers.title")
                 configuration.secondaryText = String(
                     format: String(localized: "settings.manage_providers.configured_count_format"),
                     providersCount
                 )
+            case .defaultModel:
+                configuration.text = String(localized: "settings.default_model.title")
+                configuration.secondaryText = defaultModelDisplayName()
             case .tokenUsage:
-                configuration.image = UIImage(systemName: "chart.bar.xaxis")
                 configuration.text = String(localized: "providers.manage.item.token_usage")
             }
             cell.contentConfiguration = configuration
@@ -132,18 +133,15 @@ final class SettingsViewController: UITableViewController {
             var configuration = UIListContentConfiguration.valueCell()
             switch row {
             case .autoCollapsePanel:
-                configuration.image = UIImage(systemName: "sidebar.right")
                 configuration.text = String(localized: "settings.project.auto_collapse_panel.title")
                 configuration.secondaryText = projectStore.isAutoCollapsePanelEnabled
                     ? String(localized: "settings.common.on")
                     : String(localized: "settings.common.off")
             case .toolPermission:
                 let mode = projectStore.loadAppToolPermissionMode()
-                configuration.image = UIImage(systemName: "wrench")
                 configuration.text = String(localized: "settings.chat.tool_permission.title")
                 configuration.secondaryText = displayName(for: mode)
             case .pipProgress:
-                configuration.image = UIImage(systemName: "pip")
                 configuration.text = String(localized: "settings.chat.pip_progress.title")
                 configuration.secondaryText = PiPProgressManager.shared.isEnabled
                     ? String(localized: "settings.common.on")
@@ -171,6 +169,9 @@ final class SettingsViewController: UITableViewController {
             case .manageProviders:
                 let controller = ManageProvidersViewController()
                 navigationController?.pushViewController(controller, animated: true)
+            case .defaultModel:
+                let controller = DefaultModelSelectionViewController()
+                navigationController?.pushViewController(controller, animated: true)
             case .tokenUsage:
                 let controller = TokenUsageViewController()
                 navigationController?.pushViewController(controller, animated: true)
@@ -180,16 +181,32 @@ final class SettingsViewController: UITableViewController {
             guard let row = ProjectRow(rawValue: indexPath.row) else { return }
             switch row {
             case .autoCollapsePanel:
-                let controller = AutoCollapsePanelPickerViewController()
+                let controller = makeAutoCollapsePanelPicker()
                 navigationController?.pushViewController(controller, animated: true)
             case .toolPermission:
-                let controller = ToolPermissionPickerViewController()
+                let controller = makeToolPermissionPicker()
                 navigationController?.pushViewController(controller, animated: true)
             case .pipProgress:
-                let controller = PiPProgressPickerViewController()
+                let controller = makePiPProgressPicker()
                 navigationController?.pushViewController(controller, animated: true)
             }
         }
+    }
+
+    // MARK: - Default Model
+
+    private func defaultModelDisplayName() -> String {
+        guard let selection = store.loadDefaultModelSelection() else {
+            return String(localized: "settings.default_model.not_set")
+        }
+        guard let provider = store.loadProvider(id: selection.providerID) else {
+            return String(localized: "settings.default_model.not_set")
+        }
+        let model = provider.availableModels.first(where: {
+            $0.id.caseInsensitiveCompare(selection.modelRecordID) == .orderedSame
+        })
+        let modelName = model?.effectiveDisplayName ?? selection.modelRecordID
+        return provider.label + " · " + modelName
     }
 
     // MARK: - Language
@@ -200,7 +217,45 @@ final class SettingsViewController: UITableViewController {
         return locale.localizedString(forIdentifier: langCode)?.localizedCapitalized ?? langCode
     }
 
-    // MARK: - Tool Permission
+    // MARK: - Pickers
+
+    private func makeAutoCollapsePanelPicker() -> SettingsPickerViewController {
+        let onLabel = String(localized: "settings.common.on")
+        let offLabel = String(localized: "settings.common.off")
+        return SettingsPickerViewController(
+            title: String(localized: "settings.project.auto_collapse_panel.title"),
+            options: [SettingsPickerOption(onLabel), SettingsPickerOption(offLabel)],
+            footerText: String(localized: "settings.project.auto_collapse_panel.footer"),
+            selectedIndex: { [projectStore] in projectStore.isAutoCollapsePanelEnabled ? 0 : 1 },
+            onSelect: { [projectStore] index in projectStore.isAutoCollapsePanelEnabled = (index == 0) }
+        )
+    }
+
+    private func makeToolPermissionPicker() -> SettingsPickerViewController {
+        let modes = ToolPermissionMode.allCases
+        return SettingsPickerViewController(
+            title: String(localized: "settings.chat.tool_permission.title"),
+            options: modes.map { SettingsPickerOption(displayName(for: $0), subtitle: subtitle(for: $0)) },
+            footerText: String(localized: "settings.chat.tool_permission.footer"),
+            selectedIndex: { [projectStore] in
+                let current = projectStore.loadAppToolPermissionMode()
+                return modes.firstIndex(of: current) ?? 0
+            },
+            onSelect: { [projectStore] index in projectStore.saveAppToolPermissionMode(modes[index]) }
+        )
+    }
+
+    private func makePiPProgressPicker() -> SettingsPickerViewController {
+        let onLabel = String(localized: "settings.common.on")
+        let offLabel = String(localized: "settings.common.off")
+        return SettingsPickerViewController(
+            title: String(localized: "settings.chat.pip_progress.title"),
+            options: [SettingsPickerOption(onLabel), SettingsPickerOption(offLabel)],
+            footerText: String(localized: "settings.chat.pip_progress.footer"),
+            selectedIndex: { PiPProgressManager.shared.isEnabled ? 0 : 1 },
+            onSelect: { index in PiPProgressManager.shared.isEnabled = (index == 0) }
+        )
+    }
 
     private func displayName(for mode: ToolPermissionMode) -> String {
         switch mode {
@@ -210,6 +265,17 @@ final class SettingsViewController: UITableViewController {
             return String(localized: "tool_permission.mode.auto_non_destructive")
         case .fullAutoApprove:
             return String(localized: "tool_permission.mode.full_auto")
+        }
+    }
+
+    private func subtitle(for mode: ToolPermissionMode) -> String {
+        switch mode {
+        case .standard:
+            return String(localized: "tool_permission.mode.standard.subtitle")
+        case .autoApproveNonDestructive:
+            return String(localized: "tool_permission.mode.auto_non_destructive.subtitle")
+        case .fullAutoApprove:
+            return String(localized: "tool_permission.mode.full_auto.subtitle")
         }
     }
 }

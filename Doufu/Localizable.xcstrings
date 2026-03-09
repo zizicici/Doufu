@@ -320,6 +320,93 @@
         }
       }
     },
+    "chat.alert.no_default_model.action" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Select Model"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择模型"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "選擇模型"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "選擇模型"
+          }
+        }
+      }
+    },
+    "chat.alert.no_default_model.message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No model is selected for this conversation. Please select a model first."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "当前会话未选择模型，请先选择一个模型。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "當前會話未選擇模型，請先選擇一個模型。"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "當前會話未選擇模型，請先選擇一個模型。"
+          }
+        }
+      }
+    },
+    "chat.alert.no_default_model.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No Model Selected"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未选择模型"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未選擇模型"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未選擇模型"
+          }
+        }
+      }
+    },
     "chat.alert.save_failed.title" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1306,6 +1393,18 @@
         }
       }
     },
+    "chat.setup_alert.action.read_only" : {
+
+    },
+    "chat.setup_alert.action.setup" : {
+
+    },
+    "chat.setup_alert.message" : {
+
+    },
+    "chat.setup_alert.title" : {
+
+    },
     "chat.streaming.char_count_format" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1389,6 +1488,64 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "線程記憶更新失敗：%@"
+          }
+        }
+      }
+    },
+    "chat.system.no_default_model" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No default model is configured. Please tap the model button in the toolbar to select a model, or set a default model in Settings."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "尚未配置默认模型。请点击工具栏的模型按钮选择模型，或在「设置」中设置默认模型。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "尚未設定預設模型。請點擊工具列的模型按鈕選擇模型，或在「設定」中設定預設模型。"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "尚未設定預設模型。請點擊工具列的模型按鈕選擇模型，或在「設定」中設定預設模型。"
+          }
+        }
+      }
+    },
+    "chat.system.no_provider" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No LLM provider is configured. Please add a provider to get started."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "尚未配置 LLM 提供商，请先添加一个提供商。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "尚未設定 LLM 提供商，請先新增一個提供商。"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "尚未設定 LLM 提供商，請先新增一個提供商。"
           }
         }
       }
@@ -2146,6 +2303,9 @@
           }
         }
       }
+    },
+    "common.action.edit" : {
+
     },
     "common.action.exit" : {
       "extractionState" : "manual",
@@ -3104,6 +3264,35 @@
         }
       }
     },
+    "model_config.action.detail" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Detail"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "详情"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "詳情"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "詳情"
+          }
+        }
+      }
+    },
     "model_config.alert.refresh_failed" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3332,6 +3521,35 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "管理模型"
+          }
+        }
+      }
+    },
+    "model_config.section.model.footer" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Swipe left on a model to edit or view details."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "向左滑动模型可编辑或查看详情。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "向左滑動模型可編輯或檢視詳情。"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "向左滑動模型可編輯或檢視詳情。"
           }
         }
       }
@@ -4351,35 +4569,6 @@
         }
       }
     },
-    "project_settings.field.name_placeholder" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Project name"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "项目名称"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "項目名稱"
-          }
-        },
-        "zh-HK" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "項目名稱"
-          }
-        }
-      }
-    },
     "project_settings.disable_edge_swipe.title" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -4405,6 +4594,35 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "禁用邊緣滑動退出"
+          }
+        }
+      }
+    },
+    "project_settings.field.name_placeholder" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Project name"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "项目名称"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "項目名稱"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "項目名稱"
           }
         }
       }
@@ -5627,6 +5845,64 @@
         }
       }
     },
+    "provider_model.editor.field.context_window" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Context Window"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "上下文窗口"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "上下文視窗"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "上下文視窗"
+          }
+        }
+      }
+    },
+    "provider_model.editor.field.context_window.placeholder" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auto"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自动"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自動"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自動"
+          }
+        }
+      }
+    },
     "provider_model.editor.field.display_name" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5681,6 +5957,64 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "可選"
+          }
+        }
+      }
+    },
+    "provider_model.editor.field.max_output_tokens" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Max Output Tokens"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最大输出 Tokens"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最大輸出 Tokens"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最大輸出 Tokens"
+          }
+        }
+      }
+    },
+    "provider_model.editor.field.max_output_tokens.placeholder" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auto"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自动"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自動"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自動"
           }
         }
       }
@@ -5801,35 +6135,6 @@
         }
       }
     },
-    "provider_model.editor.section.selection" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Selection"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "选择"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "選擇"
-          }
-        },
-        "zh-HK" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "選擇"
-          }
-        }
-      }
-    },
     "provider_model.editor.section.thinking" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5859,31 +6164,31 @@
         }
       }
     },
-    "provider_model.editor.select_after_save" : {
+    "provider_model.editor.section.token_limits" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Select After Save"
+            "value" : "Token Limits"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "保存后选中"
+            "value" : "Token 限制"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "保存後選中"
+            "value" : "Token 限制"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "保存後選中"
+            "value" : "Token 限制"
           }
         }
       }
@@ -6000,6 +6305,35 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "新增模型"
+          }
+        }
+      }
+    },
+    "provider_model.editor.title.detail" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Model Detail"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型详情"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型詳情"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型詳情"
           }
         }
       }
@@ -7073,6 +7407,64 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "OAuth"
+          }
+        }
+      }
+    },
+    "providers.kind.anthropic.subtitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Anthropic official or compatible API services"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Anthropic 官方或兼容 Anthropic API 的服务"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Anthropic 官方或兼容 Anthropic API 的服務"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Anthropic 官方或兼容 Anthropic API 的服務"
+          }
+        }
+      }
+    },
+    "providers.kind.anthropic.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Anthropic / Compatible API"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Anthropic / 兼容 API"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Anthropic / 兼容 API"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Anthropic / 兼容 API"
           }
         }
       }
@@ -8179,6 +8571,180 @@
         }
       }
     },
+    "settings.common.off" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Off"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "关闭"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "關閉"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "關閉"
+          }
+        }
+      }
+    },
+    "settings.common.on" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "On"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "开启"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "開啟"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "開啟"
+          }
+        }
+      }
+    },
+    "settings.default_model.footer" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The default model is used when opening a new project. Each project and thread can override this selection."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "默认模型用于新项目的初始选择。每个项目和会话可以单独设置不同的模型。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "預設模型用於新專案的初始選擇。每個專案和會話可以單獨設定不同的模型。"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "預設模型用於新項目的初始選擇。每個項目和會話可以單獨設定不同的模型。"
+          }
+        }
+      }
+    },
+    "settings.default_model.provider_hint" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Select a provider first, then choose a model."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请先选择一个服务商，然后选择模型。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請先選擇一個服務商，然後選擇模型。"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請先選擇一個服務商，然後選擇模型。"
+          }
+        }
+      }
+    },
+    "settings.default_model.not_set" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not Set"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未设置"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未設定"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未設定"
+          }
+        }
+      }
+    },
+    "settings.default_model.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Default Model"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "默认模型"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "預設模型"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "預設模型"
+          }
+        }
+      }
+    },
     "settings.general.language.subtitle" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -8291,64 +8857,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "管理提供商"
-          }
-        }
-      }
-    },
-    "settings.common.off" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Off"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "关闭"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "關閉"
-          }
-        },
-        "zh-HK" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "關閉"
-          }
-        }
-      }
-    },
-    "settings.common.on" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "On"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "开启"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "開啟"
-          }
-        },
-        "zh-HK" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "開啟"
           }
         }
       }
@@ -8469,6 +8977,35 @@
         }
       }
     },
+    "settings.providers.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Providers"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "提供商"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "提供商"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "提供商"
+          }
+        }
+      }
+    },
     "settings.section.chat" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -8494,35 +9031,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "聊天"
-          }
-        }
-      }
-    },
-    "settings.section.project" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Project"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "项目"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "專案"
-          }
-        },
-        "zh-HK" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "項目"
           }
         }
       }
@@ -8620,25 +9128,25 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "LLM Providers"
+            "value" : "LLM Providers & Models"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "LLM 提供商"
+            "value" : "LLM 提供商与模型"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "LLM 提供商"
+            "value" : "LLM 提供商與模型"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "LLM 提供商"
+            "value" : "LLM 提供商與模型"
           }
         }
       }
@@ -8668,6 +9176,35 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "提供商配置僅保存在本地設備。"
+          }
+        }
+      }
+    },
+    "settings.section.project" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Project"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "项目"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "專案"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "項目"
           }
         }
       }
@@ -9422,6 +9959,441 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "工具權限"
+          }
+        }
+      }
+    },
+    "tool.activity.changed_files" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "List changed files"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看已更改文件"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看已更改檔案"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看已更改檔案"
+          }
+        }
+      }
+    },
+    "tool.activity.delete_file" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delete: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "删除文件：%@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "刪除檔案：%@"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "刪除檔案：%@"
+          }
+        }
+      }
+    },
+    "tool.activity.diff_file" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Diff: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看差异：%@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看差異：%@"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看差異：%@"
+          }
+        }
+      }
+    },
+    "tool.activity.edit_file" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Edit: %@ (%lld edits)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "编辑文件：%@（%lld 处修改）"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "編輯檔案：%@（%lld 處修改）"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "編輯檔案：%@（%lld 處修改）"
+          }
+        }
+      }
+    },
+    "tool.activity.glob_files" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Glob: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查找文件：%@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查找檔案：%@"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查找檔案：%@"
+          }
+        }
+      }
+    },
+    "tool.activity.grep_files" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Grep: /%@/"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正则搜索：/%@/"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正則搜尋：/%@/"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正則搜尋：/%@/"
+          }
+        }
+      }
+    },
+    "tool.activity.list_directory" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Browse: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "浏览目录：%@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "瀏覽目錄：%@"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "瀏覽目錄：%@"
+          }
+        }
+      }
+    },
+    "tool.activity.move_file" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Move: %@ → %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移动文件：%@ → %@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移動檔案：%@ → %@"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移動檔案：%@ → %@"
+          }
+        }
+      }
+    },
+    "tool.activity.read_file" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Read: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "读取文件：%@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "讀取檔案：%@"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "讀取檔案：%@"
+          }
+        }
+      }
+    },
+    "tool.activity.revert_file" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Revert: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "还原文件：%@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "還原檔案：%@"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "還原檔案：%@"
+          }
+        }
+      }
+    },
+    "tool.activity.search_files" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Search: \"%@\""
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "搜索文件：\"%@\""
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "搜尋檔案：\"%@\""
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "搜尋檔案：\"%@\""
+          }
+        }
+      }
+    },
+    "tool.activity.unknown" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tool: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "执行工具：%@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "執行工具：%@"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "執行工具：%@"
+          }
+        }
+      }
+    },
+    "tool.activity.web_fetch" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fetch: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "获取网页：%@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "取得網頁：%@"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "取得網頁：%@"
+          }
+        }
+      }
+    },
+    "tool.activity.web_search" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Web search: \"%@\""
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "搜索网页：\"%@\""
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "搜尋網頁：\"%@\""
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "搜尋網頁：\"%@\""
+          }
+        }
+      }
+    },
+    "tool.activity.write_file" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Write: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "写入文件：%@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "寫入檔案：%@"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "寫入檔案：%@"
           }
         }
       }
@@ -10265,141 +11237,6 @@
             "value" : "寫入檔案：%@"
           }
         }
-      }
-    },
-    "tool.activity.read_file" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Read: %@" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "读取文件：%@" } },
-        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "讀取檔案：%@" } },
-        "zh-HK" : { "stringUnit" : { "state" : "translated", "value" : "讀取檔案：%@" } }
-      }
-    },
-    "tool.activity.write_file" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Write: %@" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "写入文件：%@" } },
-        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "寫入檔案：%@" } },
-        "zh-HK" : { "stringUnit" : { "state" : "translated", "value" : "寫入檔案：%@" } }
-      }
-    },
-    "tool.activity.edit_file" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Edit: %@ (%lld edits)" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "编辑文件：%@（%lld 处修改）" } },
-        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "編輯檔案：%@（%lld 處修改）" } },
-        "zh-HK" : { "stringUnit" : { "state" : "translated", "value" : "編輯檔案：%@（%lld 處修改）" } }
-      }
-    },
-    "tool.activity.delete_file" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Delete: %@" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "删除文件：%@" } },
-        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "刪除檔案：%@" } },
-        "zh-HK" : { "stringUnit" : { "state" : "translated", "value" : "刪除檔案：%@" } }
-      }
-    },
-    "tool.activity.move_file" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Move: %@ → %@" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "移动文件：%@ → %@" } },
-        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "移動檔案：%@ → %@" } },
-        "zh-HK" : { "stringUnit" : { "state" : "translated", "value" : "移動檔案：%@ → %@" } }
-      }
-    },
-    "tool.activity.revert_file" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Revert: %@" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "还原文件：%@" } },
-        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "還原檔案：%@" } },
-        "zh-HK" : { "stringUnit" : { "state" : "translated", "value" : "還原檔案：%@" } }
-      }
-    },
-    "tool.activity.diff_file" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Diff: %@" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "查看差异：%@" } },
-        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "查看差異：%@" } },
-        "zh-HK" : { "stringUnit" : { "state" : "translated", "value" : "查看差異：%@" } }
-      }
-    },
-    "tool.activity.changed_files" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "List changed files" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "查看已更改文件" } },
-        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "查看已更改檔案" } },
-        "zh-HK" : { "stringUnit" : { "state" : "translated", "value" : "查看已更改檔案" } }
-      }
-    },
-    "tool.activity.list_directory" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Browse: %@" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "浏览目录：%@" } },
-        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "瀏覽目錄：%@" } },
-        "zh-HK" : { "stringUnit" : { "state" : "translated", "value" : "瀏覽目錄：%@" } }
-      }
-    },
-    "tool.activity.search_files" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Search: \"%@\"" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "搜索文件：\"%@\"" } },
-        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "搜尋檔案：\"%@\"" } },
-        "zh-HK" : { "stringUnit" : { "state" : "translated", "value" : "搜尋檔案：\"%@\"" } }
-      }
-    },
-    "tool.activity.grep_files" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Grep: /%@/" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正则搜索：/%@/" } },
-        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "正則搜尋：/%@/" } },
-        "zh-HK" : { "stringUnit" : { "state" : "translated", "value" : "正則搜尋：/%@/" } }
-      }
-    },
-    "tool.activity.glob_files" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Glob: %@" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "查找文件：%@" } },
-        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "查找檔案：%@" } },
-        "zh-HK" : { "stringUnit" : { "state" : "translated", "value" : "查找檔案：%@" } }
-      }
-    },
-    "tool.activity.web_search" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Web search: \"%@\"" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "搜索网页：\"%@\"" } },
-        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "搜尋網頁：\"%@\"" } },
-        "zh-HK" : { "stringUnit" : { "state" : "translated", "value" : "搜尋網頁：\"%@\"" } }
-      }
-    },
-    "tool.activity.web_fetch" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Fetch: %@" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "获取网页：%@" } },
-        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "取得網頁：%@" } },
-        "zh-HK" : { "stringUnit" : { "state" : "translated", "value" : "取得網頁：%@" } }
-      }
-    },
-    "tool.activity.unknown" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Tool: %@" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "执行工具：%@" } },
-        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "執行工具：%@" } },
-        "zh-HK" : { "stringUnit" : { "state" : "translated", "value" : "執行工具：%@" } }
       }
     },
     "workspace.action.discard" : {

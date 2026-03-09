@@ -114,7 +114,7 @@ final class ProjectModelConfigurationViewController: UITableViewController {
                 return reasoningProfile(for: selectedProvider, modelID: selectedModelRecordID)?
                     .supported.count ?? 0
             case .anthropic, .googleGemini:
-                return modelCapabilities(for: selectedProvider, modelID: selectedModelRecordID).thinkingSupported ? 1 : 0
+                return resolveModelProfile(for: selectedProvider, modelID: selectedModelRecordID).thinkingSupported ? 1 : 0
             }
         case .manage:
             guard selectedProviderCredential() != nil else {
@@ -145,6 +145,19 @@ final class ProjectModelConfigurationViewController: UITableViewController {
             }
         case .manage:
             return String(localized: "model_config.section.manage_models")
+        }
+    }
+
+    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
+        guard let section = Section(rawValue: section) else {
+            return nil
+        }
+        switch section {
+        case .model:
+            let models = selectedProviderCredential().flatMap { availableModels(for: $0) } ?? []
+            return models.isEmpty ? nil : String(localized: "model_config.section.model.footer")
+        default:
+            return nil
         }
     }
 
@@ -235,7 +248,7 @@ final class ProjectModelConfigurationViewController: UITableViewController {
                 else {
                     return UITableViewCell()
                 }
-                let capabilities = modelCapabilities(for: selectedProvider, modelID: selectedModelRecordID)
+                let capabilities = resolveModelProfile(for: selectedProvider, modelID: selectedModelRecordID)
                 let isOn: Bool
                 switch selectedProvider.providerKind {
                 case .anthropic:
@@ -313,6 +326,32 @@ final class ProjectModelConfigurationViewController: UITableViewController {
         }
     }
 
+    override func tableView(
+        _ tableView: UITableView,
+        trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath
+    ) -> UISwipeActionsConfiguration? {
+        guard Section(rawValue: indexPath.section) == .model,
+              let selectedProvider = selectedProviderCredential()
+        else { return nil }
+        let models = availableModels(for: selectedProvider)
+        guard models.indices.contains(indexPath.row) else { return nil }
+        let model = models[indexPath.row]
+        let actionTitle = model.source == .official
+            ? String(localized: "model_config.action.detail")
+            : String(localized: "common.action.edit")
+        let action = UIContextualAction(style: .normal, title: actionTitle) { [weak self] _, _, completion in
+            guard let self else { completion(false); return }
+            if model.source == .official {
+                self.presentModelDetail(provider: selectedProvider, model: model)
+            } else {
+                self.presentModelEditor(provider: selectedProvider, existingModel: model)
+            }
+            completion(true)
+        }
+        action.backgroundColor = .systemBlue
+        return UISwipeActionsConfiguration(actions: [action])
+    }
+
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         defer { tableView.deselectRow(at: indexPath, animated: true) }
         guard let section = Section(rawValue: indexPath.section) else {
@@ -344,7 +383,6 @@ final class ProjectModelConfigurationViewController: UITableViewController {
             }
             let modelID = models[indexPath.row].id
             state.selectedModelIDByProviderID[selectedProvider.providerID] = modelID
-            _ = try? providerStore.updateSelectedModelID(providerID: selectedProvider.providerID, modelID: modelID)
             if selectedProvider.providerKind == .openAICompatible {
                 _ = selectedReasoningEffort(for: selectedProvider, modelID: modelID)
             }
@@ -400,12 +438,6 @@ final class ProjectModelConfigurationViewController: UITableViewController {
         if !remembered.isEmpty {
             return remembered
         }
-        if let providerRecord = providerStore.loadProvider(id: provider.providerID) {
-            let selection = providerRecord.effectiveModelRecordID.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !selection.isEmpty {
-                return selection
-            }
-        }
         return availableModels(for: provider).first?.id ?? ""
     }
 
@@ -427,18 +459,17 @@ final class ProjectModelConfigurationViewController: UITableViewController {
         return normalizedLabel.isEmpty ? provider.providerKind.displayName : normalizedLabel
     }
 
-    private func modelCapabilities(
+    private func resolveModelProfile(
         for provider: ProjectChatService.ProviderCredential,
         modelID: String
-    ) -> LLMProviderModelCapabilities {
-        if let record = providerStore.modelRecord(providerID: provider.providerID, modelID: modelID) {
-            return record.capabilities
-        }
-        let normalized = normalizedModelID(modelID)
-        if let record = availableModels(for: provider).first(where: { $0.normalizedModelID == normalized }) {
-            return record.capabilities
-        }
-        return .defaults(for: provider.providerKind, modelID: modelID)
+    ) -> ResolvedModelProfile {
+        let record = providerStore.modelRecord(providerID: provider.providerID, modelID: modelID)
+            ?? availableModels(for: provider).first(where: { $0.normalizedModelID == normalizedModelID(modelID) })
+        return LLMModelRegistry.resolve(
+            providerKind: provider.providerKind,
+            modelID: record?.modelID ?? modelID,
+            modelRecord: record
+        )
     }
 
     private func reasoningProfile(
@@ -448,7 +479,7 @@ final class ProjectModelConfigurationViewController: UITableViewController {
         guard provider.providerKind == .openAICompatible else {
             return nil
         }
-        let supported = modelCapabilities(for: provider, modelID: modelID).reasoningEfforts
+        let supported = resolveModelProfile(for: provider, modelID: modelID).reasoningEfforts
         guard !supported.isEmpty else {
             return nil
         }
@@ -478,7 +509,7 @@ final class ProjectModelConfigurationViewController: UITableViewController {
         modelID: String
     ) -> Bool {
         let key = normalizedModelID(modelID)
-        let capabilities = modelCapabilities(for: provider, modelID: modelID)
+        let capabilities = resolveModelProfile(for: provider, modelID: modelID)
         guard capabilities.thinkingSupported else {
             state.selectedAnthropicThinkingEnabledByModelID[key] = false
             return false
@@ -499,7 +530,7 @@ final class ProjectModelConfigurationViewController: UITableViewController {
         modelID: String
     ) -> Bool {
         let key = normalizedModelID(modelID)
-        let capabilities = modelCapabilities(for: provider, modelID: modelID)
+        let capabilities = resolveModelProfile(for: provider, modelID: modelID)
         guard capabilities.thinkingSupported else {
             state.selectedGeminiThinkingEnabledByModelID[key] = false
             return false
@@ -608,31 +639,38 @@ final class ProjectModelConfigurationViewController: UITableViewController {
         }
     }
 
+    private func presentModelDetail(
+        provider: ProjectChatService.ProviderCredential,
+        model: LLMProviderModelRecord
+    ) {
+        let controller = ProviderModelEditorViewController(
+            provider: provider,
+            existingModel: model,
+            readOnly: true
+        )
+        navigationController?.pushViewController(controller, animated: true)
+    }
+
     private func presentModelEditor(
         provider: ProjectChatService.ProviderCredential,
         existingModel: LLMProviderModelRecord?
     ) {
         let controller = ProviderModelEditorViewController(
             provider: provider,
-            existingModel: existingModel,
-            selectedModelID: selectedModelRecordID(for: provider)
+            existingModel: existingModel
         )
         controller.onSave = { [weak self] payload in
             guard let self else {
                 return
             }
             do {
-                let updatedProvider = try self.providerStore.saveCustomModel(
+                _ = try self.providerStore.saveCustomModel(
                     providerID: provider.providerID,
                     modelID: payload.modelID,
                     displayName: payload.displayName,
                     capabilities: payload.capabilities,
-                    shouldSelect: payload.shouldSelect
+                    existingRecordID: existingModel?.id
                 )
-                if payload.shouldSelect {
-                    self.state.selectedModelIDByProviderID[provider.providerID] = updatedProvider.effectiveModelRecordID
-                }
-                self.notifySelectionChanged()
                 self.tableView.reloadData()
             } catch {
                 let alert = UIAlertController(

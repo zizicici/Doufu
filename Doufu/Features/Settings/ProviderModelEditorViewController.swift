@@ -12,7 +12,6 @@ final class ProviderModelEditorViewController: UITableViewController {
         let modelID: String
         let displayName: String
         let capabilities: LLMProviderModelCapabilities
-        let shouldSelect: Bool
     }
 
     var onSave: ((SavePayload) -> Void)?
@@ -20,8 +19,13 @@ final class ProviderModelEditorViewController: UITableViewController {
     private enum Section: Int, CaseIterable {
         case identity
         case capability
-        case selection
+        case tokenLimits
         case save
+    }
+
+    private enum TokenLimitsRow: Int, CaseIterable {
+        case maxOutputTokens
+        case contextWindowTokens
     }
 
     private enum IdentityRow: Int, CaseIterable {
@@ -31,21 +35,26 @@ final class ProviderModelEditorViewController: UITableViewController {
 
     private let provider: ProjectChatService.ProviderCredential
     private let existingModel: LLMProviderModelRecord?
+    private let readOnly: Bool
     private var modelIDText: String
     private var displayNameText: String
     private var reasoningEfforts: Set<ProjectChatService.ReasoningEffort>
     private var thinkingSupported: Bool
     private var thinkingCanDisable: Bool
     private var structuredOutputSupported: Bool
-    private var shouldSelect: Bool
+    private var maxOutputTokensText: String
+    private var contextWindowTokensText: String
+    private let resolvedMaxOutputTokens: Int
+    private let resolvedContextWindowTokens: Int
 
     init(
         provider: ProjectChatService.ProviderCredential,
         existingModel: LLMProviderModelRecord?,
-        selectedModelID: String
+        readOnly: Bool = false
     ) {
         self.provider = provider
         self.existingModel = existingModel
+        self.readOnly = readOnly
         let modelID = existingModel?.modelID ?? ""
         modelIDText = modelID
         displayNameText = existingModel?.effectiveDisplayName ?? ""
@@ -54,11 +63,15 @@ final class ProviderModelEditorViewController: UITableViewController {
         thinkingSupported = capabilities.thinkingSupported
         thinkingCanDisable = capabilities.thinkingCanDisable
         structuredOutputSupported = capabilities.structuredOutputSupported
-        if let existingID = existingModel?.id, !existingID.isEmpty {
-            shouldSelect = existingID.caseInsensitiveCompare(selectedModelID) == .orderedSame
-        } else {
-            shouldSelect = false
-        }
+        maxOutputTokensText = capabilities.maxOutputTokensOverride.map { String($0) } ?? ""
+        contextWindowTokensText = capabilities.contextWindowTokensOverride.map { String($0) } ?? ""
+        let profile = LLMModelRegistry.resolve(
+            providerKind: provider.providerKind,
+            modelID: modelID,
+            modelRecord: existingModel
+        )
+        resolvedMaxOutputTokens = profile.maxOutputTokens
+        resolvedContextWindowTokens = profile.contextWindowTokens
         super.init(style: .insetGrouped)
     }
 
@@ -69,9 +82,14 @@ final class ProviderModelEditorViewController: UITableViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        title = existingModel == nil
-            ? String(localized: "provider_model.editor.title.add")
-            : String(localized: "provider_model.editor.title.edit")
+        tableView.backgroundColor = .doufuBackground
+        if readOnly {
+            title = String(localized: "provider_model.editor.title.detail")
+        } else {
+            title = existingModel == nil
+                ? String(localized: "provider_model.editor.title.add")
+                : String(localized: "provider_model.editor.title.edit")
+        }
         tableView.register(SettingsTextInputCell.self, forCellReuseIdentifier: SettingsTextInputCell.reuseIdentifier)
         tableView.register(SettingsToggleCell.self, forCellReuseIdentifier: SettingsToggleCell.reuseIdentifier)
         tableView.register(SettingsCenteredButtonCell.self, forCellReuseIdentifier: SettingsCenteredButtonCell.reuseIdentifier)
@@ -95,8 +113,10 @@ final class ProviderModelEditorViewController: UITableViewController {
             case .anthropic, .googleGemini:
                 return 3
             }
-        case .selection, .save:
-            return 1
+        case .tokenLimits:
+            return TokenLimitsRow.allCases.count
+        case .save:
+            return readOnly ? 0 : 1
         }
     }
 
@@ -111,8 +131,8 @@ final class ProviderModelEditorViewController: UITableViewController {
             return provider.providerKind == .openAICompatible
                 ? String(localized: "provider_model.editor.section.capabilities")
                 : String(localized: "provider_model.editor.section.thinking")
-        case .selection:
-            return String(localized: "provider_model.editor.section.selection")
+        case .tokenLimits:
+            return String(localized: "provider_model.editor.section.token_limits")
         case .save:
             return nil
         }
@@ -158,6 +178,10 @@ final class ProviderModelEditorViewController: UITableViewController {
                 ) { [weak self] text in
                     self?.displayNameText = text
                 }
+            }
+            if readOnly {
+                cell.textField.isEnabled = false
+                cell.textField.textColor = .secondaryLabel
             }
             return cell
 
@@ -230,22 +254,48 @@ final class ProviderModelEditorViewController: UITableViewController {
                     }
                 }
             }
+            if readOnly {
+                (cell.accessoryView as? UISwitch)?.isEnabled = false
+            }
             return cell
 
-        case .selection:
+        case .tokenLimits:
             guard
+                let row = TokenLimitsRow(rawValue: indexPath.row),
                 let cell = tableView.dequeueReusableCell(
-                    withIdentifier: SettingsToggleCell.reuseIdentifier,
+                    withIdentifier: SettingsTextInputCell.reuseIdentifier,
                     for: indexPath
-                ) as? SettingsToggleCell
+                ) as? SettingsTextInputCell
             else {
                 return UITableViewCell()
             }
-            cell.configure(
-                title: String(localized: "provider_model.editor.select_after_save"),
-                isOn: shouldSelect
-            ) { [weak self] isOn in
-                self?.shouldSelect = isOn
+            switch row {
+            case .maxOutputTokens:
+                let autoLabel = String(localized: "provider_model.editor.field.max_output_tokens.placeholder")
+                let placeholder = "\(autoLabel)（\(resolvedMaxOutputTokens.formatted())）"
+                cell.configure(
+                    title: String(localized: "provider_model.editor.field.max_output_tokens"),
+                    text: maxOutputTokensText,
+                    placeholder: placeholder,
+                    keyboardType: .numberPad
+                ) { [weak self] text in
+                    self?.maxOutputTokensText = text
+                }
+            case .contextWindowTokens:
+                let autoLabel = String(localized: "provider_model.editor.field.context_window.placeholder")
+                let placeholder = "\(autoLabel)（\(resolvedContextWindowTokens.formatted())）"
+                cell.configure(
+                    title: String(localized: "provider_model.editor.field.context_window"),
+                    text: contextWindowTokensText,
+                    placeholder: placeholder,
+                    keyboardType: .numberPad
+                ) { [weak self] text in
+                    self?.contextWindowTokensText = text
+                }
+            }
+            if readOnly {
+                cell.textField.isEnabled = false
+                cell.textField.textColor = .secondaryLabel
             }
             return cell
 
@@ -282,8 +332,7 @@ final class ProviderModelEditorViewController: UITableViewController {
         let payload = SavePayload(
             modelID: modelIDText.trimmingCharacters(in: .whitespacesAndNewlines),
             displayName: displayNameText.trimmingCharacters(in: .whitespacesAndNewlines),
-            capabilities: buildCapabilities(),
-            shouldSelect: shouldSelect
+            capabilities: buildCapabilities()
         )
         onSave?(payload)
         navigationController?.popViewController(animated: true)
@@ -291,17 +340,15 @@ final class ProviderModelEditorViewController: UITableViewController {
 
     private func canSave() -> Bool {
         let normalizedModelID = modelIDText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalizedModelID.isEmpty else {
-            return false
-        }
-
-        if provider.providerKind == .openAICompatible {
-            return !reasoningEfforts.isEmpty
-        }
-        return true
+        return !normalizedModelID.isEmpty
     }
 
     private func buildCapabilities() -> LLMProviderModelCapabilities {
+        let maxOutput = Int(maxOutputTokensText.trimmingCharacters(in: .whitespacesAndNewlines))
+        let contextWindow = Int(contextWindowTokensText.trimmingCharacters(in: .whitespacesAndNewlines))
+        let maxOutputOverride = (maxOutput ?? 0) > 0 ? maxOutput : nil
+        let contextWindowOverride = (contextWindow ?? 0) > 0 ? contextWindow : nil
+
         switch provider.providerKind {
         case .openAICompatible:
             let orderedEfforts = ProjectChatService.ReasoningEffort.allCases.filter { reasoningEfforts.contains($0) }
@@ -309,14 +356,18 @@ final class ProviderModelEditorViewController: UITableViewController {
                 reasoningEfforts: orderedEfforts,
                 thinkingSupported: false,
                 thinkingCanDisable: false,
-                structuredOutputSupported: structuredOutputSupported
+                structuredOutputSupported: structuredOutputSupported,
+                maxOutputTokensOverride: maxOutputOverride,
+                contextWindowTokensOverride: contextWindowOverride
             )
         case .anthropic, .googleGemini:
             return LLMProviderModelCapabilities(
                 reasoningEfforts: [],
                 thinkingSupported: thinkingSupported,
                 thinkingCanDisable: thinkingSupported && thinkingCanDisable,
-                structuredOutputSupported: structuredOutputSupported
+                structuredOutputSupported: structuredOutputSupported,
+                maxOutputTokensOverride: maxOutputOverride,
+                contextWindowTokensOverride: contextWindowOverride
             )
         }
     }

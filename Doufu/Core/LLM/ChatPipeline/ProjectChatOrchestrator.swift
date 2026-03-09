@@ -454,9 +454,7 @@ final class ProjectChatOrchestrator {
         credential: ProjectChatService.ProviderCredential
     ) {
         let maxConversationChars = configuration.maxConversationCharacters(
-            providerKind: credential.providerKind,
-            modelID: credential.modelID,
-            capabilities: credential.modelCapabilities
+            contextWindowTokens: credential.profile.contextWindowTokens
         )
 
         var totalChars = conversationCharacterCount(conversation)

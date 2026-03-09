@@ -37,13 +37,14 @@ final class OpenAIProvider: LLMProviderAdapter {
         onStreamedText: (@MainActor (String) -> Void)?,
         onUsage: ((Int?, Int?) -> Void)?
     ) async throws -> String {
+        let sendReasoning = !credential.profile.reasoningEfforts.isEmpty
         var activeRequestBody = ResponsesRequest(
             model: model,
             instructions: developerInstruction,
             input: inputItems,
             stream: true,
             store: isChatGPTCodexBackend(url: credential.baseURL) ? false : nil,
-            reasoning: ResponsesReasoning(effort: initialReasoningEffort),
+            reasoning: sendReasoning ? ResponsesReasoning(effort: initialReasoningEffort) : nil,
             text: responseFormat.map { ResponsesTextConfiguration(format: $0) }
         )
         var didFallbackReasoning = false
@@ -164,15 +165,17 @@ final class OpenAIProvider: LLMProviderAdapter {
 
         let inputItems = buildToolUseInputItems(from: conversationItems)
         let isChatGPT = isChatGPTCodexBackend(url: credential.baseURL)
+        let useStrict = !isChatGPT && credential.profile.structuredOutputSupported
         let toolDefinitions = tools.map { tool in
             OpenAIToolDefinition(
                 name: tool.name,
                 description: tool.description,
                 parameters: tool.parameters,
-                strict: !isChatGPT
+                strict: useStrict
             )
         }
 
+        let sendReasoning = !credential.profile.reasoningEfforts.isEmpty
         let requestBody = OpenAIToolUseRequest(
             model: model,
             instructions: systemInstruction,
@@ -180,7 +183,7 @@ final class OpenAIProvider: LLMProviderAdapter {
             tools: toolDefinitions,
             stream: true,
             store: isChatGPT ? false : nil,
-            reasoning: ResponsesReasoning(effort: effort)
+            reasoning: sendReasoning ? ResponsesReasoning(effort: effort) : nil
         )
 
         var request = URLRequest(url: credential.baseURL.appendingPathComponent("responses"))

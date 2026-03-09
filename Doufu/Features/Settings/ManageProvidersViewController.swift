@@ -23,6 +23,7 @@ final class ManageProvidersViewController: UITableViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        tableView.backgroundColor = .doufuBackground
         title = String(localized: "providers.manage.title")
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "ProviderCell")
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "PlaceholderCell")
@@ -84,9 +85,6 @@ final class ManageProvidersViewController: UITableViewController {
         cell.accessoryType = .disclosureIndicator
 
         var configuration = cell.defaultContentConfiguration()
-        configuration.image = provider.authMode == .apiKey
-            ? UIImage(systemName: "key.fill")
-            : UIImage(systemName: "person.crop.circle.badge.checkmark")
         configuration.text = provider.label
         configuration.secondaryText = String(
             format: String(localized: "providers.manage.item.subtitle_format"),

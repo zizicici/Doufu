@@ -40,14 +40,6 @@ final class ProviderAuthMethodViewController: UITableViewController {
             }
         }
 
-        var image: UIImage? {
-            switch self {
-            case .apiKey:
-                return UIImage(systemName: "key.fill")
-            case .oauth:
-                return UIImage(systemName: "person.crop.circle.badge.checkmark")
-            }
-        }
     }
 
     init(providerKind: LLMProviderRecord.Kind) {
@@ -62,6 +54,7 @@ final class ProviderAuthMethodViewController: UITableViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        tableView.backgroundColor = .doufuBackground
         title = providerKind.displayName
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "MethodCell")
     }
@@ -94,7 +87,6 @@ final class ProviderAuthMethodViewController: UITableViewController {
         let method = availableMethods[indexPath.row]
 
         var configuration = cell.defaultContentConfiguration()
-        configuration.image = method.image
         configuration.text = method.title
         configuration.secondaryText = method.subtitle
         configuration.secondaryTextProperties.color = .secondaryLabel

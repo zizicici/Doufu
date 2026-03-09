@@ -52,76 +52,14 @@ struct ProjectChatConfiguration {
     /// headroom for the system prompt and the next response).
     let compactionTargetRatio = 0.70
 
+    /// Conservative characters-per-token ratio.  Lower values trigger compaction
+    /// sooner, which is safer for CJK text and code (where the real ratio is
+    /// closer to 1.5–2.0 chars/token rather than 3–4 for English prose).
+    let charsPerTokenEstimate = 2.5
+
     static let `default` = ProjectChatConfiguration()
 
-    // MARK: - Model-Aware Limits
-
-    /// Maximum output tokens.  If the model record carries a user override,
-    /// that value wins; otherwise we fall back to the built-in lookup table.
-    func maxOutputTokens(
-        providerKind: LLMProviderRecord.Kind,
-        modelID: String,
-        capabilities: LLMProviderModelCapabilities? = nil
-    ) -> Int {
-        if let override = capabilities?.maxOutputTokensOverride, override > 0 {
-            return override
-        }
-        return builtInMaxOutputTokens(providerKind: providerKind, modelID: modelID)
-    }
-
-    /// Built-in lookup table for max output tokens.
-    /// Sources:
-    ///  - OpenAI:    https://developers.openai.com/api/docs/models/
-    ///  - Anthropic: https://docs.anthropic.com/en/docs/about-claude/models
-    ///  - Gemini:    https://ai.google.dev/gemini-api/docs/models/
-    private func builtInMaxOutputTokens(
-        providerKind: LLMProviderRecord.Kind,
-        modelID: String
-    ) -> Int {
-        let id = modelID.lowercased()
-
-        switch providerKind {
-        case .openAICompatible:
-            // o3 / o4-mini: 200K context, 100K output
-            if id.contains("o3") || id.contains("o4")       { return 100_000 }
-            // gpt-5.4 / gpt-5.4-pro: 1.05M context, 128K output
-            // gpt-5.3-codex:          400K context, 128K output
-            // gpt-5-mini:             400K context, 128K output
-            if id.contains("gpt-5")                          { return 128_000 }
-            // gpt-4.1 / gpt-4.1-mini / gpt-4.1-nano: ~1M context, 32K output
-            if id.contains("gpt-4.1") || id.contains("4-1") { return 32_768 }
-            // gpt-4o: 128K context, 16K output
-            if id.contains("gpt-4o")                         { return 16_384 }
-            return 16_384
-
-        case .anthropic:
-            // claude-opus-4-6:   200K context, 128K output
-            // claude-opus-4-5:   200K context,  64K output
-            // claude-opus-4-1/0: 200K context,  32K output
-            if id.contains("opus") {
-                if id.contains("4-6")                        { return 128_000 }
-                if id.contains("4-5")                        { return 64_000 }
-                return 32_000
-            }
-            // claude-sonnet-*:   200K context, 64K output
-            if id.contains("sonnet")                         { return 64_000 }
-            // claude-haiku-4-5:  200K context, 64K output
-            // claude-3-haiku:    200K context,  4K output
-            if id.contains("haiku") {
-                if id.contains("4-5") || id.contains("4.5") { return 64_000 }
-                return 4_096
-            }
-            return 64_000
-
-        case .googleGemini:
-            // gemini-2.5-pro/flash: ~1M context, 65K output
-            if id.contains("2.5-pro")   { return 65_536 }
-            if id.contains("2.5-flash") { return 65_536 }
-            // gemini-2.0-flash:     ~1M context,  8K output
-            if id.contains("2.0-flash") { return 8_192 }
-            return 16_384
-        }
-    }
+    // MARK: - Thinking Budgets
 
     /// Thinking budget for Anthropic extended thinking, derived from the
     /// model's max output tokens and the requested effort level.
@@ -138,10 +76,9 @@ struct ProjectChatConfiguration {
     ///  - high:   66 %
     ///  - xhigh:  80 %
     func anthropicThinkingBudget(
-        modelID: String,
+        maxOutputTokens: Int,
         effort: ProjectChatService.ReasoningEffort
     ) -> Int {
-        let maxOutput = maxOutputTokens(providerKind: .anthropic, modelID: modelID)
         let fraction: Double
         switch effort {
         case .low:    fraction = 0.25
@@ -150,8 +87,8 @@ struct ProjectChatConfiguration {
         case .xhigh:  fraction = 0.80
         }
         // Must be < maxOutput (API constraint) and leave room for visible output.
-        let raw = Int(Double(maxOutput) * fraction)
-        return max(1024, min(raw, maxOutput - 4096))
+        let raw = Int(Double(maxOutputTokens) * fraction)
+        return max(1024, min(raw, maxOutputTokens - 4096))
     }
 
     /// Thinking budget for tool-use requests (interleaved thinking).
@@ -178,52 +115,11 @@ struct ProjectChatConfiguration {
         }
     }
 
-    /// Estimate the context window size in characters for a given provider/model.
-    /// Uses `chars ≈ tokens × 3.5` as a conservative approximation.
-    func maxConversationCharacters(
-        providerKind: LLMProviderRecord.Kind,
-        modelID: String,
-        capabilities: LLMProviderModelCapabilities? = nil
-    ) -> Int {
-        let tokens: Int
-        if let override = capabilities?.contextWindowTokensOverride, override > 0 {
-            tokens = override
-        } else {
-            tokens = contextWindowTokens(providerKind: providerKind, modelID: modelID)
-        }
-        return Int(Double(tokens) * 3.5 * compactionTargetRatio)
-    }
+    // MARK: - Compaction
 
-    /// Return the known context window size in tokens for well-known models.
-    /// Falls back to a conservative default per provider.
-    private func contextWindowTokens(
-        providerKind: LLMProviderRecord.Kind,
-        modelID: String
-    ) -> Int {
-        let id = modelID.lowercased()
-
-        switch providerKind {
-        case .openAICompatible:
-            // gpt-5.4 / gpt-5.4-pro: 1,050,000
-            if id.contains("5.4") || id.contains("5-4")      { return 1_050_000 }
-            // gpt-5.3-codex / gpt-5-mini: 400,000
-            if id.contains("gpt-5")                           { return 400_000 }
-            // gpt-4.1 family: ~1,048,000
-            if id.contains("gpt-4.1") || id.contains("4-1")  { return 1_047_576 }
-            // o3 / o4-mini: 200,000
-            if id.contains("o3") || id.contains("o4")         { return 200_000 }
-            // gpt-4o / gpt-4-turbo: 128,000
-            if id.contains("gpt-4")                           { return 128_000 }
-            return 128_000
-
-        case .anthropic:
-            return 200_000
-
-        case .googleGemini:
-            // gemini-2.5/2.0/1.5 all have ~1M context
-            if id.contains("2.5") || id.contains("2.0")  { return 1_048_576 }
-            if id.contains("1.5")                         { return 2_000_000 }
-            return 1_048_576
-        }
+    /// Estimate the usable context window size in characters from the
+    /// resolved profile's token budget.
+    func maxConversationCharacters(contextWindowTokens: Int) -> Int {
+        Int(Double(contextWindowTokens) * charsPerTokenEstimate * compactionTargetRatio)
     }
 }

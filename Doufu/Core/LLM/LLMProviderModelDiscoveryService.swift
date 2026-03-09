@@ -31,10 +31,13 @@ final class LLMProviderModelDiscoveryService {
         struct Model: Decodable {
             let id: String
             let displayName: String?
+            /// Maximum output tokens the model supports (returned by /v1/models).
+            let maxTokens: Int?
 
             private enum CodingKeys: String, CodingKey {
                 case id
                 case displayName = "display_name"
+                case maxTokens = "max_tokens"
             }
         }
 
@@ -47,6 +50,9 @@ final class LLMProviderModelDiscoveryService {
             let displayName: String?
             let supportedGenerationMethods: [String]?
             let thinking: Bool?
+            /// Token limits reported by the Gemini /models endpoint.
+            let inputTokenLimit: Int?
+            let outputTokenLimit: Int?
         }
 
         let models: [Model]
@@ -93,7 +99,7 @@ final class LLMProviderModelDiscoveryService {
                 modelID: model.modelID,
                 displayName: model.displayName ?? model.modelID,
                 source: .official,
-                capabilities: .defaults(for: provider.kind, modelID: model.modelID)
+                capabilities: .defaults(for: .openAICompatible, modelID: model.modelID)
             )
         }
     }
@@ -128,12 +134,17 @@ final class LLMProviderModelDiscoveryService {
         try validate(response: response, data: data)
         let payload = try decoder.decode(AnthropicModelsResponse.self, from: data)
         return payload.data.map { model in
-            LLMProviderModelRecord(
+            var capabilities = LLMProviderModelCapabilities.defaults(for: .anthropic, modelID: model.id)
+            // Use API-reported max_tokens when available — more reliable than static registry.
+            if let apiMaxTokens = model.maxTokens, apiMaxTokens > 0 {
+                capabilities.maxOutputTokensOverride = apiMaxTokens
+            }
+            return LLMProviderModelRecord(
                 id: officialRecordID(for: model.id),
                 modelID: model.id,
                 displayName: model.displayName ?? model.id,
                 source: .official,
-                capabilities: .defaults(for: provider.kind, modelID: model.id)
+                capabilities: capabilities
             )
         }
     }
@@ -172,9 +183,23 @@ final class LLMProviderModelDiscoveryService {
             } else {
                 normalizedID = model.name
             }
-            let supportsThinking = model.thinking ?? LLMProviderModelCapabilities.defaults(for: provider.kind, modelID: normalizedID).thinkingSupported
-            // See comment in LLMProviderModelCapabilities.defaults for Gemini thinking heuristics.
-            let canDisableThinking = supportsThinking && !normalizedID.lowercased().contains("gemini-2.5-pro")
+            // Use the API's explicit thinking field when available;
+            // otherwise fall back to the built-in registry / conservative default.
+            let baseCapabilities = LLMProviderModelCapabilities.defaults(for: .googleGemini, modelID: normalizedID)
+            let supportsThinking: Bool
+            let canDisableThinking: Bool
+            if let apiThinking = model.thinking {
+                supportsThinking = apiThinking
+                // Registry knows which models can disable; fall back to true for unknown.
+                let registryEntry = LLMModelRegistry.lookup(providerKind: .googleGemini, modelID: normalizedID)
+                canDisableThinking = supportsThinking && (registryEntry?.thinkingCanDisable ?? true)
+            } else {
+                supportsThinking = baseCapabilities.thinkingSupported
+                canDisableThinking = baseCapabilities.thinkingCanDisable
+            }
+            // Use API-reported token limits when available.
+            let maxOutputOverride = (model.outputTokenLimit ?? 0) > 0 ? model.outputTokenLimit : nil
+            let contextWindowOverride = (model.inputTokenLimit ?? 0) > 0 ? model.inputTokenLimit : nil
             return LLMProviderModelRecord(
                 id: officialRecordID(for: normalizedID),
                 modelID: normalizedID,
@@ -184,7 +209,9 @@ final class LLMProviderModelDiscoveryService {
                     reasoningEfforts: [],
                     thinkingSupported: supportsThinking,
                     thinkingCanDisable: canDisableThinking,
-                    structuredOutputSupported: true
+                    structuredOutputSupported: baseCapabilities.structuredOutputSupported,
+                    maxOutputTokensOverride: maxOutputOverride,
+                    contextWindowTokensOverride: contextWindowOverride
                 )
             )
         }

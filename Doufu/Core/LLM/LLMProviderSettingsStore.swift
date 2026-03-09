@@ -19,47 +19,20 @@ struct LLMProviderModelCapabilities: Codable, Equatable, Hashable {
     /// User-specified context window override (in tokens).
     var contextWindowTokensOverride: Int?
 
+    /// Conservative defaults for unknown models.  No string-based guessing —
+    /// precise capabilities come from `LLMModelRegistry` instead.
     static func defaults(
         for providerKind: LLMProviderRecord.Kind,
         modelID: String
     ) -> LLMProviderModelCapabilities {
-        let normalizedModelID = modelID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        switch providerKind {
-        case .openAICompatible:
-            let efforts: [ProjectChatService.ReasoningEffort]
-            if normalizedModelID.contains("mini") {
-                efforts = [.low, .medium, .high]
-            } else if normalizedModelID.contains("pro") || normalizedModelID.contains("codex") {
-                efforts = [.medium, .high, .xhigh]
-            } else {
-                efforts = [.low, .medium, .high, .xhigh]
-            }
-            return LLMProviderModelCapabilities(
-                reasoningEfforts: efforts,
-                thinkingSupported: false,
-                thinkingCanDisable: false,
-                structuredOutputSupported: true
-            )
-        case .anthropic:
-            return LLMProviderModelCapabilities(
-                reasoningEfforts: [],
-                thinkingSupported: true,
-                thinkingCanDisable: true,
-                structuredOutputSupported: true
-            )
-        case .googleGemini:
-            // Currently only Gemini 2.5 series supports thinking.
-            // Gemini 2.5 Pro does not allow disabling thinking; other 2.5 models do.
-            // Update these heuristics when new Gemini models with thinking are released.
-            let supportsThinking = normalizedModelID.contains("2.5")
-            let canDisableThinking = supportsThinking && !normalizedModelID.contains("2.5-pro")
-            return LLMProviderModelCapabilities(
-                reasoningEfforts: [],
-                thinkingSupported: supportsThinking,
-                thinkingCanDisable: canDisableThinking,
-                structuredOutputSupported: true
-            )
-        }
+        let entry = LLMModelRegistry.lookup(providerKind: providerKind, modelID: modelID)
+            ?? LLMModelRegistry.conservativeFallback(providerKind: providerKind)
+        return LLMProviderModelCapabilities(
+            reasoningEfforts: entry.reasoningEfforts,
+            thinkingSupported: entry.thinkingSupported,
+            thinkingCanDisable: entry.thinkingCanDisable,
+            structuredOutputSupported: entry.structuredOutputSupported
+        )
     }
 }
 
@@ -100,7 +73,7 @@ struct LLMProviderRecord: Codable, Equatable, Hashable {
             case .openAICompatible:
                 return String(localized: "providers.kind.openai_compatible.title")
             case .anthropic:
-                return "Anthropic"
+                return String(localized: "providers.kind.anthropic.title")
             case .googleGemini:
                 return "Google Gemini"
             }
@@ -111,20 +84,9 @@ struct LLMProviderRecord: Codable, Equatable, Hashable {
             case .openAICompatible:
                 return String(localized: "providers.kind.openai_compatible.subtitle")
             case .anthropic:
-                return "Claude API"
+                return String(localized: "providers.kind.anthropic.subtitle")
             case .googleGemini:
                 return "Gemini API / Google OAuth"
-            }
-        }
-
-        var iconSystemName: String {
-            switch self {
-            case .openAICompatible:
-                return "sparkles.rectangle.stack"
-            case .anthropic:
-                return "text.quote"
-            case .googleGemini:
-                return "diamond"
             }
         }
 
@@ -200,26 +162,6 @@ struct LLMProviderRecord: Codable, Equatable, Hashable {
             return trimmed
         }
         return trimmed + "/v1"
-    }
-
-    var effectiveModelID: String {
-        let selectedRecordID = modelID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !selectedRecordID.isEmpty,
-           let record = availableModels.first(where: { $0.normalizedID == selectedRecordID.lowercased() }) {
-            return record.modelID
-        }
-        if let firstModelID = availableModels.first?.modelID.trimmingCharacters(in: .whitespacesAndNewlines), !firstModelID.isEmpty {
-            return firstModelID
-        }
-        return ""
-    }
-
-    var effectiveModelRecordID: String {
-        let selectedRecordID = modelID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !selectedRecordID.isEmpty {
-            return selectedRecordID
-        }
-        return availableModels.first?.id ?? ""
     }
 
     var availableModels: [LLMProviderModelRecord] {
@@ -309,10 +251,36 @@ final class LLMProviderSettingsStore {
     private let decoder = JSONDecoder()
 
     private let providersKey = "llm.providers.records.v2"
+    private let defaultProviderIDKey = "llm.default.providerID"
+    private let defaultModelRecordIDKey = "llm.default.modelRecordID"
     private let keychainService = Bundle.main.bundleIdentifier ?? "com.zizicici.doufu"
+
+    struct DefaultModelSelection: Equatable {
+        let providerID: String
+        let modelRecordID: String
+    }
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+    }
+
+    // MARK: - App-level Default Model
+
+    func loadDefaultModelSelection() -> DefaultModelSelection? {
+        guard
+            let providerID = defaults.string(forKey: defaultProviderIDKey),
+            !providerID.isEmpty,
+            let modelRecordID = defaults.string(forKey: defaultModelRecordIDKey),
+            !modelRecordID.isEmpty
+        else {
+            return nil
+        }
+        return DefaultModelSelection(providerID: providerID, modelRecordID: modelRecordID)
+    }
+
+    func saveDefaultModelSelection(providerID: String, modelRecordID: String) {
+        defaults.set(providerID, forKey: defaultProviderIDKey)
+        defaults.set(modelRecordID, forKey: defaultModelRecordIDKey)
     }
 
     func loadProviders() -> [LLMProviderRecord] {
@@ -627,7 +595,6 @@ final class LLMProviderSettingsStore {
         modelID: String,
         displayName: String?,
         capabilities: LLMProviderModelCapabilities,
-        shouldSelect: Bool,
         existingRecordID: String? = nil
     ) throws -> LLMProviderRecord {
         let normalizedModelID = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -677,32 +644,7 @@ final class LLMProviderSettingsStore {
         }
         let updatedProvider = existingProvider.copying(
             updatedAt: Date(),
-            modelID: .some(shouldSelect ? recordID : existingProvider.modelID),
             models: mergeModels(remainingModels + [customModel])
-        )
-        providers[index] = updatedProvider
-        try saveProviders(providers)
-        return updatedProvider
-    }
-
-    @discardableResult
-    func updateSelectedModelID(
-        providerID: String,
-        modelID: String
-    ) throws -> LLMProviderRecord {
-        let normalizedModelID = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalizedModelID.isEmpty else {
-            throw LLMProviderSettingsStoreError.emptyModelID
-        }
-
-        var providers = loadProviders()
-        guard let index = providers.firstIndex(where: { $0.id == providerID }) else {
-            throw LLMProviderSettingsStoreError.providerNotFound
-        }
-        let existingProvider = providers[index]
-        let updatedProvider = existingProvider.copying(
-            updatedAt: Date(),
-            modelID: .some(normalizedModelID)
         )
         providers[index] = updatedProvider
         try saveProviders(providers)

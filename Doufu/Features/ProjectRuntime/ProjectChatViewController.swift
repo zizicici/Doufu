@@ -11,6 +11,7 @@ import UIKit
 final class ProjectChatViewController: UIViewController {
 
     var onProjectFilesUpdated: (() -> Void)?
+    var isReadOnly = false
 
     private enum LocalError: LocalizedError {
         case noAvailableProvider
@@ -48,6 +49,7 @@ final class ProjectChatViewController: UIViewController {
     private let projectURL: URL
     private let chatService = ProjectChatService()
     private let providerStore = LLMProviderSettingsStore.shared
+    private let projectModelStore = ProjectModelSelectionStore.shared
     private let modelDiscoveryService = LLMProviderModelDiscoveryService()
     private let threadStore = ProjectChatThreadStore.shared
 
@@ -186,6 +188,9 @@ final class ProjectChatViewController: UIViewController {
         restoreThreadStateIfNeeded()
         configureProvider()
         toolPermissionMode = AppProjectStore.shared.loadToolPermissionMode(projectURL: projectURL)
+        if isReadOnly {
+            inputContainer.isHidden = true
+        }
         refreshInputPlaceholder()
         refreshSendButton()
     }
@@ -316,11 +321,22 @@ final class ProjectChatViewController: UIViewController {
             }
 
             availableProviderCredentials = try resolveProviderCredentials()
+
+            // 3-tier fallback for initial provider: thread (session) → project → app default
             let preferredProviderID = selectedProviderID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let credential = availableProviderCredentials.first(where: { $0.providerID == preferredProviderID })
-                ?? availableProviderCredentials.first
-            guard let credential else {
-                throw LocalError.noAvailableProvider
+            let credential: ProjectChatService.ProviderCredential
+            if let found = availableProviderCredentials.first(where: { $0.providerID == preferredProviderID }), !preferredProviderID.isEmpty {
+                credential = found
+            } else if let projectDefault = resolveProjectOrAppDefault() {
+                credential = projectDefault
+            } else {
+                // No valid provider+model resolved
+                providerCredential = availableProviderCredentials.first
+                selectedProviderID = providerCredential?.providerID
+                selectedModelID = nil
+                refreshNavigationItems()
+                refreshOfficialModels()
+                return
             }
 
             providerCredential = credential
@@ -338,6 +354,7 @@ final class ProjectChatViewController: UIViewController {
             } else {
                 selectedModelID = providerSelectedModel
             }
+
             appendProviderStatusIfNeeded()
             refreshNavigationItems()
             refreshOfficialModels()
@@ -345,9 +362,34 @@ final class ProjectChatViewController: UIViewController {
             availableProviderCredentials = []
             providerCredential = nil
             selectedProviderID = nil
-            appendMessage(role: .system, text: error.localizedDescription)
             refreshNavigationItems()
         }
+    }
+
+    /// Resolves the default provider credential using project-level config, then app-level default.
+    private func resolveProjectOrAppDefault() -> ProjectChatService.ProviderCredential? {
+        // Project-level default
+        if let projectSelection = projectModelStore.loadSelection(projectURL: projectURL),
+           let credential = availableProviderCredentials.first(where: { $0.providerID == projectSelection.providerID }),
+           modelRecordExists(providerID: credential.providerID, modelRecordID: projectSelection.modelRecordID) {
+            selectedModelIDByProviderID[credential.providerID] = projectSelection.modelRecordID
+            return credential
+        }
+        // App-level default
+        if let appDefault = providerStore.loadDefaultModelSelection(),
+           let credential = availableProviderCredentials.first(where: { $0.providerID == appDefault.providerID }),
+           modelRecordExists(providerID: credential.providerID, modelRecordID: appDefault.modelRecordID) {
+            selectedModelIDByProviderID[credential.providerID] = appDefault.modelRecordID
+            return credential
+        }
+        return nil
+    }
+
+    private func modelRecordExists(providerID: String, modelRecordID: String) -> Bool {
+        let trimmed = modelRecordID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        return providerStore.availableModels(forProviderID: providerID)
+            .contains(where: { $0.normalizedID == trimmed.lowercased() })
     }
 
     private func appendProviderStatusIfNeeded() {
@@ -388,6 +430,11 @@ final class ProjectChatViewController: UIViewController {
                     let models = try await self.modelDiscoveryService.fetchModels(for: provider, bearerToken: token)
                     _ = try self.providerStore.replaceOfficialModels(providerID: provider.id, models: models)
                     if self.providerCredential?.providerID == provider.id {
+                        // Re-resolve the credential's profile so that
+                        // API-discovered token limits take effect immediately.
+                        if let base = self.providerCredential {
+                            self.providerCredential = self.runtimeCredential(from: base)
+                        }
                         self.refreshNavigationItems()
                     }
                 } catch {
@@ -398,37 +445,22 @@ final class ProjectChatViewController: UIViewController {
     }
 
     private func availableModelRecords(for credential: ProjectChatService.ProviderCredential) -> [LLMProviderModelRecord] {
-        if let provider = providerStore.loadProvider(id: credential.providerID) {
-            return provider.availableModels
-        }
-        let fallbackModelID = credential.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !fallbackModelID.isEmpty else {
-            return []
-        }
-        return [
-            LLMProviderModelRecord(
-                id: fallbackModelID,
-                modelID: fallbackModelID,
-                displayName: fallbackModelID,
-                source: .custom,
-                capabilities: .defaults(for: credential.providerKind, modelID: fallbackModelID)
-            )
-        ]
+        return providerStore.loadProvider(id: credential.providerID)?.availableModels ?? []
     }
 
-    private func modelCapabilities(
+    private func resolveModelProfile(
         providerID: String,
         providerKind: LLMProviderRecord.Kind,
         modelID: String
-    ) -> LLMProviderModelCapabilities {
-        if let record = providerStore.modelRecord(providerID: providerID, modelID: modelID) {
-            return record.capabilities
-        }
-        let normalized = normalizedModelID(modelID)
-        if let record = providerStore.availableModels(forProviderID: providerID).first(where: { $0.normalizedModelID == normalized }) {
-            return record.capabilities
-        }
-        return .defaults(for: providerKind, modelID: modelID)
+    ) -> ResolvedModelProfile {
+        let record = providerStore.modelRecord(providerID: providerID, modelID: modelID)
+            ?? providerStore.availableModels(forProviderID: providerID)
+                .first(where: { $0.normalizedModelID == normalizedModelID(modelID) })
+        return LLMModelRegistry.resolve(
+            providerKind: providerKind,
+            modelID: record?.modelID ?? modelID,
+            modelRecord: record
+        )
     }
 
     private func reasoningProfile(
@@ -440,8 +472,8 @@ final class ProjectChatViewController: UIViewController {
             return nil
         }
 
-        let capabilities = modelCapabilities(providerID: providerID, providerKind: providerKind, modelID: modelID)
-        let supported = capabilities.reasoningEfforts
+        let profile = resolveModelProfile(providerID: providerID, providerKind: providerKind, modelID: modelID)
+        let supported = profile.reasoningEfforts
         guard !supported.isEmpty else {
             return nil
         }
@@ -475,10 +507,11 @@ final class ProjectChatViewController: UIViewController {
                 providerLabel: provider.label,
                 providerKind: provider.kind,
                 authMode: provider.authMode,
-                modelID: provider.effectiveModelID,
+                modelID: "",
                 baseURL: baseURL,
                 bearerToken: token,
-                chatGPTAccountID: chatGPTAccountID
+                chatGPTAccountID: chatGPTAccountID,
+                profile: LLMModelRegistry.resolve(providerKind: provider.kind, modelID: "", modelRecord: nil)
             ))
         }
 
@@ -490,6 +523,7 @@ final class ProjectChatViewController: UIViewController {
     }
 
     private func resolvedModelID(for credential: ProjectChatService.ProviderCredential) -> String {
+        // 1. Thread-level: session memory
         if
             let remembered = selectedModelIDByProviderID[credential.providerID]?
                 .trimmingCharacters(in: .whitespacesAndNewlines),
@@ -506,33 +540,31 @@ final class ProjectChatViewController: UIViewController {
             return currentSelection
         }
 
-        if let providerRecord = providerStore.loadProvider(id: credential.providerID) {
-            let providerSelection = providerRecord.effectiveModelRecordID.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !providerSelection.isEmpty {
-                return providerSelection
-            }
+        // 2. Project-level default
+        if let projectSelection = projectModelStore.loadSelection(projectURL: projectURL),
+           projectSelection.providerID == credential.providerID,
+           modelRecordExists(providerID: credential.providerID, modelRecordID: projectSelection.modelRecordID) {
+            return projectSelection.modelRecordID
         }
 
-        return availableModelRecords(for: credential).first?.id ?? ""
+        // 3. App-level default
+        if let appDefault = providerStore.loadDefaultModelSelection(),
+           appDefault.providerID == credential.providerID,
+           modelRecordExists(providerID: credential.providerID, modelRecordID: appDefault.modelRecordID) {
+            return appDefault.modelRecordID
+        }
+
+        return ""
     }
 
     private func resolvedModelRecord(for credential: ProjectChatService.ProviderCredential) -> LLMProviderModelRecord? {
         let selectedRecordID = resolvedModelID(for: credential)
-        if let selectedRecord = availableModelRecords(for: credential).first(where: { $0.normalizedID == selectedRecordID.lowercased() }) {
-            return selectedRecord
-        }
-        let fallbackModelID = credential.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !fallbackModelID.isEmpty else {
-            return nil
-        }
-        return availableModelRecords(for: credential).first(where: { $0.normalizedModelID == fallbackModelID.lowercased() })
+        guard !selectedRecordID.isEmpty else { return nil }
+        return availableModelRecords(for: credential).first(where: { $0.normalizedID == selectedRecordID.lowercased() })
     }
 
     private func resolvedRequestModelID(for credential: ProjectChatService.ProviderCredential) -> String {
-        if let record = resolvedModelRecord(for: credential) {
-            return record.modelID
-        }
-        return credential.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        resolvedModelRecord(for: credential)?.modelID ?? ""
     }
 
     private func switchProvider(to providerID: String) {
@@ -701,7 +733,7 @@ final class ProjectChatViewController: UIViewController {
         modelID: String
     ) -> Bool {
         let key = normalizedModelID(modelID)
-        let capabilities = modelCapabilities(
+        let capabilities = resolveModelProfile(
             providerID: providerCredential.providerID,
             providerKind: providerCredential.providerKind,
             modelID: modelID
@@ -726,7 +758,7 @@ final class ProjectChatViewController: UIViewController {
         modelID: String
     ) -> Bool {
         let key = normalizedModelID(modelID)
-        let capabilities = modelCapabilities(
+        let capabilities = resolveModelProfile(
             providerID: providerCredential.providerID,
             providerKind: providerCredential.providerKind,
             modelID: modelID
@@ -762,7 +794,6 @@ final class ProjectChatViewController: UIViewController {
         switchProvider(to: providerCredential.providerID)
         selectedModelID = modelID
         selectedModelIDByProviderID[providerCredential.providerID] = modelID
-        _ = try? providerStore.updateSelectedModelID(providerID: providerCredential.providerID, modelID: modelID)
 
         let providerKind = providerStore.loadProvider(id: providerCredential.providerID)?.kind ?? providerCredential.providerKind
         let normalizedModel = normalizedModelID(modelID)
@@ -783,7 +814,7 @@ final class ProjectChatViewController: UIViewController {
             }
         case .anthropic:
             selectedReasoningEffortsByModelID.removeValue(forKey: normalizedModel)
-            let capabilities = modelCapabilities(
+            let capabilities = resolveModelProfile(
                 providerID: providerCredential.providerID,
                 providerKind: providerKind,
                 modelID: modelID
@@ -797,7 +828,7 @@ final class ProjectChatViewController: UIViewController {
             }
         case .googleGemini:
             selectedReasoningEffortsByModelID.removeValue(forKey: normalizedModel)
-            let capabilities = modelCapabilities(
+            let capabilities = resolveModelProfile(
                 providerID: providerCredential.providerID,
                 providerKind: providerKind,
                 modelID: modelID
@@ -812,6 +843,7 @@ final class ProjectChatViewController: UIViewController {
         }
 
         refreshNavigationItems()
+        persistCurrentThreadModelSelection()
     }
 
     private func buildModelOptionMenu(
@@ -819,7 +851,7 @@ final class ProjectChatViewController: UIViewController {
         modelID: String
     ) -> UIMenu? {
         let providerKind = providerStore.loadProvider(id: providerCredential.providerID)?.kind ?? providerCredential.providerKind
-        let capabilities = modelCapabilities(
+        let capabilities = resolveModelProfile(
             providerID: providerCredential.providerID,
             providerKind: providerKind,
             modelID: modelID
@@ -1049,6 +1081,7 @@ final class ProjectChatViewController: UIViewController {
 
     private func switchToThread(threadID: String, appendStatusMessage: Bool) throws {
         persistCurrentThreadMessages()
+        persistCurrentThreadModelSelection()
         if let currentThread {
             threadSessionMemories[currentThread.id] = sessionMemory
         }
@@ -1057,6 +1090,7 @@ final class ProjectChatViewController: UIViewController {
         threadIndex = try threadStore.loadOrCreateIndex(projectURL: projectURL)
         currentThread = switched
         sessionMemory = threadSessionMemories[switched.id] ?? nil
+        restoreThreadModelSelection(threadID: switched.id)
 
         let persisted = threadStore.loadMessages(projectURL: projectURL, threadID: switched.id)
         messages = persisted.compactMap { persistedMessage in
@@ -1399,15 +1433,21 @@ final class ProjectChatViewController: UIViewController {
         guard !normalizedSelectedModel.isEmpty else {
             return base
         }
+        let profile = resolveModelProfile(
+            providerID: base.providerID,
+            providerKind: base.providerKind,
+            modelID: normalizedSelectedModel
+        )
         return ProjectChatService.ProviderCredential(
             providerID: base.providerID,
             providerLabel: base.providerLabel,
             providerKind: base.providerKind,
             authMode: base.authMode,
-            modelID: normalizedSelectedModel,
+            modelID: profile.modelID,
             baseURL: base.baseURL,
             bearerToken: base.bearerToken,
-            chatGPTAccountID: base.chatGPTAccountID
+            chatGPTAccountID: base.chatGPTAccountID,
+            profile: profile
         )
     }
 
@@ -1420,56 +1460,7 @@ final class ProjectChatViewController: UIViewController {
             selectedModelIDByProviderID[providerCredential.providerID] = resolvedModel
             return true
         }
-
-        presentManualModelPrompt(for: providerCredential)
         return false
-    }
-
-    private func presentManualModelPrompt(for providerCredential: ProjectChatService.ProviderCredential) {
-        let alert = UIAlertController(
-            title: String(localized: "chat.alert.enter_model_id.title"),
-            message: String(localized: "chat.alert.enter_model_id.message"),
-            preferredStyle: .alert
-        )
-        alert.addTextField { [weak self] textField in
-            textField.placeholder = self?.providerStore.loadProvider(id: providerCredential.providerID)?.kind.defaultModelID
-            textField.autocapitalizationType = .none
-            textField.autocorrectionType = .no
-            textField.clearButtonMode = .whileEditing
-        }
-        alert.addAction(UIAlertAction(title: String(localized: "common.action.cancel"), style: .cancel))
-        alert.addAction(UIAlertAction(title: String(localized: "chat.alert.enter_model_id.save"), style: .default, handler: { [weak self, weak alert] _ in
-            guard let self, let textField = alert?.textFields?.first else {
-                return
-            }
-            let modelID = textField.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            guard !modelID.isEmpty else {
-                self.showModelEntryError()
-                return
-            }
-
-            do {
-                let updatedProvider = try self.providerStore.saveCustomModel(
-                    providerID: providerCredential.providerID,
-                    modelID: modelID,
-                    displayName: nil,
-                    capabilities: .defaults(for: providerCredential.providerKind, modelID: modelID),
-                    shouldSelect: true
-                )
-                self.selectedModelID = updatedProvider.effectiveModelRecordID
-                self.selectedModelIDByProviderID[providerCredential.providerID] = updatedProvider.effectiveModelRecordID
-                self.providerCredential = self.runtimeCredential(from: providerCredential)
-                self.refreshNavigationItems()
-                self.didTapSend()
-            } catch {
-                self.showErrorAlert(title: String(localized: "chat.alert.save_failed.title"), message: error.localizedDescription)
-            }
-        }))
-        present(alert, animated: true)
-    }
-
-    private func showModelEntryError() {
-        showErrorAlert(title: String(localized: "chat.alert.model_required.title"), message: String(localized: "chat.alert.model_required.message"))
     }
 
     private func showErrorAlert(title: String, message: String) {
@@ -1574,6 +1565,56 @@ final class ProjectChatViewController: UIViewController {
             selectedModelID = nil
         }
         refreshNavigationItems()
+        persistCurrentThreadModelSelection()
+    }
+
+    private func persistCurrentThreadModelSelection() {
+        guard let threadID = currentThread?.id else {
+            return
+        }
+        guard let providerID = selectedProviderID, !providerID.isEmpty else {
+            return
+        }
+        let reasoningEffortsRaw = selectedReasoningEffortsByModelID.mapValues { $0.rawValue }
+        let selection = ThreadModelSelection(
+            selectedProviderID: providerID,
+            selectedModelIDByProviderID: selectedModelIDByProviderID,
+            selectedReasoningEffortsByModelID: reasoningEffortsRaw,
+            selectedAnthropicThinkingEnabledByModelID: selectedAnthropicThinkingEnabledByModelID,
+            selectedGeminiThinkingEnabledByModelID: selectedGeminiThinkingEnabledByModelID
+        )
+        projectModelStore.saveThreadSelection(selection, projectURL: projectURL, threadID: threadID)
+    }
+
+    private func restoreThreadModelSelection(threadID: String) {
+        guard let selection = projectModelStore.loadThreadSelection(projectURL: projectURL, threadID: threadID) else {
+            return
+        }
+
+        // Validate provider still exists
+        guard let credential = availableProviderCredentials.first(where: { $0.providerID == selection.selectedProviderID }) else {
+            return
+        }
+
+        // Validate selected model still exists for this provider
+        let modelRecordID = selection.selectedModelIDByProviderID[selection.selectedProviderID] ?? ""
+        let availableModels = providerStore.availableModels(forProviderID: credential.providerID)
+        if !modelRecordID.isEmpty, !availableModels.contains(where: { $0.normalizedID == modelRecordID.lowercased() }) {
+            // Model was deleted — clear stale thread selection, fall through to project/app default
+            projectModelStore.removeThreadSelection(projectURL: projectURL, threadID: threadID)
+            return
+        }
+
+        selectedProviderID = selection.selectedProviderID
+        selectedModelIDByProviderID = selection.selectedModelIDByProviderID
+        selectedReasoningEffortsByModelID = selection.selectedReasoningEffortsByModelID.compactMapValues {
+            ProjectChatService.ReasoningEffort(rawValue: $0)
+        }
+        selectedAnthropicThinkingEnabledByModelID = selection.selectedAnthropicThinkingEnabledByModelID
+        selectedGeminiThinkingEnabledByModelID = selection.selectedGeminiThinkingEnabledByModelID
+
+        selectedModelID = modelRecordID.isEmpty ? nil : modelRecordID
+        providerCredential = credential
     }
 
     private func presentProjectFiles() {

@@ -663,13 +663,78 @@ final class ProjectWorkspaceViewController: UIViewController {
     @objc
     private func didTapChat() {
         scheduleAutoCollapse()
+        guard presentedViewController == nil else { return }
+
         if let chatNavigationController {
-            guard presentedViewController == nil else { return }
+            // If cached chat was read-only but LLM is now configured, replace with full chat
+            if let chatVC = chatNavigationController.viewControllers.first as? ProjectChatViewController,
+               chatVC.isReadOnly, isLLMConfigured() {
+                self.chatNavigationController = nil
+                presentChatController(readOnly: false)
+                return
+            }
             present(chatNavigationController, animated: true)
             return
         }
 
+        if !isLLMConfigured() {
+            presentLLMSetupAlert()
+            return
+        }
+
+        presentChatController(readOnly: false)
+    }
+
+    private func isLLMConfigured() -> Bool {
+        let store = LLMProviderSettingsStore.shared
+        let providers = store.loadProviders()
+        guard !providers.isEmpty else { return false }
+        guard let selection = store.loadDefaultModelSelection() else { return false }
+        guard let provider = providers.first(where: { $0.id == selection.providerID }) else { return false }
+        return provider.availableModels.contains(where: {
+            $0.id.caseInsensitiveCompare(selection.modelRecordID) == .orderedSame
+        })
+    }
+
+    private func presentLLMSetupAlert() {
+        let alert = UIAlertController(
+            title: String(localized: "chat.setup_alert.title"),
+            message: String(localized: "chat.setup_alert.message"),
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(
+            title: String(localized: "chat.setup_alert.action.setup"),
+            style: .default
+        ) { [weak self] _ in
+            self?.presentLLMQuickSetup()
+        })
+        alert.addAction(UIAlertAction(
+            title: String(localized: "chat.setup_alert.action.read_only"),
+            style: .default
+        ) { [weak self] _ in
+            self?.presentChatController(readOnly: true)
+        })
+        alert.addAction(UIAlertAction(
+            title: String(localized: "common.action.cancel"),
+            style: .cancel
+        ))
+        present(alert, animated: true)
+    }
+
+    private func presentLLMQuickSetup() {
+        let setup = LLMQuickSetupViewController()
+        let nav = UINavigationController(rootViewController: setup)
+        nav.modalPresentationStyle = .pageSheet
+        if let sheet = nav.sheetPresentationController {
+            sheet.detents = [.medium(), .large()]
+            sheet.prefersGrabberVisible = true
+        }
+        present(nav, animated: true)
+    }
+
+    private func presentChatController(readOnly: Bool) {
         let chatController = ProjectChatViewController(projectName: projectName, projectURL: projectURL)
+        chatController.isReadOnly = readOnly
         chatController.validationServerBaseURL = webServer.baseURL
         // Use a temp bridge for validation so localStorage writes don't pollute real user data.
         let tempStorageDir = FileManager.default.temporaryDirectory

@@ -25,6 +25,7 @@ final class AddProviderViewController: UITableViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        tableView.backgroundColor = .doufuBackground
         title = String(localized: "providers.add.title")
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "ProviderOptionCell")
     }
@@ -56,7 +57,6 @@ final class AddProviderViewController: UITableViewController {
         let kind = providerKinds[indexPath.row]
 
         var configuration = cell.defaultContentConfiguration()
-        configuration.image = UIImage(systemName: kind.iconSystemName)
         configuration.text = kind.displayName
         configuration.secondaryText = kind.subtitle
         configuration.secondaryTextProperties.color = .secondaryLabel

@@ -61,9 +61,9 @@ final class AnthropicProvider: LLMProviderAdapter {
                 )
             }
             let normalizedInstruction = developerInstruction.trimmingCharacters(in: .whitespacesAndNewlines)
-            let modelMaxOutput = configuration.maxOutputTokens(providerKind: .anthropic, modelID: model, capabilities: credential.modelCapabilities)
+            let modelMaxOutput = credential.profile.maxOutputTokens
             let thinkingBudget = includeThinking
-                ? configuration.anthropicThinkingBudget(modelID: model, effort: initialReasoningEffort)
+                ? configuration.anthropicThinkingBudget(maxOutputTokens: modelMaxOutput, effort: initialReasoningEffort)
                 : 0
             let requestBody = AnthropicMessageRequest(
                 model: model,
@@ -149,7 +149,7 @@ final class AnthropicProvider: LLMProviderAdapter {
         var includeThinking = executionOptions.anthropicThinkingEnabled
 
         while true {
-            let modelMaxOutput = configuration.maxOutputTokens(providerKind: .anthropic, modelID: model, capabilities: credential.modelCapabilities)
+            let modelMaxOutput = credential.profile.maxOutputTokens
             // With interleaved thinking (tool use), Anthropic allows
             // budget_tokens to exceed max_tokens — the ceiling is the
             // context window.  So we use a separate, larger budget and

@@ -85,6 +85,7 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        tableView.backgroundColor = .doufuBackground
         title = providerKind.displayName + " · " + String(localized: "providers.auth_method.oauth.title")
         if let editingProvider {
             manualBearerTokenText = (try? store.loadOAuthBearerToken(for: editingProvider.id)) ?? ""
@@ -275,7 +276,6 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
                 return cell
             }
             let model = models[indexPath.row]
-            let selectedRecordID = latestEditingProvider()?.effectiveModelRecordID.lowercased()
             var configuration = cell.defaultContentConfiguration()
             configuration.text = model.effectiveDisplayName
             let sourceLabel = model.source == .official
@@ -284,8 +284,7 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
             configuration.secondaryText = sourceLabel + " · " + model.modelID
             configuration.secondaryTextProperties.color = .secondaryLabel
             cell.contentConfiguration = configuration
-            cell.selectionStyle = .none
-            cell.accessoryType = model.normalizedID == selectedRecordID ? .checkmark : .none
+            cell.accessoryType = .disclosureIndicator
             return cell
 
         case .manageModels:
@@ -336,7 +335,11 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
             return canSubmitProvider ? indexPath : nil
         case .manageModels:
             return modelManagement.isRefreshingModels ? nil : indexPath
-        case .label, .manual, .storedModels:
+        case .storedModels:
+            let models = storedModels()
+            guard models.indices.contains(indexPath.row) else { return nil }
+            return indexPath
+        case .label, .manual:
             return nil
         }
     }
@@ -354,6 +357,25 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
         case .addProvider:
             if canSubmitProvider {
                 submitProvider()
+            }
+        case .storedModels:
+            let models = storedModels()
+            guard models.indices.contains(indexPath.row),
+                  let provider = latestEditingProvider()
+            else { return }
+            let model = models[indexPath.row]
+            if model.source == .official {
+                modelManagement.presentModelDetail(
+                    for: provider,
+                    model: model,
+                    from: self
+                )
+            } else {
+                modelManagement.presentModelEditor(
+                    for: provider,
+                    existingModel: model,
+                    from: self
+                )
             }
         case .manageModels:
             guard let row = ProviderModelManageRow(rawValue: indexPath.row) else {
@@ -379,7 +401,7 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
                     from: self
                 )
             }
-        case .label, .manual, .storedModels:
+        case .label, .manual:
             break
         }
     }

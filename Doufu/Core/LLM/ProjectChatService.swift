@@ -18,9 +18,9 @@ final class ProjectChatService {
         let baseURL: URL
         let bearerToken: String
         let chatGPTAccountID: String?
-        /// Capabilities of the selected model — may carry user-specified
-        /// overrides for max output tokens and context window size.
-        var modelCapabilities: LLMProviderModelCapabilities?
+        /// Fully-resolved model profile — capabilities + token budgets.
+        /// Produced by `LLMModelRegistry.resolve` at credential construction time.
+        let profile: ResolvedModelProfile
     }
 
     enum Role: String {

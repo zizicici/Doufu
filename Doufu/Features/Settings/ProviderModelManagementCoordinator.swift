@@ -74,30 +74,33 @@ final class ProviderModelManagementCoordinator {
         }
     }
 
+    func presentModelDetail(
+        for provider: LLMProviderRecord,
+        model: LLMProviderModelRecord,
+        from controller: UITableViewController
+    ) {
+        guard let credential = buildCredential(for: provider) else {
+            return
+        }
+        let editor = ProviderModelEditorViewController(
+            provider: credential,
+            existingModel: model,
+            readOnly: true
+        )
+        controller.navigationController?.pushViewController(editor, animated: true)
+    }
+
     func presentModelEditor(
         for provider: LLMProviderRecord,
         existingModel: LLMProviderModelRecord?,
         from controller: UITableViewController
     ) {
-        guard let baseURL = URL(string: provider.effectiveBaseURLString) else {
+        guard let credential = buildCredential(for: provider) else {
             return
         }
-        let token = (try? store.loadBearerToken(for: provider))?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let credential = ProjectChatService.ProviderCredential(
-            providerID: provider.id,
-            providerLabel: provider.label,
-            providerKind: provider.kind,
-            authMode: provider.authMode,
-            modelID: provider.effectiveModelID,
-            baseURL: baseURL,
-            bearerToken: token,
-            chatGPTAccountID: provider.chatGPTAccountID
-        )
         let editor = ProviderModelEditorViewController(
             provider: credential,
-            existingModel: existingModel,
-            selectedModelID: provider.effectiveModelRecordID
+            existingModel: existingModel
         )
         editor.onSave = { [weak controller, weak self] payload in
             guard let self else {
@@ -109,7 +112,7 @@ final class ProviderModelManagementCoordinator {
                     modelID: payload.modelID,
                     displayName: payload.displayName,
                     capabilities: payload.capabilities,
-                    shouldSelect: payload.shouldSelect
+                    existingRecordID: existingModel?.id
                 )
                 controller?.tableView.reloadData()
             } catch {
@@ -126,5 +129,24 @@ final class ProviderModelManagementCoordinator {
             }
         }
         controller.navigationController?.pushViewController(editor, animated: true)
+    }
+
+    private func buildCredential(for provider: LLMProviderRecord) -> ProjectChatService.ProviderCredential? {
+        guard let baseURL = URL(string: provider.effectiveBaseURLString) else {
+            return nil
+        }
+        let token = (try? store.loadBearerToken(for: provider))?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return ProjectChatService.ProviderCredential(
+            providerID: provider.id,
+            providerLabel: provider.label,
+            providerKind: provider.kind,
+            authMode: provider.authMode,
+            modelID: "",
+            baseURL: baseURL,
+            bearerToken: token,
+            chatGPTAccountID: provider.chatGPTAccountID,
+            profile: LLMModelRegistry.resolve(providerKind: provider.kind, modelID: "", modelRecord: nil)
+        )
     }
 }

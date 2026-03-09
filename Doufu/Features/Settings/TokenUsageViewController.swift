@@ -139,6 +139,7 @@ class TokenUsageDashboardViewController: UITableViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        tableView.backgroundColor = .doufuBackground
         title = pageTitle
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "UsageCell")
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "UsagePlaceholderCell")
@@ -503,7 +504,7 @@ class TokenUsageDashboardViewController: UITableViewController {
 
             let isModelAvailable = provider.availableModels.contains {
                 $0.modelID.caseInsensitiveCompare(record.model) == .orderedSame
-            } || provider.effectiveModelID.caseInsensitiveCompare(record.model) == .orderedSame
+            }
             let modelTitle = isModelAvailable ? record.model : deletedModel
             return DisplayDailyRecord(
                 dayKey: record.dayKey,

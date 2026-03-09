@@ -224,7 +224,7 @@ final class ProjectSettingsViewController: UITableViewController {
         switch section {
         case .project:
             guard ProjectRow(rawValue: indexPath.row) == .disableEdgeSwipe else { break }
-            let controller = ProjectEdgeSwipeDismissPickerViewController(projectURL: projectURL)
+            let controller = makeEdgeSwipeDismissPicker()
             navigationController?.pushViewController(controller, animated: true)
 
         case .chat:
@@ -366,6 +366,19 @@ final class ProjectSettingsViewController: UITableViewController {
             self.tableView.reloadData()
         }
         navigationController?.pushViewController(controller, animated: true)
+    }
+
+    private func makeEdgeSwipeDismissPicker() -> SettingsPickerViewController {
+        let onLabel = String(localized: "settings.common.on")
+        let offLabel = String(localized: "settings.common.off")
+        let projectURL = self.projectURL
+        return SettingsPickerViewController(
+            title: String(localized: "project_settings.disable_edge_swipe.title"),
+            options: [SettingsPickerOption(onLabel), SettingsPickerOption(offLabel)],
+            footerText: String(localized: "settings.project.disable_edge_swipe.footer"),
+            selectedIndex: { [store] in store.isEdgeSwipeDismissDisabled(projectURL: projectURL) ? 0 : 1 },
+            onSelect: { [store] index in try? store.setEdgeSwipeDismissDisabled(index == 0, projectURL: projectURL) }
+        )
     }
 }
 
