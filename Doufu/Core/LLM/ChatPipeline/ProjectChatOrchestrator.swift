@@ -165,14 +165,13 @@ final class ProjectChatOrchestrator {
             }
 
             // Stream text from the LLM response to the UI in real-time.
-            // We capture the current accumulated text prefix so that partial
-            // streaming deltas are displayed after prior context.
-            let currentPrefix = accumulatedText.isEmpty ? "" : accumulatedText + "\n\n"
+            // Only send the current iteration's partial text (not the full
+            // accumulated text) so each progress bubble stays independent.
             let streamCallback: (@MainActor (String) -> Void)? = onStreamedText.map { callback in
                 { @MainActor partialText in
                     let trimmed = partialText.trimmingCharacters(in: .whitespacesAndNewlines)
                     if !trimmed.isEmpty {
-                        callback(currentPrefix + trimmed)
+                        callback(trimmed)
                     }
                 }
             }
@@ -206,7 +205,7 @@ final class ProjectChatOrchestrator {
                     accumulatedText += (accumulatedText.isEmpty ? "" : "\n\n") + responseText
                 }
                 if let onStreamedText {
-                    await onStreamedText(accumulatedText)
+                    await onStreamedText(responseText)
                 }
 
                 // If truncated by max_tokens, auto-continue
@@ -254,7 +253,7 @@ final class ProjectChatOrchestrator {
             if !responseText.isEmpty {
                 accumulatedText += (accumulatedText.isEmpty ? "" : "\n\n") + responseText
                 if let onStreamedText {
-                    await onStreamedText(accumulatedText)
+                    await onStreamedText(responseText)
                 }
             }
 
