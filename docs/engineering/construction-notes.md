@@ -11,8 +11,9 @@
 1. 每个 Feature 独立目录，控制文件规模。
 2. ViewController 只处理 UI 组装和交互转发。
 3. 业务逻辑进入 Service / Repository。
-4. 设置页风格优先复用 `Features/Settings/Components` 中的通用 Cell。
-5. 所有用户可见文案必须接入 `Localizable.xcstrings`，禁止新增硬编码显示文本。
+4. 聊天模块拆分为四个文件：`ProjectChatViewController`（UI + 胶水）、`ChatMessageStore`（消息状态机）、`ChatModelSelectionManager`（模型选择）、`ChatMenuBuilder`（菜单构建）。
+5. 设置页风格优先复用 `Features/Settings/Components` 中的通用 Cell。
+6. 所有用户可见文案必须接入 `Localizable.xcstrings`，禁止新增硬编码显示文本。
 
 ## 性能与稳定性
 
@@ -94,6 +95,14 @@
 4. 缓存目录位于系统 `Caches/CDNCache/`，iOS 可在存储压力时自动清除。
 5. 缓存写入在串行队列异步执行，不阻塞响应返回。
 6. 淘汰策略基于文件修改时间（读取时 touch），按 LRU 从 200 MB 淘汰到 150 MB。
+
+## 消息流状态机注意事项
+
+1. `ChatMessageStore.FlowState` 是消息生命周期的唯一状态来源，禁止绕过状态机直接操作 `finishedAt`。
+2. 状态转换必须是原子的：finalize 旧 cell 和创建新 cell 在同一次同步调用中完成，不允许出现「所有消息都已结束但任务仍在执行」的间隙。
+3. 进度防抖（50ms）延迟的是整个转换，防抖窗口内旧 cell 保持 live 状态。
+4. `finishExecution()` 中的 safety net（stamp 所有 `finishedAt == nil` 消息）仅作兜底，正常流程中不应触发。
+5. VC 的 `ChatTaskCoordinatorDelegate` 实现只做简单转发，不直接操作 store 内部状态。
 
 ## 调试与排障
 

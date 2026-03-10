@@ -9,8 +9,13 @@
    - 主要文件：`Features/ProjectRuntime/ProjectWorkspaceViewController.swift`
    - 责任：网页运行、悬浮面板、退出确认、运行时快捷入口、LLM 设置检测与快速设置引导。
 3. `Project Chat`
-   - 主要文件：`Features/ProjectRuntime/ProjectChatViewController.swift`
+   - 主要文件：
+     - `Features/ProjectRuntime/ProjectChatViewController.swift`：UI 布局、View 生命周期、UITableViewDataSource、输入处理、线程管理协调、ChatTaskCoordinatorDelegate 转发。
+     - `Features/ProjectRuntime/ChatMessageStore.swift`：消息数组管理、FlowState 状态机（idle / progress / streaming 三态）、追加/finalize/streaming 生命周期、持久化。
+     - `Features/ProjectRuntime/ChatModelSelectionManager.swift`：Provider/Model 切换、reasoning/thinking 设置、per-thread 选择存取、运行时凭证解析。
+     - `Features/ProjectRuntime/ChatMenuBuilder.swift`：所有 UIMenu 构建（thread / more / model），纯 static 方法，不持有状态。
    - 责任：聊天消息流、线程管理、模型配置、进度展示、取消请求、extended thinking 展示、工具活动摘要展示。
+   - 消息流状态机：`ChatMessageStore.FlowState` 保证任务执行期间恰好有一条消息处于 live 状态（`finishedAt == nil`），streaming 与 progress 消息通过原子状态转换交替出现。
 4. `Project Model Configuration`
    - 主要文件：`Features/ProjectRuntime/ProjectModelConfigurationViewController.swift`
    - 责任：项目内模型选择与参数配置（reasoning effort / thinking 开关）。

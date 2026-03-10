@@ -51,7 +51,10 @@
    - 首页画廊与排序页。
 5. `Doufu/Features/ProjectRuntime/`
    - `ProjectWorkspaceViewController`：项目运行页与悬浮面板。
-   - `ProjectChatViewController`：聊天页、线程切换、模型参数配置、项目 token usage。
+   - `ProjectChatViewController`：聊天页 UI 布局与胶水代码（线程切换、输入处理、coordinator delegate 转发）。
+   - `ChatMessageStore`：消息数组管理与 FlowState 状态机（idle / progress / streaming），通过 delegate 回调驱动 UI。
+   - `ChatModelSelectionManager`：Provider/Model 选择逻辑、reasoning/thinking 设置、per-thread 持久化。
+   - `ChatMenuBuilder`：所有 UIMenu 构建（static 方法，无状态）。
    - `ProjectModelConfigurationViewController`：项目内模型配置。
    - `ProjectTokenUsageViewController`：项目级 token 使用量。
    - `ProjectFileBrowserViewController`：文件树浏览与内容编辑。
@@ -163,6 +166,11 @@
    - `ToolProgressEvent` 枚举覆盖所有工具操作阶段。
    - 支持 extended thinking 内容回传（Claude thinking blocks）。
    - 流式文本实时回传 UI。
+   - `ChatMessageStore.FlowState` 状态机管理消息生命周期：
+     - `.idle` → `.streaming` / `.progress`：首个事件到达时创建 live cell。
+     - `.streaming` ↔ `.progress`：原子转换（finalize 旧 cell + 创建新 cell 同步完成）。
+     - 任意 → `.idle`：请求完成/取消/出错时 finalize 并重置。
+     - 不变量：任务执行期间恰好有一条消息 `finishedAt == nil`。
 8. 失败与回退
    - SSE 与非 SSE 响应都做失败解析。
    - `xhigh` 被拒时回退到 `high`。

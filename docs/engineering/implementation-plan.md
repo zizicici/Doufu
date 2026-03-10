@@ -27,6 +27,8 @@
 23. 已完成 Token Usage 页面能力（全局 + 项目视角、7 天图表、按周翻页、Provider/Model 维度切换、长按明细）。
 24. 已完成 Token Usage 相关文案本地化（`en / zh-Hans / zh-Hant / zh-HK`）。
 25. 已完成 CDN 资源缓存（LocalWebServer URL 改写 + 磁盘缓存 + 离线兜底）。
+26. 已完成聊天模块职责拆分（`ChatMessageStore` / `ChatModelSelectionManager` / `ChatMenuBuilder` + 薄 VC）。
+27. 已完成消息流 FlowState 状态机（idle / progress / streaming 三态，原子转换，消除孤儿 live cell 和全部结束间隙）。
 
 ## 已完成阶段回顾
 
@@ -54,6 +56,9 @@
    - 项目级/线程级模型选择持久化。
    - 默认模型选择 UI、LLM 快速设置引导。
    - Provider 模型列表管理与能力编辑。
+9. Phase H.5：聊天模块重构
+   - `ProjectChatViewController` 职责拆分为四个文件。
+   - 消息流 FlowState 状态机，保证任务期间恰好一条 live 消息。
 
 ## 下一阶段计划
 
