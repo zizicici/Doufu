@@ -59,6 +59,12 @@ final class ChatMessageCell: UITableViewCell {
 
     var onExpandTapped: (() -> Void)?
 
+    /// Called when the cell's content changes in a way that may affect row height.
+    var onNeedsHeightUpdate: (() -> Void)?
+
+    private var currentMessage: ChatMessage?
+    private var animationTimer: Timer?
+
     private var leadingConstraint: NSLayoutConstraint!
     private var trailingConstraint: NSLayoutConstraint!
 
@@ -105,13 +111,82 @@ final class ChatMessageCell: UITableViewCell {
 
     override func prepareForReuse() {
         super.prepareForReuse()
+        stopAnimationTimer()
+        currentMessage = nil
         onExpandTapped = nil
+        onNeedsHeightUpdate = nil
         expandButton.isHidden = true
         messageTextView.textContainer.maximumNumberOfLines = 0
         messageTextView.textContainer.lineBreakMode = .byWordWrapping
     }
 
-    func configure(message: ProjectChatViewController.Message, now: Date) {
+    // MARK: - Full configuration (called once per message or on finalize)
+
+    func configure(message: ChatMessage, now: Date) {
+        let wasLive = currentMessage?.finishedAt == nil
+        let isLive = message.finishedAt == nil
+        currentMessage = message
+
+        applyContent(message: message, now: now)
+        let isActiveProgress = message.isProgress && message.finishedAt == nil
+        applyStyle(message: message, isActiveProgress: isActiveProgress)
+
+        if isLive {
+            startAnimationTimer()
+        } else if wasLive {
+            stopAnimationTimer()
+        }
+    }
+
+    /// Lightweight update: only refreshes the text content (for streaming updates).
+    /// Avoids re-applying styles, constraints, markdown rendering, etc.
+    func updateText(_ text: String) {
+        guard var message = currentMessage else { return }
+        message.text = text
+        currentMessage = message
+
+        let now = Date()
+        let animatedText = displayText(for: message, now: now)
+        messageTextView.attributedText = nil
+        messageTextView.text = animatedText
+        messageTextView.font = .systemFont(ofSize: 15)
+        metaLabel.text = metadataText(for: message, now: now)
+    }
+
+    // MARK: - Internal animation timer (dots + duration)
+
+    private func startAnimationTimer() {
+        guard animationTimer == nil else { return }
+        animationTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { [weak self] _ in
+            self?.tickAnimation()
+        }
+    }
+
+    private func stopAnimationTimer() {
+        animationTimer?.invalidate()
+        animationTimer = nil
+    }
+
+    private func tickAnimation() {
+        guard let message = currentMessage, message.finishedAt == nil else {
+            stopAnimationTimer()
+            return
+        }
+        let now = Date()
+        // Progress cells: animate dots
+        if message.isProgress {
+            let animatedText = displayText(for: message, now: now)
+            messageTextView.attributedText = nil
+            messageTextView.text = animatedText
+            messageTextView.font = .systemFont(ofSize: 15)
+        }
+        // All live cells: tick duration
+        metaLabel.text = metadataText(for: message, now: now)
+    }
+
+    // MARK: - Private helpers
+
+    private func applyContent(message: ChatMessage, now: Date) {
         metaLabel.text = metadataText(for: message, now: now)
 
         let useMarkdown = message.role == .assistant && (message.finishedAt != nil || !message.isProgress)
@@ -134,28 +209,30 @@ final class ChatMessageCell: UITableViewCell {
             messageTextView.textContainer.lineBreakMode = .byWordWrapping
             expandButton.isHidden = true
         }
+    }
 
+    private func applyStyle(message: ChatMessage, isActiveProgress: Bool) {
+        let isLive = message.finishedAt == nil
         switch message.role {
         case .user:
             trailingConstraint.isActive = true
             leadingConstraint.isActive = false
             bubbleContainer.backgroundColor = tintColor
-            if !useMarkdown {
-                messageTextView.textColor = .white
-            }
+            messageTextView.textColor = .white
             messageTextView.linkTextAttributes = [.foregroundColor: UIColor.white, .underlineStyle: NSUnderlineStyle.single.rawValue]
             metaLabel.textColor = UIColor.white.withAlphaComponent(0.78)
             bubbleContainer.layer.borderColor = UIColor.clear.cgColor
         case .assistant:
             trailingConstraint.isActive = false
             leadingConstraint.isActive = true
-            bubbleContainer.backgroundColor = .secondarySystemGroupedBackground
+            bubbleContainer.backgroundColor = .doufuPaper
+            let useMarkdown = message.finishedAt != nil || !message.isProgress
             if !useMarkdown {
                 messageTextView.textColor = .label
             }
             messageTextView.linkTextAttributes = [.foregroundColor: UIColor.systemBlue, .underlineStyle: NSUnderlineStyle.single.rawValue]
             metaLabel.textColor = .secondaryLabel
-            if message.isProgress && message.finishedAt == nil {
+            if isLive {
                 bubbleContainer.layer.borderColor = tintColor.withAlphaComponent(0.45).cgColor
             } else {
                 bubbleContainer.layer.borderColor = UIColor.clear.cgColor
@@ -175,7 +252,7 @@ final class ChatMessageCell: UITableViewCell {
         onExpandTapped?()
     }
 
-    private func displayText(for message: ProjectChatViewController.Message, now: Date) -> String {
+    private func displayText(for message: ChatMessage, now: Date) -> String {
         guard message.isProgress, message.finishedAt == nil else {
             return message.text
         }
@@ -189,7 +266,7 @@ final class ChatMessageCell: UITableViewCell {
         return baseText + dots
     }
 
-    private func metadataText(for message: ProjectChatViewController.Message, now: Date) -> String {
+    private func metadataText(for message: ChatMessage, now: Date) -> String {
         let timestamp = Self.timestampFormatter.string(from: message.createdAt)
         var parts: [String] = [timestamp]
         if message.role != .user {
