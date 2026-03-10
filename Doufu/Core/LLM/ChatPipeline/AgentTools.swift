@@ -473,16 +473,20 @@ final class AgentToolProvider {
     private func webFetchTool() -> AgentToolDefinition {
         AgentToolDefinition(
             name: "web_fetch",
-            description: "Fetch the content of a web page. Returns the page text with HTML stripped. Use this to read documentation, API references, or any web page. Only supports http/https URLs.",
+            description: "Fetch the content of a web page. By default returns extracted text with HTML stripped. Set raw to true to get the original HTML, useful when you need to parse the page structure (tables, lists, specific tags). Only supports http/https URLs.",
             parameters: .object([
                 "type": .string("object"),
                 "properties": .object([
                     "url": .object([
                         "type": .string("string"),
                         "description": .string("The full URL to fetch (must start with http:// or https://)")
+                    ]),
+                    "raw": .object([
+                        "type": .string("boolean"),
+                        "description": .string("When true, return the original HTML instead of extracted text. Defaults to false.")
                     ])
                 ]),
-                "required": .array([.string("url")]),
+                "required": .array([.string("url"), .string("raw")]),
                 "additionalProperties": .bool(false)
             ])
         )
@@ -1501,7 +1505,8 @@ final class AgentToolProvider {
             return ToolExecutionResult(output: "Missing required parameter: url", isError: true, changedPaths: [])
         }
 
-        let result = await webToolProvider.webFetch(urlString: urlString)
+        let raw = args["raw"] as? Bool ?? false
+        let result = await webToolProvider.webFetch(urlString: urlString, raw: raw)
         switch result {
         case let .success(content):
             return ToolExecutionResult(

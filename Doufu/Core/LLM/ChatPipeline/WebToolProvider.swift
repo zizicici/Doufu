@@ -136,7 +136,7 @@ final class WebToolProvider {
 
     // MARK: - Web Fetch
 
-    func webFetch(urlString: String) async -> Result<String, WebToolError> {
+    func webFetch(urlString: String, raw: Bool = false) async -> Result<String, WebToolError> {
         let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             return .failure(WebToolError(message: "Missing required parameter: url"))
@@ -183,7 +183,9 @@ final class WebToolProvider {
             .value(forHTTPHeaderField: "Content-Type")?.lowercased() ?? ""
 
         let extracted: String
-        if contentType.contains("text/html") || contentType.contains("xhtml") || rawText.contains("<html") {
+        if raw {
+            extracted = rawText
+        } else if contentType.contains("text/html") || contentType.contains("xhtml") || rawText.contains("<html") {
             extracted = extractTextFromHTML(rawText)
         } else {
             extracted = rawText
