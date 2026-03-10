@@ -29,13 +29,6 @@ nonisolated struct ChatMessage: Hashable, Sendable {
     func hash(into hasher: inout Hasher) { hasher.combine(id) }
     static func == (lhs: ChatMessage, rhs: ChatMessage) -> Bool { lhs.id == rhs.id }
 
-    /// Hash of mutable content fields, used to detect changes for reconfigure.
-    var contentHash: Int {
-        var hasher = Hasher()
-        hasher.combine(text)
-        hasher.combine(finishedAt)
-        return hasher.finalize()
-    }
 }
 
 @MainActor
@@ -213,10 +206,6 @@ final class ProjectChatViewController: UIViewController {
         updateInputTextViewHeight()
     }
 
-    override func viewWillAppear(_ animated: Bool) {
-        super.viewWillAppear(animated)
-    }
-
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
         if view.window == nil {
@@ -249,13 +238,12 @@ final class ProjectChatViewController: UIViewController {
         modelBarButtonItem.menu = nil
         modelBarButtonItem.isEnabled = !isExecuting && modelSelection.providerCredential != nil
         usageBarButtonItem.isEnabled = true
-        moreBarButtonItem.menu = isExecuting
-            ? ChatMenuBuilder.executingMoreMenu(onClose: { [weak self] in self?.didTapClose() })
-            : ChatMenuBuilder.moreMenu(
-                onFiles: { [weak self] in self?.presentProjectFiles() },
-                onSettings: { [weak self] in self?.presentProjectSettings() },
-                onClose: { [weak self] in self?.didTapClose() }
-            )
+        moreBarButtonItem.menu = ChatMenuBuilder.moreMenu(
+            isExecuting: isExecuting,
+            onFiles: { [weak self] in self?.presentProjectFiles() },
+            onSettings: { [weak self] in self?.presentProjectSettings() },
+            onClose: { [weak self] in self?.didTapClose() }
+        )
         moreBarButtonItem.isEnabled = true
     }
 
@@ -643,7 +631,7 @@ final class ProjectChatViewController: UIViewController {
     @objc
     private func didTapSend() {
         if taskCoordinator.isExecuting {
-            cancelCurrentRequest(showMessage: true)
+            taskCoordinator.cancel()
             return
         }
 
@@ -692,19 +680,6 @@ final class ProjectChatViewController: UIViewController {
         refreshSendButton()
     }
 
-    private func cancelCurrentRequest(showMessage: Bool) {
-        guard taskCoordinator.isExecuting else {
-            return
-        }
-        taskCoordinator.cancel()
-        // The actual cancel message is handled by coordinatorDidCancel → messageStore.handleCancellation()
-    }
-
-    private func showErrorAlert(title: String, message: String) {
-        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
-        present(alert, animated: true)
-    }
 }
 
 // MARK: - ChatMessageStoreDelegate

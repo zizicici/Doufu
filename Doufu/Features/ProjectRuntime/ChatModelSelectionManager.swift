@@ -274,6 +274,12 @@ final class ChatModelSelectionManager {
 
         let providerKind = providerStore.loadProvider(id: providerCredential.providerID)?.kind ?? providerCredential.providerKind
         let normalizedModel = normalizedModelID(modelID)
+        let capabilities = resolveModelProfile(
+            providerID: providerCredential.providerID,
+            providerKind: providerKind,
+            modelID: modelID
+        )
+
         switch providerKind {
         case .openAICompatible:
             if let profile = reasoningProfile(
@@ -291,32 +297,18 @@ final class ChatModelSelectionManager {
             }
         case .anthropic:
             selectedReasoningEffortsByModelID.removeValue(forKey: normalizedModel)
-            let capabilities = resolveModelProfile(
-                providerID: providerCredential.providerID,
-                providerKind: providerKind,
-                modelID: modelID
+            applyThinkingDefault(
+                capabilities: capabilities,
+                normalizedModel: normalizedModel,
+                dict: &selectedAnthropicThinkingEnabledByModelID
             )
-            if !capabilities.thinkingSupported {
-                selectedAnthropicThinkingEnabledByModelID[normalizedModel] = false
-            } else if !capabilities.thinkingCanDisable {
-                selectedAnthropicThinkingEnabledByModelID[normalizedModel] = true
-            } else if selectedAnthropicThinkingEnabledByModelID[normalizedModel] == nil {
-                selectedAnthropicThinkingEnabledByModelID[normalizedModel] = true
-            }
         case .googleGemini:
             selectedReasoningEffortsByModelID.removeValue(forKey: normalizedModel)
-            let capabilities = resolveModelProfile(
-                providerID: providerCredential.providerID,
-                providerKind: providerKind,
-                modelID: modelID
+            applyThinkingDefault(
+                capabilities: capabilities,
+                normalizedModel: normalizedModel,
+                dict: &selectedGeminiThinkingEnabledByModelID
             )
-            if !capabilities.thinkingSupported {
-                selectedGeminiThinkingEnabledByModelID[normalizedModel] = false
-            } else if !capabilities.thinkingCanDisable {
-                selectedGeminiThinkingEnabledByModelID[normalizedModel] = true
-            } else if selectedGeminiThinkingEnabledByModelID[normalizedModel] == nil {
-                selectedGeminiThinkingEnabledByModelID[normalizedModel] = true
-            }
         }
 
         delegate?.modelSelectionDidChange()
@@ -339,9 +331,10 @@ final class ChatModelSelectionManager {
         return profile.defaultEffort
     }
 
-    func resolvedAnthropicThinkingEnabled(
+    func resolvedThinkingEnabled(
         providerCredential: ProjectChatService.ProviderCredential,
-        modelID: String
+        modelID: String,
+        dict: inout [String: Bool]
     ) -> Bool {
         let key = normalizedModelID(modelID)
         let capabilities = resolveModelProfile(
@@ -350,43 +343,33 @@ final class ChatModelSelectionManager {
             modelID: modelID
         )
         guard capabilities.thinkingSupported else {
-            selectedAnthropicThinkingEnabledByModelID[key] = false
+            dict[key] = false
             return false
         }
         guard capabilities.thinkingCanDisable else {
-            selectedAnthropicThinkingEnabledByModelID[key] = true
+            dict[key] = true
             return true
         }
-        if let selected = selectedAnthropicThinkingEnabledByModelID[key] {
+        if let selected = dict[key] {
             return selected
         }
-        selectedAnthropicThinkingEnabledByModelID[key] = true
+        dict[key] = true
         return true
     }
 
-    func resolvedGeminiThinkingEnabled(
-        providerCredential: ProjectChatService.ProviderCredential,
-        modelID: String
-    ) -> Bool {
-        let key = normalizedModelID(modelID)
-        let capabilities = resolveModelProfile(
-            providerID: providerCredential.providerID,
-            providerKind: providerCredential.providerKind,
-            modelID: modelID
-        )
-        guard capabilities.thinkingSupported else {
-            selectedGeminiThinkingEnabledByModelID[key] = false
-            return false
+    /// Sets thinking default for a model when first selected, without returning a value.
+    private func applyThinkingDefault(
+        capabilities: ResolvedModelProfile,
+        normalizedModel: String,
+        dict: inout [String: Bool]
+    ) {
+        if !capabilities.thinkingSupported {
+            dict[normalizedModel] = false
+        } else if !capabilities.thinkingCanDisable {
+            dict[normalizedModel] = true
+        } else if dict[normalizedModel] == nil {
+            dict[normalizedModel] = true
         }
-        guard capabilities.thinkingCanDisable else {
-            selectedGeminiThinkingEnabledByModelID[key] = true
-            return true
-        }
-        if let selected = selectedGeminiThinkingEnabledByModelID[key] {
-            return selected
-        }
-        selectedGeminiThinkingEnabledByModelID[key] = true
-        return true
     }
 
     // MARK: - Runtime
@@ -407,11 +390,11 @@ final class ChatModelSelectionManager {
             anthropicThinkingEnabled = true
             geminiThinkingEnabled = true
         case .anthropic:
-            anthropicThinkingEnabled = resolvedAnthropicThinkingEnabled(providerCredential: credential, modelID: selectionModelID)
+            anthropicThinkingEnabled = resolvedThinkingEnabled(providerCredential: credential, modelID: selectionModelID, dict: &selectedAnthropicThinkingEnabledByModelID)
             geminiThinkingEnabled = true
         case .googleGemini:
             anthropicThinkingEnabled = true
-            geminiThinkingEnabled = resolvedGeminiThinkingEnabled(providerCredential: credential, modelID: selectionModelID)
+            geminiThinkingEnabled = resolvedThinkingEnabled(providerCredential: credential, modelID: selectionModelID, dict: &selectedGeminiThinkingEnabledByModelID)
         }
 
         return ProjectChatService.ModelExecutionOptions(
@@ -422,7 +405,7 @@ final class ChatModelSelectionManager {
     }
 
     func runtimeCredential(from base: ProjectChatService.ProviderCredential) -> ProjectChatService.ProviderCredential {
-        let normalizedSelectedModel = selectedModelID(for: base)
+        let normalizedSelectedModel = resolvedRequestModelID(for: base)
         guard !normalizedSelectedModel.isEmpty else {
             return base
         }
@@ -493,30 +476,26 @@ final class ChatModelSelectionManager {
             guard capabilities.thinkingSupported else {
                 return providerTitle + " · " + modelTitle
             }
-            let enabled = resolvedAnthropicThinkingEnabled(providerCredential: credential, modelID: selectionKey)
-            let status = enabled
+            let anthropicEnabled = resolvedThinkingEnabled(providerCredential: credential, modelID: selectionKey, dict: &selectedAnthropicThinkingEnabledByModelID)
+            let anthropicStatus = anthropicEnabled
                 ? String(localized: "chat.thinking.enabled")
                 : String(localized: "chat.thinking.disabled")
-            return providerTitle + " · " + modelTitle + " · " + status
+            return providerTitle + " · " + modelTitle + " · " + anthropicStatus
         case .googleGemini:
             guard capabilities.thinkingSupported else {
                 return providerTitle + " · " + modelTitle
             }
-            let enabled = resolvedGeminiThinkingEnabled(providerCredential: credential, modelID: selectionKey)
-            let status = enabled
+            let geminiEnabled = resolvedThinkingEnabled(providerCredential: credential, modelID: selectionKey, dict: &selectedGeminiThinkingEnabledByModelID)
+            let geminiStatus = geminiEnabled
                 ? String(localized: "chat.thinking.enabled")
                 : String(localized: "chat.thinking.disabled")
-            return providerTitle + " · " + modelTitle + " · " + status
+            return providerTitle + " · " + modelTitle + " · " + geminiStatus
         }
     }
 
     func providerMenuTitle(for credential: ProjectChatService.ProviderCredential) -> String {
         let normalizedLabel = credential.providerLabel.trimmingCharacters(in: .whitespacesAndNewlines)
         return normalizedLabel.isEmpty ? credential.providerKind.displayName : normalizedLabel
-    }
-
-    func selectedModelID(for credential: ProjectChatService.ProviderCredential) -> String {
-        resolvedRequestModelID(for: credential)
     }
 
     // MARK: - Persistence
