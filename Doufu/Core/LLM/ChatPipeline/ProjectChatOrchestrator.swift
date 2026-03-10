@@ -60,7 +60,7 @@ final class ProjectChatOrchestrator {
         projectIdentifier: String,
         projectURL: URL,
         credential: ProjectChatService.ProviderCredential,
-        memory: ProjectChatService.SessionMemory? = nil,
+        memory: SessionMemory? = nil,
         executionOptions: ProjectChatService.ModelExecutionOptions,
         confirmationHandler: ToolConfirmationHandler? = nil,
         permissionMode: ToolPermissionMode = .standard,

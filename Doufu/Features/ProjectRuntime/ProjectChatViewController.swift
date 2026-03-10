@@ -7,51 +7,21 @@
 
 import UIKit
 
-nonisolated struct ChatMessage: Hashable, Sendable {
-    nonisolated enum Role: String, Hashable, Sendable {
-        case user
-        case assistant
-        case system
-    }
-
-    let id = UUID()
-    let role: Role
-    var text: String
-    let createdAt: Date
-    let startedAt: Date
-    var finishedAt: Date?
-    let isProgress: Bool
-    var requestTokenUsage: ProjectChatService.RequestTokenUsage?
-    var toolSummary: String?
-
-    // MARK: - Custom Hashable (identity = id only)
-
-    func hash(into hasher: inout Hasher) { hasher.combine(id) }
-    static func == (lhs: ChatMessage, rhs: ChatMessage) -> Bool { lhs.id == rhs.id }
-
-}
-
 @MainActor
 final class ProjectChatViewController: UIViewController {
 
     var onProjectFilesUpdated: (() -> Void)?
     var isReadOnly = false
 
-    typealias Message = ChatMessage
-
     private var project: AppProjectRecord
     private let chatService = ProjectChatService()
     private let threadStore = ProjectChatThreadStore.shared
 
-    private var sessionMemory: ProjectChatService.SessionMemory?
-    private var threadSessionMemories: [String: ProjectChatService.SessionMemory] = [:]
     private lazy var taskCoordinator: ChatTaskCoordinator = {
         let coordinator = ChatTaskCoordinator(chatService: chatService)
         coordinator.delegate = self
         return coordinator
     }()
-    private var threadIndex: ProjectChatThreadIndex?
-    private var currentThread: ProjectChatThreadRecord?
     private var toolPermissionMode: ToolPermissionMode = .standard
 
     /// Server base URL for code validation (uses localhost instead of file://).
@@ -69,15 +39,27 @@ final class ProjectChatViewController: UIViewController {
         ChatMessageStore(
             threadStore: threadStore,
             projectURL: projectURL,
-            currentThreadIDProvider: { [weak self] in self?.currentThread?.id }
+            currentThreadIDProvider: { [weak self] in self?.threadSession.currentThread?.id }
         )
     }()
 
     private lazy var modelSelection: ChatModelSelectionManager = {
         ChatModelSelectionManager(
             projectURL: projectURL,
-            currentThreadIDProvider: { [weak self] in self?.currentThread?.id }
+            currentThreadIDProvider: { [weak self] in self?.threadSession.currentThread?.id }
         )
+    }()
+
+    private lazy var threadSession: ChatThreadSessionManager = {
+        let manager = ChatThreadSessionManager(
+            threadStore: threadStore,
+            projectURL: projectURL,
+            messageStore: messageStore,
+            modelSelection: modelSelection,
+            isExecutingProvider: { [weak self] in self?.taskCoordinator.isExecuting ?? false }
+        )
+        manager.delegate = self
+        return manager
     }()
 
     // MARK: - UI Elements
@@ -191,7 +173,7 @@ final class ProjectChatViewController: UIViewController {
         configureNavigation()
         configureLayout()
         ensureProjectMemoryDocumentIfNeeded()
-        restoreThreadStateIfNeeded()
+        threadSession.restoreThreadStateIfNeeded()
         modelSelection.configureProvider()
         toolPermissionMode = AppProjectStore.shared.loadToolPermissionMode(projectURL: projectURL)
         if isReadOnly {
@@ -223,12 +205,12 @@ final class ProjectChatViewController: UIViewController {
 
     func refreshNavigationItems() {
         let isExecuting = taskCoordinator.isExecuting
-        threadBarButtonItem.title = currentThread?.title ?? String(localized: "chat.thread.button_title")
+        threadBarButtonItem.title = threadSession.currentThread?.title ?? String(localized: "chat.thread.button_title")
         threadBarButtonItem.menu = isExecuting ? nil : ChatMenuBuilder.threadMenu(
-            threads: threadIndex?.threads ?? [],
-            currentThreadID: currentThread?.id,
-            onSwitch: { [weak self] threadID in self?.handleSwitchThread(threadID: threadID) },
-            onCreate: { [weak self] in self?.createAndSwitchThread() },
+            threads: threadSession.threadIndex?.threads ?? [],
+            currentThreadID: threadSession.currentThread?.id,
+            onSwitch: { [weak self] threadID in self?.threadSession.handleSwitchThread(threadID: threadID) },
+            onCreate: { [weak self] in self?.threadSession.createAndSwitchThread() },
             onManage: { [weak self] in self?.presentThreadManagement() }
         )
         threadBarButtonItem.isEnabled = !isExecuting
@@ -293,18 +275,7 @@ final class ProjectChatViewController: UIViewController {
         ])
     }
 
-    // MARK: - Thread Management
-
-    private func restoreThreadStateIfNeeded() {
-        do {
-            threadIndex = try threadStore.loadOrCreateIndex(projectURL: projectURL)
-            if let currentThreadID = threadIndex?.currentThreadID {
-                try switchToThread(threadID: currentThreadID)
-            }
-        } catch {
-            messageStore.appendMessage(role: .system, text: error.localizedDescription)
-        }
-    }
+    // MARK: - Project Setup
 
     private func ensureProjectMemoryDocumentIfNeeded() {
         let memoryURL = projectURL.appendingPathComponent("DOUFU.MD")
@@ -325,49 +296,13 @@ final class ProjectChatViewController: UIViewController {
         try? fallback.write(to: memoryURL, atomically: true, encoding: .utf8)
     }
 
-    private func handleSwitchThread(threadID: String) {
-        guard !taskCoordinator.isExecuting else {
-            return
-        }
-        do {
-            try switchToThread(threadID: threadID)
-        } catch {
-            messageStore.appendMessage(role: .system, text: error.localizedDescription)
-        }
-    }
-
-    private func createAndSwitchThread() {
-        guard !taskCoordinator.isExecuting else {
-            return
-        }
-        do {
-            messageStore.persistMessages()
-            _ = try threadStore.createThread(projectURL: projectURL, title: nil, makeCurrent: true)
-            threadIndex = try threadStore.loadOrCreateIndex(projectURL: projectURL)
-            guard let currentThreadID = threadIndex?.currentThreadID else {
-                throw ChatProviderError.noThreadAvailable
-            }
-            try switchToThread(threadID: currentThreadID)
-            messageStore.persistMessages()
-            refreshNavigationItems()
-        } catch {
-            messageStore.appendMessage(role: .system, text: error.localizedDescription)
-        }
-    }
-
     private func presentThreadManagement() {
         guard !taskCoordinator.isExecuting else { return }
         let vc = ThreadManagementViewController(projectURL: projectURL)
         vc.onChanged = { [weak self] in
             guard let self else { return }
             do {
-                threadIndex = try threadStore.loadOrCreateIndex(projectURL: projectURL)
-                if let currentThreadID = threadIndex?.currentThreadID,
-                   currentThreadID != currentThread?.id {
-                    try switchToThread(threadID: currentThreadID)
-                } else if let currentThreadID = threadIndex?.currentThreadID {
-                    currentThread = threadIndex?.threads.first(where: { $0.id == currentThreadID })
-                }
+                try threadSession.reloadIndex()
                 refreshNavigationItems()
             } catch {
                 messageStore.appendMessage(role: .system, text: error.localizedDescription)
@@ -375,67 +310,6 @@ final class ProjectChatViewController: UIViewController {
         }
         let nav = UINavigationController(rootViewController: vc)
         present(nav, animated: true)
-    }
-
-    private func switchToThread(threadID: String) throws {
-        messageStore.persistMessages()
-        modelSelection.persistCurrentThreadModelSelection()
-        if let currentThread {
-            threadSessionMemories[currentThread.id] = sessionMemory
-        }
-
-        let switched = try threadStore.switchCurrentThread(projectURL: projectURL, threadID: threadID)
-        threadIndex = try threadStore.loadOrCreateIndex(projectURL: projectURL)
-        currentThread = switched
-        sessionMemory = threadSessionMemories[switched.id] ?? nil
-        modelSelection.restoreThreadModelSelection(threadID: switched.id)
-
-        let persisted = threadStore.loadMessages(projectURL: projectURL, threadID: switched.id)
-        let restoredMessages: [ChatMessage] = persisted.compactMap { persistedMessage in
-            let normalizedRole = persistedMessage.role.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            guard let role = Message.Role(rawValue: normalizedRole) else {
-                return nil
-            }
-            let text = persistedMessage.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !text.isEmpty else {
-                return nil
-            }
-            let startedAt = persistedMessage.startedAt ?? persistedMessage.createdAt
-            let finishedAt: Date? = {
-                if let finishedAt = persistedMessage.finishedAt {
-                    return finishedAt
-                }
-                if persistedMessage.isProgress {
-                    return startedAt
-                }
-                return persistedMessage.createdAt
-            }()
-            return Message(
-                role: role,
-                text: text,
-                createdAt: persistedMessage.createdAt,
-                startedAt: startedAt,
-                finishedAt: finishedAt,
-                isProgress: persistedMessage.isProgress,
-                requestTokenUsage: {
-                    let input = max(0, persistedMessage.inputTokens ?? 0)
-                    let output = max(0, persistedMessage.outputTokens ?? 0)
-                    guard input > 0 || output > 0 else {
-                        return nil
-                    }
-                    return ProjectChatService.RequestTokenUsage(
-                        inputTokens: input,
-                        outputTokens: output
-                    )
-                }(),
-                toolSummary: persistedMessage.toolSummary
-            )
-        }
-
-        messageStore.replaceMessages(restoredMessages)
-        tableView.reloadData()
-        scrollToBottomIfNeeded(force: true)
-        refreshNavigationItems()
     }
 
     // MARK: - Input Handling
@@ -463,7 +337,7 @@ final class ProjectChatViewController: UIViewController {
     private func refreshSendButton() {
         let hasText = !currentInputText().isEmpty
         let hasProvider = modelSelection.providerCredential != nil
-        let hasThread = currentThread != nil
+        let hasThread = threadSession.currentThread != nil
         if taskCoordinator.isExecuting {
             sendButton.isEnabled = true
             var configuration = sendButton.configuration ?? UIButton.Configuration.filled()
@@ -643,7 +517,7 @@ final class ProjectChatViewController: UIViewController {
             messageStore.appendMessage(role: .system, text: ChatProviderError.noAvailableProvider.localizedDescription)
             return
         }
-        guard currentThread != nil else {
+        guard threadSession.currentThread != nil else {
             messageStore.appendMessage(role: .system, text: ChatProviderError.noThreadAvailable.localizedDescription)
             return
         }
@@ -669,7 +543,7 @@ final class ProjectChatViewController: UIViewController {
             projectName: projectName,
             projectURL: projectURL,
             credential: credential,
-            memory: sessionMemory,
+            memory: threadSession.sessionMemory,
             executionOptions: modelSelection.executionOptions(for: credential),
             confirmationHandler: self,
             permissionMode: toolPermissionMode,
@@ -764,6 +638,20 @@ extension ProjectChatViewController: UITableViewDataSource {
     }
 }
 
+// MARK: - ChatThreadSessionManagerDelegate
+
+extension ProjectChatViewController: ChatThreadSessionManagerDelegate {
+    func threadSessionDidSwitchThread() {
+        tableView.reloadData()
+        scrollToBottomIfNeeded(force: true)
+        refreshNavigationItems()
+    }
+
+    func threadSessionDidEncounterError(_ error: Error) {
+        messageStore.appendMessage(role: .system, text: error.localizedDescription)
+    }
+}
+
 // MARK: - UITextViewDelegate
 
 extension ProjectChatViewController: UITextViewDelegate {
@@ -832,10 +720,9 @@ extension ProjectChatViewController: ChatTaskCoordinatorDelegate {
     }
 
     func coordinatorDidCompleteWithResult(_ result: ChatTaskResult) {
-        guard let currentThread else { return }
+        guard threadSession.currentThread != nil else { return }
 
-        sessionMemory = result.updatedMemory
-        threadSessionMemories[currentThread.id] = result.updatedMemory
+        threadSession.updateSessionMemory(result.updatedMemory)
 
         var assistantText = result.assistantMessage
         if !result.changedPaths.isEmpty {
@@ -853,16 +740,7 @@ extension ProjectChatViewController: ChatTaskCoordinatorDelegate {
         )
 
         do {
-            try threadStore.touchThread(
-                projectURL: projectURL,
-                threadID: currentThread.id
-            )
-            if var index = self.threadIndex {
-                if let threadIdx = index.threads.firstIndex(where: { $0.id == currentThread.id }) {
-                    index.threads[threadIdx].updatedAt = Date()
-                    self.threadIndex = index
-                }
-            }
+            try threadSession.touchCurrentThread()
         } catch {
             messageStore.appendMessage(
                 role: .system,

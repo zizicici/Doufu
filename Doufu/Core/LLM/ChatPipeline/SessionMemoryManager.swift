@@ -61,9 +61,9 @@ final class SessionMemoryManager {
     }
 
     func buildRequestMemory(
-        base: ProjectChatService.SessionMemory?,
+        base: SessionMemory?,
         latestUserMessage: String
-    ) -> ProjectChatService.SessionMemory {
+    ) -> SessionMemory {
         var memory = base ?? .empty
 
         // Normalize existing objective if present
@@ -89,12 +89,12 @@ final class SessionMemoryManager {
     }
 
     func buildRolledMemory(
-        current: ProjectChatService.SessionMemory,
+        current: SessionMemory,
         userMessage: String,
         assistantMessage: String,
         changedPaths: [String],
         modelMemoryUpdate: PatchMemoryUpdate?
-    ) -> ProjectChatService.SessionMemory {
+    ) -> SessionMemory {
         var memory = current
 
         if let modelMemoryUpdate {
@@ -156,7 +156,7 @@ final class SessionMemoryManager {
         ProjectPathResolver.mergeChangedPaths(paths, into: &target)
     }
 
-    func encodeMemoryToJSONString(_ memory: ProjectChatService.SessionMemory) -> String {
+    func encodeMemoryToJSONString(_ memory: SessionMemory) -> String {
         let payload = MemoryPromptPayload(
             objective: memory.objective,
             constraints: memory.constraints,
@@ -202,7 +202,7 @@ final class SessionMemoryManager {
         return lines.joined(separator: "\n")
     }
 
-    private func sanitizeMemory(_ memory: ProjectChatService.SessionMemory) -> ProjectChatService.SessionMemory {
+    private func sanitizeMemory(_ memory: SessionMemory) -> SessionMemory {
         let objective = normalizedMemoryItem(
             memory.objective,
             maxCharacters: configuration.maxMemoryObjectiveCharacters
@@ -210,7 +210,7 @@ final class SessionMemoryManager {
         let constraints = sanitizeMemoryItems(memory.constraints, limit: configuration.maxMemoryConstraintItems)
         let changedFiles = sanitizeChangedFileItems(memory.changedFiles, limit: configuration.maxMemoryChangedFiles)
         let todoItems = sanitizeMemoryItems(memory.todoItems, limit: configuration.maxMemoryTodoItems)
-        return ProjectChatService.SessionMemory(
+        return SessionMemory(
             objective: objective,
             constraints: constraints,
             changedFiles: changedFiles,

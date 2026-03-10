@@ -9,7 +9,7 @@ import Foundation
 struct ChatTaskResult {
     let assistantMessage: String
     let changedPaths: [String]
-    let updatedMemory: ProjectChatService.SessionMemory
+    let updatedMemory: SessionMemory
     let requestTokenUsage: ProjectChatService.RequestTokenUsage?
     let toolActivitySummary: String?
     let toolMetadata: [AgentToolProvider.ToolResultMetadata]
@@ -40,7 +40,7 @@ final class ChatTaskCoordinator {
         let projectName: String
         let projectURL: URL
         let credential: ProjectChatService.ProviderCredential
-        let memory: ProjectChatService.SessionMemory?
+        let memory: SessionMemory?
         let executionOptions: ProjectChatService.ModelExecutionOptions
         let confirmationHandler: ToolConfirmationHandler?
         let permissionMode: ToolPermissionMode

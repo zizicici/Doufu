@@ -99,6 +99,7 @@ final class ProjectChatThreadStore {
     private let fileManager: FileManager
     private let indexFileName = ".doufu_threads_index.json"
     private let messagesFilePrefix = ".doufu_thread_messages_"
+    private let memoryFilePrefix = ".doufu_thread_memory_"
 
     init(fileManager: FileManager = .default) {
         self.fileManager = fileManager
@@ -197,9 +198,11 @@ final class ProjectChatThreadStore {
         let thread = index.threads[threadIndex]
         index.threads.remove(at: threadIndex)
 
-        // Clean up message file
+        // Clean up thread files
         let messagesURL = messagesFileURL(projectURL: projectURL, threadID: threadID)
         try? fileManager.removeItem(at: messagesURL)
+        let memoryURL = memoryFileURL(projectURL: projectURL, threadID: threadID)
+        try? fileManager.removeItem(at: memoryURL)
 
         // If deleted thread was current, switch to another
         if index.currentThreadID == threadID {
@@ -239,6 +242,30 @@ final class ProjectChatThreadStore {
         index.threads = reordered
         try saveIndex(index, projectURL: projectURL)
     }
+
+    // MARK: - Session Memory Persistence
+
+    func loadSessionMemory(projectURL: URL, threadID: String) -> SessionMemory? {
+        let fileURL = memoryFileURL(projectURL: projectURL, threadID: threadID)
+        guard let data = try? Data(contentsOf: fileURL) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(SessionMemory.self, from: data)
+    }
+
+    func saveSessionMemory(projectURL: URL, threadID: String, memory: SessionMemory?) {
+        let fileURL = memoryFileURL(projectURL: projectURL, threadID: threadID)
+        guard let memory else {
+            try? fileManager.removeItem(at: fileURL)
+            return
+        }
+        guard let data = try? JSONEncoder().encode(memory) else {
+            return
+        }
+        try? data.write(to: fileURL, options: .atomic)
+    }
+
+    // MARK: - Messages
 
     func loadMessages(projectURL: URL, threadID: String) -> [ProjectChatPersistedMessage] {
         let fileURL = messagesFileURL(projectURL: projectURL, threadID: threadID)
@@ -291,6 +318,10 @@ final class ProjectChatThreadStore {
 
     private func messagesFileURL(projectURL: URL, threadID: String) -> URL {
         projectURL.appendingPathComponent("\(messagesFilePrefix)\(threadID).json")
+    }
+
+    private func memoryFileURL(projectURL: URL, threadID: String) -> URL {
+        projectURL.appendingPathComponent("\(memoryFilePrefix)\(threadID).json")
     }
 
     private func saveIndex(_ index: ProjectChatThreadIndex, projectURL: URL) throws {
