@@ -57,8 +57,7 @@ final class ProjectChatOrchestrator {
     func sendAndApply(
         userMessage: String,
         history: [ProjectChatService.ChatTurn],
-        projectIdentifier: String,
-        projectURL: URL,
+        sessionContext: ChatSessionContext,
         credential: ProjectChatService.ProviderCredential,
         memory: SessionMemory? = nil,
         executionOptions: ProjectChatService.ModelExecutionOptions,
@@ -69,6 +68,8 @@ final class ProjectChatOrchestrator {
         onStreamedText: (@MainActor (String) -> Void)? = nil,
         onProgress: (@MainActor (ToolProgressEvent) -> Void)? = nil
     ) async throws -> ProjectChatService.ResultPayload {
+        let projectIdentifier = sessionContext.projectID
+        let projectURL = sessionContext.projectURL
         let trimmedMessage = userMessage.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedMessage.isEmpty else {
             throw ProjectChatService.ServiceError.invalidResponse

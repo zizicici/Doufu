@@ -26,6 +26,23 @@ final class PiPProgressManager: NSObject {
         set { UserDefaults.standard.set(newValue, forKey: Self.enabledKey) }
     }
 
+    // MARK: - Multi-Session State
+
+    private struct PiPTaskEntry {
+        let sessionID: String
+        var projectName: String
+        var projectSnapshot: UIImage?
+        var statusText: String
+        var startDate: Date
+        var isFinished: Bool
+        var finishedStatusText: String?
+        var needsUserAction: Bool
+    }
+
+    private var taskEntries: [String: PiPTaskEntry] = [:]
+    /// The session currently displayed in PiP.
+    private var displayedSessionID: String?
+
     // MARK: - State
 
     private(set) var isActive = false
@@ -33,6 +50,9 @@ final class PiPProgressManager: NSObject {
     private var isPiPShowing = false
     private var isFinished = false
     private var needsUserAction = false
+
+    /// The entry currently being rendered.
+    private var displayedEntry: PiPTaskEntry?
 
     // MARK: - PiP Infrastructure
 
@@ -98,7 +118,110 @@ final class PiPProgressManager: NSObject {
         }
     }
 
-    // MARK: - Task Lifecycle
+    // MARK: - Multi-Session Task Lifecycle
+
+    func taskDidStart(sessionID: String, projectName: String, projectURL: URL) {
+        guard isEnabled, AVPictureInPictureController.isPictureInPictureSupported() else {
+            return
+        }
+
+        let snapshot = loadProjectSnapshot(from: projectURL)
+        let entry = PiPTaskEntry(
+            sessionID: sessionID,
+            projectName: projectName,
+            projectSnapshot: snapshot,
+            statusText: String(localized: "pip.status.working"),
+            startDate: Date(),
+            isFinished: false,
+            finishedStatusText: nil,
+            needsUserAction: false
+        )
+        taskEntries[sessionID] = entry
+        hasActiveTask = true
+
+        // If no session is being displayed, display this one
+        if displayedSessionID == nil {
+            displaySession(entry)
+        }
+    }
+
+    func updateStatus(_ text: String, sessionID: String) {
+        taskEntries[sessionID]?.statusText = text
+        taskEntries[sessionID]?.needsUserAction = false
+        if displayedSessionID == sessionID {
+            currentStatusText = text
+            needsUserAction = false
+            if isActive { pushFrame() }
+        }
+    }
+
+    func setNeedsUserAction(sessionID: String) {
+        taskEntries[sessionID]?.needsUserAction = true
+        if displayedSessionID == sessionID {
+            needsUserAction = true
+            if isActive { pushFrame() }
+        }
+    }
+
+    func taskDidComplete(sessionID: String) {
+        taskEntries.removeValue(forKey: sessionID)
+        if taskEntries.isEmpty { hasActiveTask = false }
+        if displayedSessionID == sessionID {
+            displayedSessionID = nil
+            if let nextEntry = taskEntries.values.first(where: { !$0.isFinished }) {
+                displaySession(nextEntry)
+            } else {
+                taskDidComplete()
+            }
+        }
+    }
+
+    func taskDidFail(sessionID: String, message: String? = nil) {
+        taskEntries.removeValue(forKey: sessionID)
+        if taskEntries.isEmpty { hasActiveTask = false }
+        if displayedSessionID == sessionID {
+            displayedSessionID = nil
+            if let nextEntry = taskEntries.values.first(where: { !$0.isFinished }) {
+                displaySession(nextEntry)
+            } else {
+                taskDidFail(message)
+            }
+        }
+    }
+
+    func taskDidCancel(sessionID: String) {
+        taskEntries.removeValue(forKey: sessionID)
+        if taskEntries.isEmpty { hasActiveTask = false }
+        if displayedSessionID == sessionID {
+            displayedSessionID = nil
+            if let nextEntry = taskEntries.values.first(where: { !$0.isFinished }) {
+                displaySession(nextEntry)
+            } else {
+                taskDidCancel()
+            }
+        }
+    }
+
+    private func displaySession(_ entry: PiPTaskEntry) {
+        displayedSessionID = entry.sessionID
+        displayedEntry = entry
+        projectName = entry.projectName
+        projectSnapshot = entry.projectSnapshot
+        currentStatusText = entry.statusText
+        taskStartDate = entry.startDate
+        needsUserAction = entry.needsUserAction
+        isFinished = entry.isFinished
+        finishedStatusText = entry.finishedStatusText
+        currentElapsedText = formattedElapsed(Date().timeIntervalSince(entry.startDate))
+
+        if !isActive {
+            preparePiPController()
+        } else {
+            pushFrame()
+        }
+    }
+
+    // MARK: - Legacy Task Lifecycle (single-session)
 
     func taskDidStart(projectName: String, projectURL: URL) {
         guard isEnabled, AVPictureInPictureController.isPictureInPictureSupported() else {

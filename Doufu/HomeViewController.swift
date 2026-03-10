@@ -391,6 +391,8 @@ final class HomeViewController: UIViewController {
     private func deleteProject(_ project: HomeProjectItem) {
         do {
             try projectStore.deleteProject(projectURL: project.projectURL)
+            let projectID = project.projectURL.lastPathComponent
+            Task { try? await ChatDataStore.shared.deleteProjectData(projectID: projectID) }
             reloadProjects()
         } catch {
             showPlaceholderAlert(title: String(localized: "home.alert.delete_failed.title"), message: error.localizedDescription)

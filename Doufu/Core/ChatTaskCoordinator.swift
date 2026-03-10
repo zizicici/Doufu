@@ -36,9 +36,7 @@ final class ChatTaskCoordinator {
     struct Request {
         let userMessage: String
         let history: [ProjectChatService.ChatTurn]
-        let projectIdentifier: String
-        let projectName: String
-        let projectURL: URL
+        let sessionContext: ChatSessionContext
         let credential: ProjectChatService.ProviderCredential
         let memory: SessionMemory?
         let executionOptions: ProjectChatService.ModelExecutionOptions
@@ -52,13 +50,13 @@ final class ChatTaskCoordinator {
 
     private(set) var isExecuting = false
 
-    private let chatService: ProjectChatService
+    private let orchestrator: ProjectChatOrchestrator
     private var task: Task<Void, Never>?
     private var didCancelCurrentRequest = false
     private var didNotifiedCancel = false
 
-    init(chatService: ProjectChatService) {
-        self.chatService = chatService
+    init(orchestrator: ProjectChatOrchestrator = ProjectChatOrchestrator(configuration: .default)) {
+        self.orchestrator = orchestrator
     }
 
     func execute(_ request: Request) {
@@ -67,8 +65,9 @@ final class ChatTaskCoordinator {
         didCancelCurrentRequest = false
         didNotifiedCancel = false
 
-        ActiveTaskManager.shared.taskDidStart()
-        PiPProgressManager.shared.taskDidStart(projectName: request.projectName, projectURL: request.projectURL)
+        let sessionID = request.sessionContext.projectID
+        ActiveTaskManager.shared.taskDidStart(sessionID: sessionID)
+        PiPProgressManager.shared.taskDidStart(sessionID: sessionID, projectName: request.sessionContext.projectName, projectURL: request.sessionContext.projectURL)
 
         task = Task { [weak self] in
             guard let self else { return }
@@ -81,11 +80,10 @@ final class ChatTaskCoordinator {
             }
 
             do {
-                let result = try await self.chatService.sendAndApply(
+                let result = try await self.orchestrator.sendAndApply(
                     userMessage: request.userMessage,
                     history: request.history,
-                    projectIdentifier: request.projectIdentifier,
-                    projectURL: request.projectURL,
+                    sessionContext: request.sessionContext,
                     credential: request.credential,
                     memory: request.memory,
                     executionOptions: request.executionOptions,
@@ -98,7 +96,7 @@ final class ChatTaskCoordinator {
                     },
                     onProgress: { [weak self] event in
                         guard let self else { return }
-                        PiPProgressManager.shared.updateStatus(event.displayText)
+                        PiPProgressManager.shared.updateStatus(event.displayText, sessionID: sessionID)
                         self.delegate?.coordinatorDidReceiveProgressEvent(event)
                     }
                 )
@@ -112,26 +110,26 @@ final class ChatTaskCoordinator {
                     toolMetadata: result.toolMetadata
                 )
 
-                ActiveTaskManager.shared.taskDidEnd()
-                PiPProgressManager.shared.taskDidComplete()
+                ActiveTaskManager.shared.taskDidEnd(sessionID: sessionID)
+                PiPProgressManager.shared.taskDidComplete(sessionID: sessionID)
                 self.delegate?.coordinatorDidCompleteWithResult(chatResult)
             } catch is CancellationError {
-                ActiveTaskManager.shared.taskDidEnd()
-                PiPProgressManager.shared.taskDidCancel()
+                ActiveTaskManager.shared.taskDidEnd(sessionID: sessionID)
+                PiPProgressManager.shared.taskDidCancel(sessionID: sessionID)
                 if !self.didNotifiedCancel {
                     self.didNotifiedCancel = true
                     self.delegate?.coordinatorDidCancel()
                 }
             } catch {
-                ActiveTaskManager.shared.taskDidEnd()
+                ActiveTaskManager.shared.taskDidEnd(sessionID: sessionID)
                 if self.didCancelCurrentRequest {
-                    PiPProgressManager.shared.taskDidCancel()
+                    PiPProgressManager.shared.taskDidCancel(sessionID: sessionID)
                     if !self.didNotifiedCancel {
                         self.didNotifiedCancel = true
                         self.delegate?.coordinatorDidCancel()
                     }
                 } else {
-                    PiPProgressManager.shared.taskDidFail(error.localizedDescription)
+                    PiPProgressManager.shared.taskDidFail(sessionID: sessionID, message: error.localizedDescription)
                     self.delegate?.coordinatorDidFailWithError(error)
                 }
             }

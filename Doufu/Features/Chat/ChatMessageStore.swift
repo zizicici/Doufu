@@ -14,6 +14,12 @@ protocol ChatMessageStoreDelegate: AnyObject {
     func messageStoreDidRequestScroll(force: Bool)
 }
 
+/// Notified whenever messages are mutated, enabling external auto-persistence.
+@MainActor
+protocol ChatMessageStoreMutationDelegate: AnyObject {
+    func messageStoreDidMutateMessages()
+}
+
 @MainActor
 final class ChatMessageStore {
 
@@ -33,6 +39,7 @@ final class ChatMessageStore {
     private(set) var flowState: FlowState = .idle
 
     weak var delegate: ChatMessageStoreDelegate?
+    weak var mutationDelegate: ChatMessageStoreMutationDelegate?
 
     private(set) var messages: [ChatMessage] = []
 
@@ -44,19 +51,7 @@ final class ChatMessageStore {
     private var progressDebounceWorkItem: DispatchWorkItem?
     private var streamRefreshWorkItem: DispatchWorkItem?
 
-    private let threadStore: ProjectChatThreadStore
-    private let projectURL: URL
-    private let currentThreadIDProvider: () -> String?
-
-    init(
-        threadStore: ProjectChatThreadStore,
-        projectURL: URL,
-        currentThreadIDProvider: @escaping () -> String?
-    ) {
-        self.threadStore = threadStore
-        self.projectURL = projectURL
-        self.currentThreadIDProvider = currentThreadIDProvider
-    }
+    init() {}
 
     // MARK: - Request Lifecycle
 
@@ -173,6 +168,7 @@ final class ChatMessageStore {
         }
 
         flowState = .idle
+        mutationDelegate?.messageStoreDidMutateMessages()
     }
 
     /// Called when the coordinator reports cancellation.
@@ -192,6 +188,7 @@ final class ChatMessageStore {
         }
 
         flowState = .idle
+        mutationDelegate?.messageStoreDidMutateMessages()
     }
 
     /// Called when the coordinator reports an error.
@@ -208,6 +205,7 @@ final class ChatMessageStore {
         )
 
         flowState = .idle
+        mutationDelegate?.messageStoreDidMutateMessages()
     }
 
     /// Called once after every execution finishes (success, cancel, or error).
@@ -229,6 +227,7 @@ final class ChatMessageStore {
         requestStartedAt = nil
         didAppendCancelMessage = false
         lastProgressPhaseText = nil
+        mutationDelegate?.messageStoreDidMutateMessages()
     }
 
     // MARK: - User / System Messages (outside the flow state machine)
@@ -266,6 +265,7 @@ final class ChatMessageStore {
         let newIndex = messages.count - 1
         delegate?.messageStoreDidInsertRow(at: newIndex)
         delegate?.messageStoreDidRequestScroll(force: false)
+        mutationDelegate?.messageStoreDidMutateMessages()
         return newIndex
     }
 
@@ -285,26 +285,6 @@ final class ChatMessageStore {
                 return nil
             }
         }
-    }
-
-    func persistMessages() {
-        guard let threadID = currentThreadIDProvider() else { return }
-        let persisted = messages.compactMap { message -> ProjectChatPersistedMessage? in
-            let text = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !text.isEmpty else { return nil }
-            return ProjectChatPersistedMessage(
-                role: message.role.rawValue,
-                text: text,
-                createdAt: message.createdAt,
-                startedAt: message.startedAt,
-                finishedAt: message.finishedAt,
-                isProgress: message.isProgress,
-                inputTokens: message.requestTokenUsage?.inputTokens,
-                outputTokens: message.requestTokenUsage?.outputTokens,
-                toolSummary: message.toolSummary
-            )
-        }
-        threadStore.saveMessages(projectURL: projectURL, threadID: threadID, messages: persisted)
     }
 
     func replaceMessages(_ newMessages: [ChatMessage]) {

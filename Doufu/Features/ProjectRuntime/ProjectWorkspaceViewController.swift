@@ -694,7 +694,7 @@ final class ProjectWorkspaceViewController: UIViewController {
 
         if let chatNavigationController {
             // If cached chat was read-only but LLM is now configured, replace with full chat
-            if let chatVC = chatNavigationController.viewControllers.first as? ProjectChatViewController,
+            if let chatVC = chatNavigationController.viewControllers.first as? ChatViewController,
                chatVC.isReadOnly, isLLMConfigured() {
                 self.chatNavigationController = nil
                 presentChatController(readOnly: false)
@@ -760,7 +760,7 @@ final class ProjectWorkspaceViewController: UIViewController {
     }
 
     private func presentChatController(readOnly: Bool) {
-        let chatController = ProjectChatViewController(project: project)
+        let chatController = ChatViewController(project: project)
         chatController.isReadOnly = readOnly
         chatController.validationServerBaseURL = webServer.baseURL
         // Use a temp bridge for validation so localStorage writes don't pollute real user data.
@@ -868,6 +868,8 @@ final class ProjectWorkspaceViewController: UIViewController {
     private func discardProjectAndExit() {
         do {
             try projectStore.deleteProject(projectURL: projectURL)
+            let projectID = projectURL.lastPathComponent
+            Task { try? await ChatDataStore.shared.deleteProjectData(projectID: projectID) }
             dismiss(animated: true)
         } catch {
             let alert = UIAlertController(

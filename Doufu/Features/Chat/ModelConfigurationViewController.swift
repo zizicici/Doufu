@@ -1,5 +1,5 @@
 //
-//  ProjectModelConfigurationViewController.swift
+//  ModelConfigurationViewController.swift
 //  Doufu
 //
 //  Extracted from ProjectChatViewController.swift
@@ -8,7 +8,7 @@
 import UIKit
 
 @MainActor
-final class ProjectModelConfigurationViewController: UITableViewController {
+final class ModelConfigurationViewController: UITableViewController {
     struct SelectionState {
         var selectedProviderID: String
         var selectedModelIDByProviderID: [String: String]

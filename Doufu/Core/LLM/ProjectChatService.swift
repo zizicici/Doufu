@@ -7,7 +7,9 @@
 
 import Foundation
 
-final class ProjectChatService {
+/// Namespace for chat service types shared across the pipeline and UI layers.
+/// The actual orchestration logic lives in ``ProjectChatOrchestrator``.
+enum ProjectChatService {
 
     struct ProviderCredential {
         let providerID: String
@@ -117,41 +119,4 @@ final class ProjectChatService {
         }
     }
 
-    private let orchestrator: ProjectChatOrchestrator
-
-    init(configuration: ProjectChatConfiguration = .default) {
-        orchestrator = ProjectChatOrchestrator(configuration: configuration)
-    }
-
-    func sendAndApply(
-        userMessage: String,
-        history: [ChatTurn],
-        projectIdentifier: String,
-        projectURL: URL,
-        credential: ProviderCredential,
-        memory: SessionMemory? = nil,
-        executionOptions: ModelExecutionOptions,
-        confirmationHandler: ToolConfirmationHandler? = nil,
-        permissionMode: ToolPermissionMode = .standard,
-        validationServerBaseURL: URL? = nil,
-        validationBridge: DoufuBridge? = nil,
-        onStreamedText: (@MainActor (String) -> Void)? = nil,
-        onProgress: (@MainActor (ToolProgressEvent) -> Void)? = nil
-    ) async throws -> ResultPayload {
-        try await orchestrator.sendAndApply(
-            userMessage: userMessage,
-            history: history,
-            projectIdentifier: projectIdentifier,
-            projectURL: projectURL,
-            credential: credential,
-            memory: memory,
-            executionOptions: executionOptions,
-            confirmationHandler: confirmationHandler,
-            permissionMode: permissionMode,
-            validationServerBaseURL: validationServerBaseURL,
-            validationBridge: validationBridge,
-            onStreamedText: onStreamedText,
-            onProgress: onProgress
-        )
-    }
 }

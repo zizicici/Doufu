@@ -27,28 +27,45 @@ final class ChatModelSelectionManager {
     private var modelRefreshTask: Task<Void, Never>?
 
     let providerStore: LLMProviderSettingsStore
-    let projectModelStore: ProjectModelSelectionStore
     let modelDiscoveryService: LLMProviderModelDiscoveryService
 
-    private let projectURL: URL
+    private let projectID: String
     private let currentThreadIDProvider: () -> String?
+    var dataService: ChatDataService?
+    private var cachedProjectModelSelection: ProjectModelSelection?
 
     init(
-        projectURL: URL,
+        projectID: String,
         currentThreadIDProvider: @escaping () -> String?,
         providerStore: LLMProviderSettingsStore = .shared,
-        projectModelStore: ProjectModelSelectionStore = .shared,
         modelDiscoveryService: LLMProviderModelDiscoveryService = LLMProviderModelDiscoveryService()
     ) {
-        self.projectURL = projectURL
+        self.projectID = projectID
         self.currentThreadIDProvider = currentThreadIDProvider
         self.providerStore = providerStore
-        self.projectModelStore = projectModelStore
         self.modelDiscoveryService = modelDiscoveryService
     }
 
     func cancelRefreshTask() {
         modelRefreshTask?.cancel()
+    }
+
+    /// Reset all thread-specific model state and re-apply project/app defaults.
+    func resetToDefaults() {
+        selectedModelIDByProviderID = [:]
+        selectedReasoningEffortsByModelID = [:]
+        selectedAnthropicThinkingEnabledByModelID = [:]
+        selectedGeminiThinkingEnabledByModelID = [:]
+        selectedProviderID = nil
+        selectedModelID = nil
+        providerCredential = nil
+        configureProvider()
+    }
+
+    /// Pre-load project-level model selection from the data store.
+    /// Must be called (and awaited) before `configureProvider()` to populate `cachedProjectModelSelection`.
+    func loadProjectModelSelection() async {
+        cachedProjectModelSelection = await dataService?.loadProjectModelSelection()
     }
 
     // MARK: - Provider Resolution
@@ -107,7 +124,7 @@ final class ChatModelSelectionManager {
     }
 
     func resolveProjectOrAppDefault() -> ProjectChatService.ProviderCredential? {
-        if let projectSelection = projectModelStore.loadSelection(projectURL: projectURL),
+        if let projectSelection = cachedProjectModelSelection,
            let credential = availableProviderCredentials.first(where: { $0.providerID == projectSelection.providerID }),
            modelRecordExists(providerID: credential.providerID, modelRecordID: projectSelection.modelRecordID) {
             selectedModelIDByProviderID[credential.providerID] = projectSelection.modelRecordID
@@ -206,7 +223,7 @@ final class ChatModelSelectionManager {
            !currentSelection.isEmpty {
             return currentSelection
         }
-        if let projectSelection = projectModelStore.loadSelection(projectURL: projectURL),
+        if let projectSelection = cachedProjectModelSelection,
            projectSelection.providerID == credential.providerID,
            modelRecordExists(providerID: credential.providerID, modelRecordID: projectSelection.modelRecordID) {
             return projectSelection.modelRecordID
@@ -515,20 +532,36 @@ final class ChatModelSelectionManager {
             selectedAnthropicThinkingEnabledByModelID: selectedAnthropicThinkingEnabledByModelID,
             selectedGeminiThinkingEnabledByModelID: selectedGeminiThinkingEnabledByModelID
         )
-        projectModelStore.saveThreadSelection(selection, projectURL: projectURL, threadID: threadID)
+        dataService?.persistModelSelection(selection, threadID: threadID)
     }
 
-    func restoreThreadModelSelection(threadID: String) {
-        guard let selection = projectModelStore.loadThreadSelection(projectURL: projectURL, threadID: threadID) else {
-            return
-        }
+    func persistCurrentThreadModelSelectionAsync() async {
+        guard let threadID = currentThreadIDProvider() else { return }
+        guard let providerID = selectedProviderID, !providerID.isEmpty else { return }
+        let reasoningEffortsRaw = selectedReasoningEffortsByModelID.mapValues { $0.rawValue }
+        let selection = ThreadModelSelection(
+            selectedProviderID: providerID,
+            selectedModelIDByProviderID: selectedModelIDByProviderID,
+            selectedReasoningEffortsByModelID: reasoningEffortsRaw,
+            selectedAnthropicThinkingEnabledByModelID: selectedAnthropicThinkingEnabledByModelID,
+            selectedGeminiThinkingEnabledByModelID: selectedGeminiThinkingEnabledByModelID
+        )
+        await dataService?.persistModelSelectionAsync(selection, threadID: threadID)
+    }
+
+    /// Restore model selection state from a pre-loaded `ThreadModelSelection`.
+    /// Used by `ChatThreadSessionManager` which loads the selection via `ChatDataService`.
+    func restoreFromThreadModelSelection(_ selection: ThreadModelSelection) {
         guard let credential = availableProviderCredentials.first(where: { $0.providerID == selection.selectedProviderID }) else {
+            // Provider no longer available — fall back to defaults
+            resetToDefaults()
             return
         }
         let modelRecordID = selection.selectedModelIDByProviderID[selection.selectedProviderID] ?? ""
         let availableModels = providerStore.availableModels(forProviderID: credential.providerID)
         if !modelRecordID.isEmpty, !availableModels.contains(where: { $0.normalizedID == modelRecordID.lowercased() }) {
-            projectModelStore.removeThreadSelection(projectURL: projectURL, threadID: threadID)
+            // Model no longer available — fall back to defaults
+            resetToDefaults()
             return
         }
 
@@ -544,10 +577,10 @@ final class ChatModelSelectionManager {
         providerCredential = credential
     }
 
-    // MARK: - Selection State (for ProjectModelConfigurationViewController)
+    // MARK: - Selection State (for ModelConfigurationViewController)
 
-    var selectionSnapshot: ProjectModelConfigurationViewController.SelectionState {
-        ProjectModelConfigurationViewController.SelectionState(
+    var selectionSnapshot: ModelConfigurationViewController.SelectionState {
+        ModelConfigurationViewController.SelectionState(
             selectedProviderID: selectedProviderID ?? "",
             selectedModelIDByProviderID: selectedModelIDByProviderID,
             selectedReasoningEffortsByModelID: selectedReasoningEffortsByModelID,
@@ -556,7 +589,7 @@ final class ChatModelSelectionManager {
         )
     }
 
-    func applySelectionState(_ state: ProjectModelConfigurationViewController.SelectionState) {
+    func applySelectionState(_ state: ModelConfigurationViewController.SelectionState) {
         selectedModelIDByProviderID = state.selectedModelIDByProviderID
         selectedReasoningEffortsByModelID = state.selectedReasoningEffortsByModelID
         selectedAnthropicThinkingEnabledByModelID = state.selectedAnthropicThinkingEnabledByModelID

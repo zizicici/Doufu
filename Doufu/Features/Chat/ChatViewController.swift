@@ -1,5 +1,5 @@
 //
-//  ProjectChatViewController.swift
+//  ChatViewController.swift
 //  Doufu
 //
 //  Created by Codex on 2026/03/05.
@@ -8,17 +8,18 @@
 import UIKit
 
 @MainActor
-final class ProjectChatViewController: UIViewController {
+final class ChatViewController: UIViewController {
 
     var onProjectFilesUpdated: (() -> Void)?
     var isReadOnly = false
 
     private var project: AppProjectRecord
-    private let chatService = ProjectChatService()
-    private let threadStore = ProjectChatThreadStore.shared
+    private lazy var dataService: ChatDataService = {
+        ChatDataService(projectID: project.id)
+    }()
 
     private lazy var taskCoordinator: ChatTaskCoordinator = {
-        let coordinator = ChatTaskCoordinator(chatService: chatService)
+        let coordinator = ChatTaskCoordinator()
         coordinator.delegate = self
         return coordinator
     }()
@@ -36,24 +37,23 @@ final class ProjectChatViewController: UIViewController {
     // MARK: - Extracted Modules
 
     private lazy var messageStore: ChatMessageStore = {
-        ChatMessageStore(
-            threadStore: threadStore,
-            projectURL: projectURL,
-            currentThreadIDProvider: { [weak self] in self?.threadSession.currentThread?.id }
-        )
+        let store = ChatMessageStore()
+        store.mutationDelegate = self
+        return store
     }()
 
     private lazy var modelSelection: ChatModelSelectionManager = {
-        ChatModelSelectionManager(
-            projectURL: projectURL,
+        let manager = ChatModelSelectionManager(
+            projectID: project.id,
             currentThreadIDProvider: { [weak self] in self?.threadSession.currentThread?.id }
         )
+        manager.dataService = dataService
+        return manager
     }()
 
     private lazy var threadSession: ChatThreadSessionManager = {
         let manager = ChatThreadSessionManager(
-            threadStore: threadStore,
-            projectURL: projectURL,
+            dataService: dataService,
             messageStore: messageStore,
             modelSelection: modelSelection,
             isExecutingProvider: { [weak self] in self?.taskCoordinator.isExecuting ?? false }
@@ -173,14 +173,23 @@ final class ProjectChatViewController: UIViewController {
         configureNavigation()
         configureLayout()
         ensureProjectMemoryDocumentIfNeeded()
-        threadSession.restoreThreadStateIfNeeded()
-        modelSelection.configureProvider()
         toolPermissionMode = AppProjectStore.shared.loadToolPermissionMode(projectURL: projectURL)
         if isReadOnly {
             inputContainer.isHidden = true
         }
         refreshInputPlaceholder()
         refreshSendButton()
+
+        Task {
+            await modelSelection.loadProjectModelSelection()
+            modelSelection.configureProvider()
+            do {
+                try await threadSession.restoreThreadStateIfNeeded()
+            } catch {
+                messageStore.appendMessage(role: .system, text: error.localizedDescription)
+            }
+            refreshSendButton()
+        }
     }
 
     override func viewDidLayoutSubviews() {
@@ -193,7 +202,6 @@ final class ProjectChatViewController: UIViewController {
         if view.window == nil {
             modelSelection.cancelRefreshTask()
         }
-        messageStore.persistMessages()
     }
 
     // MARK: - Navigation
@@ -298,15 +306,11 @@ final class ProjectChatViewController: UIViewController {
 
     private func presentThreadManagement() {
         guard !taskCoordinator.isExecuting else { return }
-        let vc = ThreadManagementViewController(projectURL: projectURL)
+        let vc = ThreadManagementViewController(projectID: project.id)
         vc.onChanged = { [weak self] in
             guard let self else { return }
-            do {
-                try threadSession.reloadIndex()
-                refreshNavigationItems()
-            } catch {
-                messageStore.appendMessage(role: .system, text: error.localizedDescription)
-            }
+            threadSession.reloadIndex()
+            refreshNavigationItems()
         }
         let nav = UINavigationController(rootViewController: vc)
         present(nav, animated: true)
@@ -422,7 +426,7 @@ final class ProjectChatViewController: UIViewController {
         }
 
         let selectionState = modelSelection.selectionSnapshot
-        let controller = ProjectModelConfigurationViewController(
+        let controller = ModelConfigurationViewController(
             providers: modelSelection.availableProviderCredentials,
             initialState: selectionState,
             projectUsageIdentifier: projectIdentifier
@@ -496,7 +500,6 @@ final class ProjectChatViewController: UIViewController {
 
     @objc
     private func didTapClose() {
-        messageStore.persistMessages()
         dismiss(animated: true)
     }
 
@@ -534,14 +537,16 @@ final class ProjectChatViewController: UIViewController {
 
         let historyTurns = messageStore.buildHistoryTurns()
         messageStore.beginRequest(startedAt: Date())
-        messageStore.persistMessages()
 
+        let sessionContext = ChatSessionContext(
+            projectID: projectIdentifier,
+            projectURL: projectURL,
+            projectName: projectName
+        )
         let request = ChatTaskCoordinator.Request(
             userMessage: userInput,
             history: historyTurns,
-            projectIdentifier: projectIdentifier,
-            projectName: projectName,
-            projectURL: projectURL,
+            sessionContext: sessionContext,
             credential: credential,
             memory: threadSession.sessionMemory,
             executionOptions: modelSelection.executionOptions(for: credential),
@@ -558,7 +563,7 @@ final class ProjectChatViewController: UIViewController {
 
 // MARK: - ChatMessageStoreDelegate
 
-extension ProjectChatViewController: ChatMessageStoreDelegate {
+extension ChatViewController: ChatMessageStoreDelegate {
     func messageStoreDidInsertRow(at index: Int) {
         UIView.performWithoutAnimation {
             tableView.insertRows(at: [IndexPath(row: index, section: 0)], with: .none)
@@ -588,9 +593,18 @@ extension ProjectChatViewController: ChatMessageStoreDelegate {
     }
 }
 
+// MARK: - ChatMessageStoreMutationDelegate
+
+extension ChatViewController: ChatMessageStoreMutationDelegate {
+    func messageStoreDidMutateMessages() {
+        guard let threadID = threadSession.currentThread?.id else { return }
+        dataService.persistMessages(messageStore.messages, threadID: threadID)
+    }
+}
+
 // MARK: - ChatModelSelectionManagerDelegate
 
-extension ProjectChatViewController: ChatModelSelectionManagerDelegate {
+extension ChatViewController: ChatModelSelectionManagerDelegate {
     func modelSelectionDidChange() {
         refreshNavigationItems()
     }
@@ -598,7 +612,7 @@ extension ProjectChatViewController: ChatModelSelectionManagerDelegate {
 
 // MARK: - UITableViewDataSource
 
-extension ProjectChatViewController: UITableViewDataSource {
+extension ChatViewController: UITableViewDataSource {
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
         messageStore.messages.count
     }
@@ -640,7 +654,7 @@ extension ProjectChatViewController: UITableViewDataSource {
 
 // MARK: - ChatThreadSessionManagerDelegate
 
-extension ProjectChatViewController: ChatThreadSessionManagerDelegate {
+extension ChatViewController: ChatThreadSessionManagerDelegate {
     func threadSessionDidSwitchThread() {
         tableView.reloadData()
         scrollToBottomIfNeeded(force: true)
@@ -654,7 +668,7 @@ extension ProjectChatViewController: ChatThreadSessionManagerDelegate {
 
 // MARK: - UITextViewDelegate
 
-extension ProjectChatViewController: UITextViewDelegate {
+extension ChatViewController: UITextViewDelegate {
     func textViewDidChange(_ textView: UITextView) {
         refreshInputPlaceholder()
         updateInputTextViewHeight()
@@ -664,7 +678,7 @@ extension ProjectChatViewController: UITextViewDelegate {
 
 // MARK: - ToolConfirmationHandler
 
-extension ProjectChatViewController: ToolConfirmationHandler {
+extension ChatViewController: ToolConfirmationHandler {
     func confirmToolAction(
         toolName: String,
         tier: ToolPermissionTier,
@@ -710,7 +724,7 @@ extension ProjectChatViewController: ToolConfirmationHandler {
 
 // MARK: - ChatTaskCoordinatorDelegate
 
-extension ProjectChatViewController: ChatTaskCoordinatorDelegate {
+extension ChatViewController: ChatTaskCoordinatorDelegate {
     func coordinatorDidReceiveStreamedText(_ chunk: String) {
         messageStore.receiveStreamedText(chunk)
     }
@@ -739,17 +753,7 @@ extension ProjectChatViewController: ChatTaskCoordinatorDelegate {
             toolSummary: result.toolActivitySummary
         )
 
-        do {
-            try threadSession.touchCurrentThread()
-        } catch {
-            messageStore.appendMessage(
-                role: .system,
-                text: String(
-                    format: String(localized: "chat.system.memory_update_failed.message_format"),
-                    error.localizedDescription
-                )
-            )
-        }
+        threadSession.touchCurrentThread()
 
         if !result.changedPaths.isEmpty {
             onProjectFilesUpdated?()
@@ -767,6 +771,5 @@ extension ProjectChatViewController: ChatTaskCoordinatorDelegate {
     func coordinatorDidFinishExecution() {
         messageStore.finishExecution()
         refreshSendButton()
-        messageStore.persistMessages()
     }
 }
