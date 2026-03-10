@@ -103,6 +103,14 @@ final class ChatDataService {
         await dataStore.loadProjectModelSelection(projectID: projectID)
     }
 
+    func persistProjectModelSelection(_ selection: ProjectModelSelection?) {
+        let dataStore = self.dataStore
+        let projectID = self.projectID
+        writeQueue.enqueue {
+            await dataStore.saveProjectModelSelection(selection, projectID: projectID)
+        }
+    }
+
     // MARK: - Auto-Persistence
 
     func persistMessages(_ messages: [ChatMessage], threadID: String) {

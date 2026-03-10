@@ -24,6 +24,7 @@ final class ProjectSettingsViewController: UITableViewController {
     }
 
     private enum ChatRow: Int, CaseIterable {
+        case defaultModel
         case toolPermission
     }
 
@@ -32,15 +33,19 @@ final class ProjectSettingsViewController: UITableViewController {
     }
 
     private let projectURL: URL
+    private let projectID: String
     private let store = AppProjectStore.shared
     private let gitService = ProjectGitService.shared
+    private lazy var dataService = ChatDataService(projectID: projectID)
 
     private var projectNameText: String
     /// nil means "use app default"
     private var toolPermissionOverride: ToolPermissionMode?
+    private var projectModelSelection: ProjectModelSelection?
 
     init(projectURL: URL, projectName: String) {
         self.projectURL = projectURL
+        self.projectID = projectURL.lastPathComponent
         projectNameText = projectName
         toolPermissionOverride = AppProjectStore.shared.loadProjectToolPermissionOverride(projectURL: projectURL)
         super.init(style: .insetGrouped)
@@ -60,6 +65,10 @@ final class ProjectSettingsViewController: UITableViewController {
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "CheckpointCell")
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "ChatSettingCell")
 
+        Task {
+            projectModelSelection = await dataService.loadProjectModelSelection()
+            tableView.reloadSections(IndexSet(integer: Section.chat.rawValue), with: .none)
+        }
     }
 
     override func numberOfSections(in tableView: UITableView) -> Int {
@@ -146,21 +155,36 @@ final class ProjectSettingsViewController: UITableViewController {
             }
 
         case .chat:
+            guard let row = ChatRow(rawValue: indexPath.row) else { return UITableViewCell() }
             let cell = tableView.dequeueReusableCell(withIdentifier: "ChatSettingCell", for: indexPath)
             var configuration = cell.defaultContentConfiguration()
-            configuration.text = String(localized: "project_settings.chat.tool_permission.title")
-            if let override = toolPermissionOverride {
-                configuration.secondaryText = displayName(for: override)
-            } else {
-                let appDefault = store.loadAppToolPermissionMode()
-                configuration.secondaryText = String(
-                    format: String(localized: "project_settings.chat.tool_permission.default_format"),
-                    displayName(for: appDefault)
-                )
+
+            switch row {
+            case .defaultModel:
+                configuration.text = String(localized: "project_settings.default_model.title")
+                if let selection = projectModelSelection {
+                    configuration.secondaryText = projectModelDisplayName(for: selection)
+                } else {
+                    configuration.secondaryText = String(localized: "project_settings.default_model.use_app_default")
+                }
+                configuration.secondaryTextProperties.color = .secondaryLabel
+                cell.contentConfiguration = configuration
+                cell.accessoryType = .disclosureIndicator
+            case .toolPermission:
+                configuration.text = String(localized: "project_settings.chat.tool_permission.title")
+                if let override = toolPermissionOverride {
+                    configuration.secondaryText = displayName(for: override)
+                } else {
+                    let appDefault = store.loadAppToolPermissionMode()
+                    configuration.secondaryText = String(
+                        format: String(localized: "project_settings.chat.tool_permission.default_format"),
+                        displayName(for: appDefault)
+                    )
+                }
+                configuration.secondaryTextProperties.color = .secondaryLabel
+                cell.contentConfiguration = configuration
+                cell.accessoryType = .disclosureIndicator
             }
-            configuration.secondaryTextProperties.color = .secondaryLabel
-            cell.contentConfiguration = configuration
-            cell.accessoryType = .disclosureIndicator
             return cell
 
         case .checkpoints:
@@ -206,7 +230,13 @@ final class ProjectSettingsViewController: UITableViewController {
             navigationController?.pushViewController(controller, animated: true)
 
         case .chat:
-            presentToolPermissionPicker()
+            guard let row = ChatRow(rawValue: indexPath.row) else { break }
+            switch row {
+            case .defaultModel:
+                presentProjectModelSelection()
+            case .toolPermission:
+                presentToolPermissionPicker()
+            }
 
         case .checkpoints:
             guard let row = CheckpointRow(rawValue: indexPath.row) else { return }
@@ -282,6 +312,31 @@ final class ProjectSettingsViewController: UITableViewController {
         let effective = mode ?? store.loadAppToolPermissionMode()
         onToolPermissionModeChanged?(effective)
         tableView.reloadSections(IndexSet(integer: Section.chat.rawValue), with: .none)
+    }
+
+    // MARK: - Project Model Selection
+
+    private func projectModelDisplayName(for selection: ProjectModelSelection) -> String {
+        let providerStore = LLMProviderSettingsStore.shared
+        let providerLabel = providerStore.loadProvider(id: selection.providerID)?.label ?? selection.providerID
+        let modelLabel = providerStore.availableModels(forProviderID: selection.providerID)
+            .first(where: { $0.normalizedID == selection.modelRecordID.lowercased() })?
+            .effectiveDisplayName ?? selection.modelRecordID
+        return "\(providerLabel) · \(modelLabel)"
+    }
+
+    private func presentProjectModelSelection() {
+        let controller = ProjectModelSelectionViewController(
+            projectID: projectID,
+            currentSelection: projectModelSelection
+        )
+        controller.onSelectionChanged = { [weak self] selection in
+            guard let self else { return }
+            self.projectModelSelection = selection
+            self.dataService.persistProjectModelSelection(selection)
+            self.tableView.reloadSections(IndexSet(integer: Section.chat.rawValue), with: .none)
+        }
+        navigationController?.pushViewController(controller, animated: true)
     }
 
     // MARK: - Actions

@@ -89,8 +89,9 @@ final class ChatModelSelectionManager {
             } else if let projectDefault = resolveProjectOrAppDefault() {
                 credential = projectDefault
             } else {
-                providerCredential = availableProviderCredentials.first
-                selectedProviderID = providerCredential?.providerID
+                // No project or app default set — leave unselected so the user picks explicitly
+                providerCredential = nil
+                selectedProviderID = nil
                 selectedModelID = nil
                 delegate?.modelSelectionDidChange()
                 refreshOfficialModels()
@@ -533,6 +534,14 @@ final class ChatModelSelectionManager {
             selectedGeminiThinkingEnabledByModelID: selectedGeminiThinkingEnabledByModelID
         )
         dataService?.persistModelSelection(selection, threadID: threadID)
+
+        // Also update project-level selection so new threads inherit this choice
+        let modelRecordID = selectedModelIDByProviderID[providerID] ?? ""
+        if !modelRecordID.isEmpty {
+            let projectSelection = ProjectModelSelection(providerID: providerID, modelRecordID: modelRecordID)
+            cachedProjectModelSelection = projectSelection
+            dataService?.persistProjectModelSelection(projectSelection)
+        }
     }
 
     func persistCurrentThreadModelSelectionAsync() async {

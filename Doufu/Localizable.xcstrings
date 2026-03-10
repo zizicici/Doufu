@@ -4554,35 +4554,6 @@
         }
       }
     },
-    "pip.status.needs_action" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Action Required"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "需要操作"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "需要操作"
-          }
-        },
-        "zh-HK" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "需要操作"
-          }
-        }
-      }
-    },
     "pip.status.failed" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -4608,6 +4579,35 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "出錯了"
+          }
+        }
+      }
+    },
+    "pip.status.needs_action" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Action Required"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "需要操作"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "需要操作"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "需要操作"
           }
         }
       }
@@ -4901,6 +4901,18 @@
           }
         }
       }
+    },
+    "project_settings.default_model.footer" : {
+
+    },
+    "project_settings.default_model.provider_hint" : {
+
+    },
+    "project_settings.default_model.title" : {
+
+    },
+    "project_settings.default_model.use_app_default" : {
+
     },
     "project_settings.disable_edge_swipe.title" : {
       "extractionState" : "manual",
