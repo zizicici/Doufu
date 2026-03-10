@@ -32,7 +32,12 @@ final class ChatModelSelectionManager {
     private let projectID: String
     private let currentThreadIDProvider: () -> String?
     var dataService: ChatDataService?
-    private var cachedProjectModelSelection: ProjectModelSelection?
+    private var cachedProjectModelSelection: ModelSelection?
+
+    /// Tracks whether the current thread has an explicit user-chosen model selection.
+    /// When `false`, `persistCurrentThreadModelSelection` is a no-op so that
+    /// inherited Project/App defaults are not silently solidified into thread-level data.
+    private(set) var hasExplicitThreadSelection = false
 
     init(
         projectID: String,
@@ -52,6 +57,7 @@ final class ChatModelSelectionManager {
 
     /// Reset all thread-specific model state and re-apply project/app defaults.
     func resetToDefaults() {
+        hasExplicitThreadSelection = false
         selectedModelIDByProviderID = [:]
         selectedReasoningEffortsByModelID = [:]
         selectedAnthropicThinkingEnabledByModelID = [:]
@@ -66,6 +72,16 @@ final class ChatModelSelectionManager {
     /// Must be called (and awaited) before `configureProvider()` to populate `cachedProjectModelSelection`.
     func loadProjectModelSelection() async {
         cachedProjectModelSelection = await dataService?.loadProjectModelSelection()
+    }
+
+    /// Reload the cached project model selection and re-apply defaults if the
+    /// current thread has no explicit override.  Call this when returning from
+    /// Project Settings so that a changed Project default takes effect immediately.
+    func refreshProjectModelSelectionIfNeeded() async {
+        let previous = cachedProjectModelSelection
+        cachedProjectModelSelection = await dataService?.loadProjectModelSelection()
+        guard previous != cachedProjectModelSelection, !hasExplicitThreadSelection else { return }
+        configureProvider()
     }
 
     // MARK: - Provider Resolution
@@ -86,8 +102,9 @@ final class ChatModelSelectionManager {
             let credential: ProjectChatService.ProviderCredential
             if let found = availableProviderCredentials.first(where: { $0.providerID == preferredProviderID }), !preferredProviderID.isEmpty {
                 credential = found
-            } else if let projectDefault = resolveProjectOrAppDefault() {
-                credential = projectDefault
+            } else if let resolved = resolveProjectOrAppDefault() {
+                credential = resolved.credential
+                selectedModelIDByProviderID[resolved.credential.providerID] = resolved.modelRecordID
             } else {
                 // No project or app default set — leave unselected so the user picks explicitly
                 providerCredential = nil
@@ -117,6 +134,7 @@ final class ChatModelSelectionManager {
             delegate?.modelSelectionDidChange()
             refreshOfficialModels()
         } catch {
+            print("[Doufu ChatModelSelection] configureProvider failed: \(error.localizedDescription)")
             availableProviderCredentials = []
             providerCredential = nil
             selectedProviderID = nil
@@ -124,18 +142,18 @@ final class ChatModelSelectionManager {
         }
     }
 
-    func resolveProjectOrAppDefault() -> ProjectChatService.ProviderCredential? {
+    /// Resolves the best default credential + model from project or app settings.
+    /// Pure query — does **not** mutate any state.
+    func resolveProjectOrAppDefault() -> (credential: ProjectChatService.ProviderCredential, modelRecordID: String)? {
         if let projectSelection = cachedProjectModelSelection,
            let credential = availableProviderCredentials.first(where: { $0.providerID == projectSelection.providerID }),
            modelRecordExists(providerID: credential.providerID, modelRecordID: projectSelection.modelRecordID) {
-            selectedModelIDByProviderID[credential.providerID] = projectSelection.modelRecordID
-            return credential
+            return (credential, projectSelection.modelRecordID)
         }
         if let appDefault = providerStore.loadDefaultModelSelection(),
            let credential = availableProviderCredentials.first(where: { $0.providerID == appDefault.providerID }),
            modelRecordExists(providerID: credential.providerID, modelRecordID: appDefault.modelRecordID) {
-            selectedModelIDByProviderID[credential.providerID] = appDefault.modelRecordID
-            return credential
+            return (credential, appDefault.modelRecordID)
         }
         return nil
     }
@@ -286,6 +304,7 @@ final class ChatModelSelectionManager {
         providerCredential: ProjectChatService.ProviderCredential,
         modelID: String
     ) {
+        hasExplicitThreadSelection = true
         switchProvider(to: providerCredential.providerID)
         selectedModelID = modelID
         selectedModelIDByProviderID[providerCredential.providerID] = modelID
@@ -345,14 +364,13 @@ final class ChatModelSelectionManager {
         if let selected = selectedReasoningEffortsByModelID[key], profile.supported.contains(selected) {
             return selected
         }
-        selectedReasoningEffortsByModelID[key] = profile.defaultEffort
         return profile.defaultEffort
     }
 
     func resolvedThinkingEnabled(
         providerCredential: ProjectChatService.ProviderCredential,
         modelID: String,
-        dict: inout [String: Bool]
+        thinkingEnabledByModelID: [String: Bool]
     ) -> Bool {
         let key = normalizedModelID(modelID)
         let capabilities = resolveModelProfile(
@@ -360,19 +378,9 @@ final class ChatModelSelectionManager {
             providerKind: providerCredential.providerKind,
             modelID: modelID
         )
-        guard capabilities.thinkingSupported else {
-            dict[key] = false
-            return false
-        }
-        guard capabilities.thinkingCanDisable else {
-            dict[key] = true
-            return true
-        }
-        if let selected = dict[key] {
-            return selected
-        }
-        dict[key] = true
-        return true
+        guard capabilities.thinkingSupported else { return false }
+        guard capabilities.thinkingCanDisable else { return true }
+        return thinkingEnabledByModelID[key] ?? true
     }
 
     /// Sets thinking default for a model when first selected, without returning a value.
@@ -408,11 +416,11 @@ final class ChatModelSelectionManager {
             anthropicThinkingEnabled = true
             geminiThinkingEnabled = true
         case .anthropic:
-            anthropicThinkingEnabled = resolvedThinkingEnabled(providerCredential: credential, modelID: selectionModelID, dict: &selectedAnthropicThinkingEnabledByModelID)
+            anthropicThinkingEnabled = resolvedThinkingEnabled(providerCredential: credential, modelID: selectionModelID, thinkingEnabledByModelID: selectedAnthropicThinkingEnabledByModelID)
             geminiThinkingEnabled = true
         case .googleGemini:
             anthropicThinkingEnabled = true
-            geminiThinkingEnabled = resolvedThinkingEnabled(providerCredential: credential, modelID: selectionModelID, dict: &selectedGeminiThinkingEnabledByModelID)
+            geminiThinkingEnabled = resolvedThinkingEnabled(providerCredential: credential, modelID: selectionModelID, thinkingEnabledByModelID: selectedGeminiThinkingEnabledByModelID)
         }
 
         return ProjectChatService.ModelExecutionOptions(
@@ -494,7 +502,7 @@ final class ChatModelSelectionManager {
             guard capabilities.thinkingSupported else {
                 return providerTitle + " · " + modelTitle
             }
-            let anthropicEnabled = resolvedThinkingEnabled(providerCredential: credential, modelID: selectionKey, dict: &selectedAnthropicThinkingEnabledByModelID)
+            let anthropicEnabled = resolvedThinkingEnabled(providerCredential: credential, modelID: selectionKey, thinkingEnabledByModelID: selectedAnthropicThinkingEnabledByModelID)
             let anthropicStatus = anthropicEnabled
                 ? String(localized: "chat.thinking.enabled")
                 : String(localized: "chat.thinking.disabled")
@@ -503,7 +511,7 @@ final class ChatModelSelectionManager {
             guard capabilities.thinkingSupported else {
                 return providerTitle + " · " + modelTitle
             }
-            let geminiEnabled = resolvedThinkingEnabled(providerCredential: credential, modelID: selectionKey, dict: &selectedGeminiThinkingEnabledByModelID)
+            let geminiEnabled = resolvedThinkingEnabled(providerCredential: credential, modelID: selectionKey, thinkingEnabledByModelID: selectedGeminiThinkingEnabledByModelID)
             let geminiStatus = geminiEnabled
                 ? String(localized: "chat.thinking.enabled")
                 : String(localized: "chat.thinking.disabled")
@@ -518,44 +526,28 @@ final class ChatModelSelectionManager {
 
     // MARK: - Persistence
 
-    func persistCurrentThreadModelSelection() {
-        guard let threadID = currentThreadIDProvider() else {
-            return
-        }
-        guard let providerID = selectedProviderID, !providerID.isEmpty else {
-            return
-        }
-        let reasoningEffortsRaw = selectedReasoningEffortsByModelID.mapValues { $0.rawValue }
+    private func buildCurrentThreadModelSelection() -> (threadID: String, selection: ThreadModelSelection)? {
+        guard hasExplicitThreadSelection else { return nil }
+        guard let threadID = currentThreadIDProvider() else { return nil }
+        guard let providerID = selectedProviderID, !providerID.isEmpty else { return nil }
         let selection = ThreadModelSelection(
             selectedProviderID: providerID,
             selectedModelIDByProviderID: selectedModelIDByProviderID,
-            selectedReasoningEffortsByModelID: reasoningEffortsRaw,
+            selectedReasoningEffortsByModelID: selectedReasoningEffortsByModelID.mapValues { $0.rawValue },
             selectedAnthropicThinkingEnabledByModelID: selectedAnthropicThinkingEnabledByModelID,
             selectedGeminiThinkingEnabledByModelID: selectedGeminiThinkingEnabledByModelID
         )
-        dataService?.persistModelSelection(selection, threadID: threadID)
+        return (threadID, selection)
+    }
 
-        // Also update project-level selection so new threads inherit this choice
-        let modelRecordID = selectedModelIDByProviderID[providerID] ?? ""
-        if !modelRecordID.isEmpty {
-            let projectSelection = ProjectModelSelection(providerID: providerID, modelRecordID: modelRecordID)
-            cachedProjectModelSelection = projectSelection
-            dataService?.persistProjectModelSelection(projectSelection)
-        }
+    func persistCurrentThreadModelSelection() {
+        guard let snapshot = buildCurrentThreadModelSelection() else { return }
+        dataService?.persistModelSelection(snapshot.selection, threadID: snapshot.threadID)
     }
 
     func persistCurrentThreadModelSelectionAsync() async {
-        guard let threadID = currentThreadIDProvider() else { return }
-        guard let providerID = selectedProviderID, !providerID.isEmpty else { return }
-        let reasoningEffortsRaw = selectedReasoningEffortsByModelID.mapValues { $0.rawValue }
-        let selection = ThreadModelSelection(
-            selectedProviderID: providerID,
-            selectedModelIDByProviderID: selectedModelIDByProviderID,
-            selectedReasoningEffortsByModelID: reasoningEffortsRaw,
-            selectedAnthropicThinkingEnabledByModelID: selectedAnthropicThinkingEnabledByModelID,
-            selectedGeminiThinkingEnabledByModelID: selectedGeminiThinkingEnabledByModelID
-        )
-        await dataService?.persistModelSelectionAsync(selection, threadID: threadID)
+        guard let snapshot = buildCurrentThreadModelSelection() else { return }
+        await dataService?.persistModelSelectionAsync(snapshot.selection, threadID: snapshot.threadID)
     }
 
     /// Restore model selection state from a pre-loaded `ThreadModelSelection`.
@@ -574,6 +566,7 @@ final class ChatModelSelectionManager {
             return
         }
 
+        hasExplicitThreadSelection = true
         selectedProviderID = selection.selectedProviderID
         selectedModelIDByProviderID = selection.selectedModelIDByProviderID
         selectedReasoningEffortsByModelID = selection.selectedReasoningEffortsByModelID.compactMapValues {
@@ -584,6 +577,7 @@ final class ChatModelSelectionManager {
 
         selectedModelID = modelRecordID.isEmpty ? nil : modelRecordID
         providerCredential = credential
+        delegate?.modelSelectionDidChange()
     }
 
     // MARK: - Selection State (for ModelConfigurationViewController)
@@ -599,20 +593,18 @@ final class ChatModelSelectionManager {
     }
 
     func applySelectionState(_ state: ModelConfigurationViewController.SelectionState) {
+        hasExplicitThreadSelection = true
         selectedModelIDByProviderID = state.selectedModelIDByProviderID
         selectedReasoningEffortsByModelID = state.selectedReasoningEffortsByModelID
         selectedAnthropicThinkingEnabledByModelID = state.selectedAnthropicThinkingEnabledByModelID
         selectedGeminiThinkingEnabledByModelID = state.selectedGeminiThinkingEnabledByModelID
         selectedProviderID = state.selectedProviderID
 
-        switchProvider(to: state.selectedProviderID)
+        providerCredential = availableProviderCredentials.first(where: { $0.providerID == state.selectedProviderID })
         let selectedModel = state.selectedModelIDByProviderID[state.selectedProviderID]?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !selectedModel.isEmpty {
-            selectedModelID = selectedModel
-        } else {
-            selectedModelID = nil
-        }
+        selectedModelID = selectedModel.isEmpty ? nil : selectedModel
+
         delegate?.modelSelectionDidChange()
         persistCurrentThreadModelSelection()
     }

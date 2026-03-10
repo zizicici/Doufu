@@ -99,11 +99,11 @@ final class ChatDataService {
 
     // MARK: - Model Selection (Project-level)
 
-    func loadProjectModelSelection() async -> ProjectModelSelection? {
+    func loadProjectModelSelection() async -> ModelSelection? {
         await dataStore.loadProjectModelSelection(projectID: projectID)
     }
 
-    func persistProjectModelSelection(_ selection: ProjectModelSelection?) {
+    func persistProjectModelSelection(_ selection: ModelSelection?) {
         let dataStore = self.dataStore
         let projectID = self.projectID
         writeQueue.enqueue {

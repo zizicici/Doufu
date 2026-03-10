@@ -121,12 +121,21 @@ final class ChatThreadSessionManager {
     func reloadIndex() {
         Task {
             do {
-                threadIndex = try await dataService.loadThreadIndex()
-                if let currentThreadID = threadIndex?.currentThreadID,
-                   currentThreadID != currentThread?.id {
+                let newIndex = try await dataService.loadThreadIndex()
+                threadIndex = newIndex
+
+                // If the previous current thread was deleted, clear it so that
+                // switchToThread → persistCurrentState does not write orphan data.
+                if let oldThread = currentThread,
+                   !newIndex.threads.contains(where: { $0.id == oldThread.id }) {
+                    currentThread = nil
+                }
+
+                let currentThreadID = newIndex.currentThreadID
+                if currentThreadID != currentThread?.id {
                     try await switchToThread(threadID: currentThreadID)
-                } else if let currentThreadID = threadIndex?.currentThreadID {
-                    currentThread = threadIndex?.threads.first(where: { $0.id == currentThreadID })
+                } else {
+                    currentThread = newIndex.threads.first(where: { $0.id == currentThreadID })
                 }
             } catch {
                 delegate?.threadSessionDidEncounterError(error)

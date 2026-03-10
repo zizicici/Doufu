@@ -41,7 +41,7 @@ final class ProjectSettingsViewController: UITableViewController {
     private var projectNameText: String
     /// nil means "use app default"
     private var toolPermissionOverride: ToolPermissionMode?
-    private var projectModelSelection: ProjectModelSelection?
+    private var projectModelSelection: ModelSelection?
 
     init(projectURL: URL, projectName: String) {
         self.projectURL = projectURL
@@ -316,7 +316,7 @@ final class ProjectSettingsViewController: UITableViewController {
 
     // MARK: - Project Model Selection
 
-    private func projectModelDisplayName(for selection: ProjectModelSelection) -> String {
+    private func projectModelDisplayName(for selection: ModelSelection) -> String {
         let providerStore = LLMProviderSettingsStore.shared
         let providerLabel = providerStore.loadProvider(id: selection.providerID)?.label ?? selection.providerID
         let modelLabel = providerStore.availableModels(forProviderID: selection.providerID)

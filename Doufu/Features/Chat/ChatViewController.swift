@@ -192,6 +192,13 @@ final class ChatViewController: UIViewController {
         }
     }
 
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        Task {
+            await modelSelection.refreshProjectModelSelectionIfNeeded()
+        }
+    }
+
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         updateInputTextViewHeight()

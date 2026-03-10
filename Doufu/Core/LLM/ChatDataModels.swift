@@ -99,7 +99,7 @@ enum ProjectChatThreadStoreError: LocalizedError {
     }
 }
 
-struct ProjectModelSelection: Codable, Equatable {
+struct ModelSelection: Codable, Equatable {
     let providerID: String
     let modelRecordID: String
 }

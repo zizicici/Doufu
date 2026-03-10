@@ -716,11 +716,31 @@ final class ProjectWorkspaceViewController: UIViewController {
         let store = LLMProviderSettingsStore.shared
         let providers = store.loadProviders()
         guard !providers.isEmpty else { return false }
-        guard let selection = store.loadDefaultModelSelection() else { return false }
-        guard let provider = providers.first(where: { $0.id == selection.providerID }) else { return false }
-        return provider.availableModels.contains(where: {
-            $0.id.caseInsensitiveCompare(selection.modelRecordID) == .orderedSame
-        })
+
+        // Check App-level default
+        if let selection = store.loadDefaultModelSelection(),
+           let provider = providers.first(where: { $0.id == selection.providerID }),
+           provider.availableModels.contains(where: { $0.id.caseInsensitiveCompare(selection.modelRecordID) == .orderedSame }) {
+            return true
+        }
+
+        // Check Project-level default (synchronous read via ChatDataStore is not possible,
+        // so we check the on-disk config directly)
+        let projectID = projectURL.lastPathComponent
+        let chatDataRoot = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("ChatData")
+            .appendingPathComponent(projectID)
+            .appendingPathComponent("model_config.json")
+        if let data = try? Data(contentsOf: chatDataRoot),
+           let config = try? JSONDecoder().decode([String: String].self, from: data),
+           let providerID = config["selectedProviderID"], !providerID.isEmpty,
+           let modelRecordID = config["selectedModelRecordID"], !modelRecordID.isEmpty,
+           let provider = providers.first(where: { $0.id == providerID }),
+           provider.availableModels.contains(where: { $0.id.caseInsensitiveCompare(modelRecordID) == .orderedSame }) {
+            return true
+        }
+
+        return false
     }
 
     private func presentLLMSetupAlert() {

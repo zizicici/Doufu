@@ -127,9 +127,10 @@ actor ChatDataStore {
         }
         index.threads.removeAll(where: { $0.id == threadID })
 
-        // Clean up thread files
+        // Clean up thread files and model selection
         let threadDir = threadDirectoryURL(projectID: projectID, threadID: threadID)
         try? fileManager.removeItem(at: threadDir)
+        removeThreadModelSelection(projectID: projectID, threadID: threadID)
 
         // If deleted thread was current, switch to another
         if index.currentThreadID == threadID {
@@ -233,7 +234,7 @@ actor ChatDataStore {
 
     // MARK: - Model Selection (Project-level)
 
-    func loadProjectModelSelection(projectID: String) -> ProjectModelSelection? {
+    func loadProjectModelSelection(projectID: String) -> ModelSelection? {
         let config = loadProjectConfig(projectID: projectID)
         guard let providerID = config?.selectedProviderID,
               !providerID.isEmpty,
@@ -242,10 +243,10 @@ actor ChatDataStore {
         else {
             return nil
         }
-        return ProjectModelSelection(providerID: providerID, modelRecordID: modelRecordID)
+        return ModelSelection(providerID: providerID, modelRecordID: modelRecordID)
     }
 
-    func saveProjectModelSelection(_ selection: ProjectModelSelection?, projectID: String) {
+    func saveProjectModelSelection(_ selection: ModelSelection?, projectID: String) {
         var config = loadProjectConfig(projectID: projectID) ?? ChatDataProjectConfig()
         config.selectedProviderID = selection?.providerID
         config.selectedModelRecordID = selection?.modelRecordID

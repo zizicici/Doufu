@@ -255,18 +255,13 @@ final class LLMProviderSettingsStore {
     private let defaultModelRecordIDKey = "llm.default.modelRecordID"
     private let keychainService = Bundle.main.bundleIdentifier ?? "com.zizicici.doufu"
 
-    struct DefaultModelSelection: Equatable {
-        let providerID: String
-        let modelRecordID: String
-    }
-
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
     }
 
     // MARK: - App-level Default Model
 
-    func loadDefaultModelSelection() -> DefaultModelSelection? {
+    func loadDefaultModelSelection() -> ModelSelection? {
         guard
             let providerID = defaults.string(forKey: defaultProviderIDKey),
             !providerID.isEmpty,
@@ -275,7 +270,7 @@ final class LLMProviderSettingsStore {
         else {
             return nil
         }
-        return DefaultModelSelection(providerID: providerID, modelRecordID: modelRecordID)
+        return ModelSelection(providerID: providerID, modelRecordID: modelRecordID)
     }
 
     func saveDefaultModelSelection(providerID: String, modelRecordID: String) {
