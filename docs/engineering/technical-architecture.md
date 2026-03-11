@@ -4,11 +4,12 @@
 
 1. UI：`UIKit`（主框架）
 2. Web 运行：`WKWebView`
-3. 本地存储：`FileManager` + JSON
+3. 本地存储：`GRDB.swift`（SQLite）+ `FileManager`（项目文件）
 4. 并发：`Swift Concurrency`
 5. 凭证：`Keychain`
 6. 代码编辑：`Runestone`（可用时）+ Tree-sitter 语言包
 7. 版本控制：`SwiftGitX`（项目级 Git 检查点与 undo）
+8. 数据库：`GRDB.swift 7.10.0`，WAL 模式，外键 ON
 
 ## 架构原则
 
@@ -20,21 +21,30 @@
 ## 关键目录映射
 
 1. `Doufu/App/`
-   - App 生命周期与根导航。
-2. `Doufu/Core/Projects/`
-   - `AppProjectStore`：项目创建、删除、改名、快照创建与恢复、模板写入。
+   - App 生命周期与根导航。`AppDelegate.setup()` 初始化 `DatabaseManager`。
+2. `Doufu/Core/Database/`
+   - `DatabaseManager`：SQLite 数据库单例，持有 `DatabasePool`，运行迁移（v1 初始 schema → v2 聊天表 → v3 项目与权限表）。
+   - `DatabaseRecords`：所有 GRDB Record 类型（DBProject, DBPermission, DBProvider, DBProviderModel, DBTokenUsage, DBAppModelSelection, DBProjectModelSelection, DBThreadModelSelection, DBChatThread, DBAssistant, DBChatMessage, DBSessionMemory）及 domain ↔ DB 映射扩展。
+   - `DatabaseTimestamp`：Date ↔ Int64 纳秒转换。
+   - `DatabaseLegacyMigration`：空存根（历史迁移已移除）。
+3. `Doufu/Core/Projects/`
+   - `AppProjectStore`：项目 CRUD 通过 GRDB（`project` + `permission` 表），创建项目目录与模板文件、快照管理。
    - `ProjectGitService`：项目级 Git 初始化、检查点创建与 undo。
-3. `Doufu/Core/LLM/`
+4. `Doufu/Core/LLM/`
    - `ProjectChatService`：聊天服务对外入口与数据模型定义。
    - `LLMModelRegistry`：统一模型能力解析（capabilities + token budgets）。
-   - `ChatDataStore` / `ChatDataService`：Project/Thread 会话数据与三层模型选择持久化。
+   - `ChatDataStore`：`final class`，通过 GRDB `DatabasePool` 同步读写聊天数据（线程、消息、助理、会话记忆）。
+   - `ChatDataService`：`@MainActor final class`，绑定单个 `projectID`，提供自动持久化。
+   - `ChatSessionContext`：分离存储键（`projectID`）、工具执行路径（`projectURL` = App/）和 `projectRootURL`。
+   - `ChatDataModels`：聊天数据模型定义，含 `ModelSelection` 统一类型。
+   - `SessionMemory`：会话记忆模型。
    - `ModelSelectionStateStore`：App / Project / Thread 三层模型选择的共享状态源、缓存与变更通知。
    - `ModelSelectionResolver`：三层 `ModelSelection` 解析、校验与归一化。
    - `OpenAIOAuthService`：OpenAI OAuth（PKCE + localhost 回调）。
-   - `LLMProviderSettingsStore`：Provider 元数据与 Keychain 凭证管理。
+   - `LLMProviderSettingsStore`：Provider / Model CRUD 通过 GRDB（`llm_provider` + `llm_provider_model` 表）+ Keychain 凭证管理 + 三层 ModelSelection CRUD。
    - `LLMProviderModelDiscoveryService`：Provider 模型列表发现。
-   - `ProjectChatThreadStore`：会话线程、消息、thread memory 文件持久化。
-   - `LLMTokenUsageStore`：token 使用量聚合与按日统计。
+   - `ProviderCredentialResolver`：凭证解析（Keychain）。
+   - `LLMTokenUsageStore`：token 用量写入 `token_usage` 表，SQL GROUP BY / SUM 查询统计。
    - `ChatPipeline/*`：
      - `ProjectChatOrchestrator`：Agent 循环主控制器
      - `ProjectChatConfiguration`：Agent 配置参数
@@ -42,29 +52,34 @@
      - `PromptBuilder`：系统提示词与用户消息构建
      - `SessionMemoryManager`：会话记忆管理
      - `LLMStreamingClient`：流式请求客户端
-     - `ChatPipelineModels`：管线内部数据模型
      - `ToolUseRequestModels`：工具调用请求/响应模型
      - `LLMProviderProtocol`：Provider 请求适配协议
      - `OpenAIProvider` / `AnthropicProvider` / `GeminiProvider`：各 Provider 实现
      - `WebToolProvider`：Web 搜索与网页抓取
      - `CodeValidator`：隐藏 WKWebView 代码验证
      - `ProjectPathResolver`：项目路径安全解析
-4. `Doufu/Features/Home/` + `Doufu/HomeViewController.swift`
+5. `Doufu/Features/Home/` + `Doufu/HomeViewController.swift`
    - 首页画廊与排序页。
-5. `Doufu/Features/ProjectRuntime/`
-   - `ProjectWorkspaceViewController`：项目运行页与悬浮面板。
-   - `ProjectChatViewController`：聊天页 UI 布局与胶水代码（线程切换、输入处理、coordinator delegate 转发）。
+6. `Doufu/Features/Chat/`
+   - `ChatViewController`：聊天页 UI 布局与胶水代码（线程切换、输入处理、coordinator delegate 转发）。
+   - `ChatThreadSessionManager`：线程会话管理。
    - `ChatMessageStore`：消息数组管理与 FlowState 状态机（idle / progress / streaming），通过 delegate 回调驱动 UI。
    - `ChatModelSelectionManager`：消费 `ModelSelectionStateStore`、解析当前有效模型、生成 reasoning/thinking 运行时选项。
    - `ChatMenuBuilder`：所有 UIMenu 构建（static 方法，无状态）。
-   - `ModelConfigurationViewController`：共享模型配置页（App / Project / Thread）。
-   - `ProjectTokenUsageViewController`：项目级 token 使用量。
-   - `ProjectFileBrowserViewController`：文件树浏览与内容编辑。
-   - `ProjectSettingsViewController`：项目设置与快照入口。
+   - `ChatMessage`：聊天消息模型。
    - `ChatMessageCell`：聊天消息气泡渲染。
    - `MarkdownRenderer`：Markdown 渲染。
+   - `ModelConfigurationViewController`：共享模型配置页（App / Project / Thread）。
+   - `ThreadManagementViewController`：线程管理页。
+   - `MessageDetailViewController`：消息详情页。
+7. `Doufu/Features/ProjectRuntime/`
+   - `ProjectWorkspaceViewController`：项目运行页与悬浮面板。
+   - `ProjectFileBrowserViewController`：文件树浏览与内容编辑。
+   - `ProjectSettingsViewController`：项目设置与快照入口。
+   - `ProjectTokenUsageViewController`：项目级 token 使用量。
+   - `ProjectModelSelectionViewController`：项目级模型选择。
    - `ProjectOpenTransition`：项目打开转场动画。
-6. `Doufu/Features/Settings/`
+8. `Doufu/Features/Settings/`
    - `SettingsViewController`：全局设置（General / LLM Providers / Project 三组）。
    - `ManageProvidersViewController`：Provider 列表管理。
    - `AddProviderViewController`：新增 Provider。
@@ -76,60 +91,81 @@
    - `LLMQuickSetupViewController`：首次使用快速设置。
    - `TokenUsageViewController`：全局 token usage Dashboard。
    - `SettingsPickerViewController`：通用选项选择器。
-7. `Doufu/Features/Settings/Components/`
+9. `Doufu/Features/Settings/Components/`
    - 设置风格复用 Cell 组件。
-8. `Doufu/Core/`
-   - `UIColor+Doufu`：自定义颜色扩展。
-   - `LocalWebServer`：本地 Web 服务，含 CDN 资源代理缓存。
-   - `DoufuBridge`：JS 桥接。
-   - `PiPProgressManager`：画中画进度管理。
+10. `Doufu/Core/`（其他）
+    - `UIColor+Doufu`：自定义颜色扩展。
+    - `WKWebView+Doufu`：WKWebView 扩展。
+    - `LocalWebServer`：本地 Web 服务，含 CDN 资源代理缓存。
+    - `DoufuBridge`：JS 桥接。
+    - `ActiveTaskManager`：活跃任务追踪。
+    - `ChatTaskCoordinator`：聊天任务协调。
+    - `PiPProgressManager`：画中画进度管理。
 
 ## 核心数据模型
 
+### Domain 层
+
 1. `AppProjectRecord`
-   - `id`, `name`, `projectURL`, `entryFileURL`, `createdAt`, `updatedAt`
+   - `id`（纯 UUID，无前缀）, `name`, `projectURL`, `createdAt`, `updatedAt`
+   - 计算属性：`appURL`（projectURL/App/）、`dataURL`（projectURL/AppData/）、`entryFileURL`（appURL/index.html）
 2. `LLMProviderRecord`
-   - `id`, `kind`, `authMode`, `label`, `baseURLString`, `autoAppendV1`, `modelID`, `chatGPTAccountID`
+   - `id`, `kind`, `authMode`, `label`, `baseURLString`, `autoAppendV1`, `extra`
 3. `LLMProviderModelRecord`
    - Provider 关联的模型记录，含 `source`（discovered / custom）和 `capabilities`。
 4. `ResolvedModelProfile`
    - 统一的模型能力描述：`reasoningEfforts`, `thinkingSupported`, `thinkingCanDisable`, `structuredOutputSupported`, `maxOutputTokens`, `contextWindowTokens`。
 5. `ModelSelection`
    - 统一的模型选择类型（providerID, modelRecordID, reasoningEffort?, thinkingEnabled?），App/Project/Thread 三层共用。
-6. `ProjectChatThreadRecord` / `ProjectChatThreadIndex`
-   - 线程元数据与当前线程指针。
-7. `ProjectChatPersistedMessage`
-   - role/text/timestamps/progress 标记 + 请求 token 用量 + 工具活动摘要。
-8. `LLMTokenUsageRecord` / `LLMTokenUsageDailyRecord`
-   - 按 provider/model/project/day 维度统计输入输出 token。
+
+### DB 层（GRDB Record）
+
+1. `DBProject` / `DBPermission`
+   - 项目元数据与工具权限（UNIQUE FK CASCADE）。
+2. `DBProvider` / `DBProviderModel`
+   - Provider 配置与关联模型（FK CASCADE：删除 Provider 自动删除模型）。
+3. `DBTokenUsage`
+   - 单次 LLM 请求的 token 用量记录。
+4. `DBAppModelSelection` / `DBProjectModelSelection` / `DBThreadModelSelection`
+   - 三层模型选择持久化。
+5. `DBChatThread` / `DBAssistant` / `DBChatMessage` / `DBSessionMemory`
+   - 聊天线程、助理（每线程一个）、消息、会话记忆。
+   - CASCADE：删除线程 → 自动删除关联的助理、消息、会话记忆。
+   - `message.assistant_id` 可空（NULL = 用户消息）。
+   - `message.message_type`：0=system, 1=normal, 2=progress。
+   - `message.token_usage_id` FK → `token_usage`。
 
 ## 本地存储约定
 
-1. 项目根目录：`Documents/AppProjects/{projectId}/`
-2. 项目文件：
-   - `index.html`, `style.css`, `script.js`, `manifest.json`, `AGENTS.md`, `DOUFU.MD`
-3. 会话与线程：
-   - `.doufu_threads_index.json`
-   - `.doufu_thread_messages_{threadID}.json`
-   - `thread_memory_{threadID}_{version}.md`
-4. 模型选择：
-   - App 默认：`UserDefaults`
-   - `.doufu_project_config.json`（项目级模型选择）
-   - `.doufu_thread_selections.json`（线程级模型选择与参数；按 entry 独立解码）
-   - 内存态由 `ModelSelectionStateStore` 统一持有并向页面广播变更
-5. 快照：
-   - `{project}/.doufu_snapshots/manual/*`
-   - `{project}/.doufu_snapshots/auto/*`
-6. Git：
-   - `{project}/.git/`（由 `ProjectGitService` 管理）
-7. 预览图：
-   - `preview.jpg`（运行页截图写入）
-8. Provider 元数据：
-   - `UserDefaults`：`llm.providers.records.v1`
-9. Token Usage 聚合：
-   - `UserDefaults`：`llm.token_usage.records.v1`、`llm.token_usage.daily_records.v1`
-10. 凭证：
-    - `Keychain`：API Key / OAuth Bearer Token
+### SQLite 数据库
+
+- 路径：`Documents/doufu.sqlite`（WAL 模式，外键 ON）
+- 13 张表：`project`, `permission`, `llm_provider`, `llm_provider_model`, `token_usage`, `app_model_selection`, `project_model_selection`, `thread_model_selection`, `thread`, `assistant`, `message`, `session_memory`
+- 所有结构化数据（项目元数据、Provider 配置、模型选择、聊天线程/消息/记忆、token 用量）统一存储在 SQLite 中
+
+### 项目磁盘结构（v4）
+
+- 根目录：`Documents/Projects/{uuid}/`（projectID 为纯 UUID，无前缀）
+- `App/`：代码文件（index.html, style.css, script.js, AGENTS.md, DOUFU.MD）+ `.git`
+- `AppData/`：用户数据（localStorage.json）— Git 检查点恢复时保留
+- `preview.jpg`：项目预览图（运行页截图写入），位于项目根目录
+
+### 快照
+
+- `{project}/App/.doufu_snapshots/manual/*`
+- `{project}/App/.doufu_snapshots/auto/*`
+
+### Git
+
+- `{project}/App/.git/`（由 `ProjectGitService` 管理）
+
+### 凭证
+
+- `Keychain`：API Key / OAuth Bearer Token
+
+### UserDefaults（仅少量配置）
+
+- `appDefaultToolPermissionMode`：App 级别工具权限模式
 
 ## Agent 聊天执行链路（当前实现）
 

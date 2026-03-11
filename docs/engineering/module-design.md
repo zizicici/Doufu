@@ -10,10 +10,16 @@
    - 责任：网页运行、悬浮面板、退出确认、运行时快捷入口、LLM 设置检测与快速设置引导。
 3. `Project Chat`
    - 主要文件：
-     - `Features/ProjectRuntime/ProjectChatViewController.swift`：UI 布局、View 生命周期、UITableViewDataSource、输入处理、线程管理协调、ChatTaskCoordinatorDelegate 转发。
-     - `Features/ProjectRuntime/ChatMessageStore.swift`：消息数组管理、FlowState 状态机（idle / progress / streaming 三态）、追加/finalize/streaming 生命周期、持久化。
-     - `Features/ProjectRuntime/ChatModelSelectionManager.swift`：消费共享模型状态、解析当前有效模型、生成运行时凭证与 reasoning/thinking 选项。
-     - `Features/ProjectRuntime/ChatMenuBuilder.swift`：所有 UIMenu 构建（thread / more / model），纯 static 方法，不持有状态。
+     - `Features/Chat/ChatViewController.swift`：UI 布局、View 生命周期、UITableViewDataSource、输入处理、线程管理协调、ChatTaskCoordinatorDelegate 转发。
+     - `Features/Chat/ChatThreadSessionManager.swift`：线程会话管理。
+     - `Features/Chat/ChatMessageStore.swift`：消息数组管理、FlowState 状态机（idle / progress / streaming 三态）、追加/finalize/streaming 生命周期、持久化。
+     - `Features/Chat/ChatModelSelectionManager.swift`：消费共享模型状态、解析当前有效模型、生成运行时凭证与 reasoning/thinking 选项。
+     - `Features/Chat/ChatMenuBuilder.swift`：所有 UIMenu 构建（thread / more / model），纯 static 方法，不持有状态。
+     - `Features/Chat/ChatMessage.swift`：聊天消息模型。
+     - `Features/Chat/ChatMessageCell.swift`：聊天消息气泡渲染。
+     - `Features/Chat/MarkdownRenderer.swift`：Markdown 渲染。
+     - `Features/Chat/MessageDetailViewController.swift`：消息详情页。
+     - `Features/Chat/ThreadManagementViewController.swift`：线程管理页。
    - 责任：聊天消息流、线程管理、模型配置、进度展示、取消请求、extended thinking 展示、工具活动摘要展示。
    - 消息流状态机：`ChatMessageStore.FlowState` 保证任务执行期间恰好有一条消息处于 live 状态（`finishedAt == nil`），streaming 与 progress 消息通过原子状态转换交替出现。
 4. `Project Model Configuration`
@@ -43,47 +49,51 @@
 12. `Settings Picker`
     - 主要文件：`Features/Settings/SettingsPickerViewController.swift`
     - 责任：通用选项选择器，替代各功能专用 Picker。
-13. `Project Storage`
+13. `Database`
+    - 主要文件：`Core/Database/DatabaseManager.swift`、`DatabaseRecords.swift`、`DatabaseTimestamp.swift`
+    - 责任：SQLite 数据库初始化与迁移、GRDB Record 类型定义、domain ↔ DB 映射。
+14. `Project Storage`
     - 主要文件：`Core/Projects/AppProjectStore.swift`
-    - 责任：项目生命周期、模板写入、manifest 更新时间、快照管理。
-14. `Project Git Service`
+    - 责任：项目生命周期（GRDB `project` + `permission` 表）、模板写入、快照管理。
+15. `Project Git Service`
     - 主要文件：`Core/Projects/ProjectGitService.swift`
     - 责任：项目级 Git 初始化、检查点创建（agent loop 前）、undo 回退、变更查询。
-15. `Provider Storage`
+16. `Provider Storage`
     - 主要文件：`Core/LLM/LLMProviderSettingsStore.swift`
-    - 责任：Provider 元数据持久化、模型记录管理、Keychain 凭证增删改查。
-16. `Model Registry`
+    - 责任：Provider / Model CRUD 通过 GRDB（`llm_provider` + `llm_provider_model` 表）、Keychain 凭证管理、三层 ModelSelection CRUD。
+17. `Model Registry`
     - 主要文件：`Core/LLM/LLMModelRegistry.swift`
     - 责任：统一模型能力解析，多级优先级回退（用户自定义 > 内置 > 发现 > 保守默认）。
-17. `Model Selection Store`
-    - 主要文件：`Core/LLM/ModelSelectionStateStore.swift`、`Core/LLM/ChatDataStore.swift`、`Core/LLM/ChatDataService.swift`、`Core/LLM/ModelSelectionResolver.swift`
-    - 责任：App / Project / Thread 三层 `ModelSelection` 的单一状态源、持久化、解析、归一化与旧数据兼容。
-18. `OAuth Service`
+18. `Model Selection Store`
+    - 主要文件：`Core/LLM/ModelSelectionStateStore.swift`、`Core/LLM/ModelSelectionResolver.swift`
+    - 责任：App / Project / Thread 三层 `ModelSelection` 的共享状态源、缓存、变更通知、解析与归一化。从 `LLMProviderSettingsStore` 读取数据（不再依赖 `ChatDataService`）。
+19. `Chat Data Storage`
+    - 主要文件：`Core/LLM/ChatDataStore.swift`、`Core/LLM/ChatDataService.swift`、`Core/LLM/ChatSessionContext.swift`
+    - 责任：`ChatDataStore`（`final class`）通过 GRDB 同步读写聊天数据；`ChatDataService`（`@MainActor`）绑定单个 projectID 提供自动持久化。
+20. `OAuth Service`
     - 主要文件：`Core/LLM/OpenAIOAuthService.swift`
     - 责任：OpenAI OAuth 流程（授权 URL、callback、token 交换、结果回传）。
-19. `Chat Thread Store`
-    - 主要文件：`Core/LLM/ProjectChatThreadStore.swift`
-    - 责任：线程索引、线程消息、thread memory 文件版本化。
-20. `Agent Chat Pipeline`
+21. `Agent Chat Pipeline`
     - 主要文件：`Core/LLM/ProjectChatService.swift` + `Core/LLM/ChatPipeline/*`
     - 责任：对外 `sendAndApply`、agent loop 控制、工具定义与执行、流式请求、上下文压缩、进度事件。
-21. `Token Usage Analytics`
+22. `Token Usage Analytics`
     - 主要文件：`Core/LLM/LLMTokenUsageStore.swift`、`Features/Settings/TokenUsageViewController.swift`、`Features/ProjectRuntime/ProjectTokenUsageViewController.swift`
-    - 责任：按项目/Provider/Model/天聚合 token，并驱动全局与项目视角展示。
+    - 责任：token 用量写入 `token_usage` 表，SQL GROUP BY / SUM 查询，驱动全局与项目视角展示。
 
 ## 通信方式
 
 1. UI 到业务：ViewController 直接调用 Service/Store。
-2. 模块间协作：通过结构化模型（如 `LLMProviderRecord`、`ResolvedModelProfile`、`ProjectChatThreadRecord`）。
+2. 模块间协作：通过结构化模型（如 `LLMProviderRecord`、`ResolvedModelProfile`）。
 3. 页面刷新：项目文件和列表页仍以闭包回调为主；模型选择状态统一通过 `ModelSelectionStateStore` 广播变更。
 
 ## 关键流程
 
 1. 新建项目
    - `HomeViewController` 调用 `AppProjectStore.createBlankProject()`
-   - 创建模板文件、初始化 Git 仓库并 push 到 `ProjectWorkspaceViewController`
+   - 在 `project` 表插入记录、创建磁盘目录与模板文件、初始化 Git 仓库
+   - push 到 `ProjectWorkspaceViewController`
 2. Agent 聊天改项目
-   - `ProjectChatViewController` 构建 `ProviderCredential`（含 `ResolvedModelProfile`）
+   - `ChatViewController` 构建 `ProviderCredential`（含 `ResolvedModelProfile`）
    - 调用 `ProjectChatOrchestrator.sendAndApply()` 启动 agent loop
    - Agent 自主调用工具（读文件 → 分析 → 编辑/写入 → 验证）
    - 只读工具并行执行，写入工具顺序执行
@@ -92,16 +102,17 @@
    - 工具按危险程度分级（autoAllow / confirmOnce / alwaysConfirm）
    - `ToolConfirmationHandler` 协议由 ChatViewController 实现
    - 用户可在设置中选择权限模式
-4. 线程与 memory 持久化
-   - 线程索引：`.doufu_threads_index.json`
-   - 消息：`.doufu_thread_messages_{threadID}.json`
-   - 记忆：`thread_memory_{threadID}_{version}.md`
-   - `thread_should_rollover=true` 时自动创建新版本 memory 文件
-5. 模型选择持久化
-   - App 级：`UserDefaults` 存默认 `ModelSelection`
-   - 项目级：`.doufu_project_config.json` 存 `provider/model/reasoning/thinking`
-   - 线程级：`.doufu_thread_selections.json` 存每线程 `ModelSelection`，按 entry 容错解码
-   - 运行时 UI 不直接各自缓存一份三层选择，而是通过 `ModelSelectionStateStore` 读取和订阅
+4. 聊天数据持久化（SQLite）
+   - 线程、消息、助理、会话记忆均存储在 SQLite 表中
+   - `ChatDataStore` 同步读写，`ChatDataService` 绑定 projectID 提供自动持久化
+   - `ChatMessageStore` 通过 `mutationDelegate` 自动持久化（无需手动调用）
+   - CASCADE 删除：删除线程 → 自动清除关联数据
+5. 模型选择持久化（SQLite）
+   - App 级：`app_model_selection` 表
+   - 项目级：`project_model_selection` 表
+   - 线程级：`thread_model_selection` 表
+   - `LLMProviderSettingsStore` 统一 CRUD
+   - 运行时 UI 通过 `ModelSelectionStateStore` 读取和订阅
 6. Git 检查点与 undo
    - Agent loop 开始前 `ProjectGitService.createCheckpoint()` 提交当前状态
    - `ProjectGitService.undo()` 可回退到最近检查点
@@ -111,8 +122,8 @@
 8. Provider 配置
    - `AddProviderViewController` 选择 Provider 类型
    - `ProviderAuthMethodViewController` 选择 API Key / OAuth
-   - 表单提交后写入 `LLMProviderSettingsStore`（元数据+凭证）
+   - 表单提交后写入 `LLMProviderSettingsStore`（GRDB 元数据 + Keychain 凭证）
 9. Token Usage 统计
-   - `LLMStreamingClient` 在请求完成后记录 token 用量
-   - `UsageAccumulator` actor 线程安全聚合多轮 token
-   - Dashboard 支持 Provider/Model 维度切换与项目隔离视图
+   - `LLMTokenUsageStore.recordUsage()` 每次 LLM 请求插入一行到 `token_usage` 表
+   - `providerLabel` 通过 SQL JOIN 解析，不在写入时传入
+   - Dashboard 使用 GROUP BY / SUM 查询，支持 Provider/Model 维度切换与项目隔离视图

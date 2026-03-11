@@ -280,17 +280,19 @@ Chat 内必须存在明确修复入口。
 3. 切换到新模型时，回到该模型默认值；不支持的参数必须被清空
 4. 持久化时只保存非默认、且当前模型真实支持的参数值
 
+## 存储实现
+
+三层模型选择均存储在 SQLite 数据库中：
+
+1. App 级：`app_model_selection` 表
+2. Project 级：`project_model_selection` 表
+3. Thread 级：`thread_model_selection` 表
+
+`LLMProviderSettingsStore` 统一提供三层 CRUD 方法。`ModelSelectionStateStore` 作为运行时缓存和通知源。
+
 ## 旧数据容错
 
-旧版 Thread 选择数据可能仍然以多 map 结构存在。
-
-当前策略不是做正式迁移，而是做安全容错：
-
-1. 读取旧结构时，只尝试提取“当前 provider + 当前 model + 当前参数”。
-2. 任意字段缺失、格式错误或脏数据，不应导致崩溃。
-3. 单条坏的 Thread 选择数据，不应拖垮整份 `thread_selections.json`。
-4. 旧数据一旦被用户重新保存，就会被新的单条 override 结构覆盖。
-5. `thread_selections.json` 的读取应按 entry 独立解码，坏 entry 直接跳过，不影响其他线程。
+（历史：旧版使用 JSON 文件存储，已迁移到 SQLite。以下容错原则仍适用于数据完整性。）
 
 对于 `App / Project` 默认模型页：
 

@@ -1,6 +1,6 @@
 # 执行计划
 
-## 当前状态（2026-03-10）
+## 当前状态（2026-03-11）
 
 1. 已完成首页项目画廊（搜索、长按菜单、拖拽排序、新建入口）。
 2. 已完成项目运行页（全屏预览 + 悬浮面板 + 退出确认 + 文件入口）。
@@ -29,6 +29,10 @@
 25. 已完成 CDN 资源缓存（LocalWebServer URL 改写 + 磁盘缓存 + 离线兜底）。
 26. 已完成聊天模块职责拆分（`ChatMessageStore` / `ChatModelSelectionManager` / `ChatMenuBuilder` + 薄 VC）。
 27. 已完成消息流 FlowState 状态机（idle / progress / streaming 三态，原子转换，消除孤儿 live cell 和全部结束间隙）。
+28. 已完成 SQLite 迁移（GRDB.swift）：所有结构化数据从 JSON/UserDefaults 迁移到 SQLite 数据库。
+29. 已完成项目磁盘结构 v4（`Projects/{uuid}/App/` + `AppData/`）。
+30. 已完成聊天数据 SQLite 存储（线程、消息、助理、会话记忆）。
+31. 已完成聊天模块 UI 重组至 `Features/Chat/` 目录。
 
 ## 已完成阶段回顾
 
@@ -59,16 +63,22 @@
 9. Phase H.5：聊天模块重构
    - `ProjectChatViewController` 职责拆分为四个文件。
    - 消息流 FlowState 状态机，保证任务期间恰好一条 live 消息。
+10. Phase I：SQLite 迁移
+    - 引入 GRDB.swift 7.10.0，建立 `DatabaseManager` 单例（WAL 模式，外键 ON）。
+    - 13 张表覆盖所有结构化数据：项目元数据（`project` + `permission`）、Provider 配置（`llm_provider` + `llm_provider_model`）、三层模型选择、聊天数据（`thread` + `assistant` + `message` + `session_memory`）、token 用量。
+    - 移除所有 JSON 文件存储（manifest.json, threads_index, thread_messages, project_config, thread_selections）和 UserDefaults 存储（providers, token usage）。
+    - 项目磁盘结构升级到 v4：`Documents/Projects/{uuid}/App/` + `AppData/`。
+    - 聊天 UI 文件重组到 `Features/Chat/` 目录。
 
 ## 下一阶段计划
 
-1. Phase I：聊天体验增强
+1. Phase J：聊天体验增强
    - 失败重试策略可视化、结果回滚体验、direct answer 与改代码路径的体验对齐。
-2. Phase J：项目调试能力
+2. Phase K：项目调试能力
    - 运行日志可视化、构建前检查、错误定位辅助。
-3. Phase K：Provider 生态扩展
+3. Phase L：Provider 生态扩展
    - 连通性检测、模型能力探测、配置导入导出。
-4. Phase L：分享与导出
+4. Phase M：分享与导出
    - 项目导出包、隐私检查、分享入口。
 
 ## 验收口径（下一阶段）

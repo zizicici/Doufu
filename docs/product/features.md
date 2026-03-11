@@ -1,6 +1,6 @@
 # 功能范围说明
 
-## 已完成功能（截至 2026-03-10）
+## 已完成功能（截至 2026-03-11）
 
 1. 首页项目画廊
    - 3 列平铺卡片，支持搜索过滤。
@@ -47,8 +47,7 @@
 7. 模型管理
    - `LLMModelRegistry` 统一解析模型能力与 token 预算。
    - 解析优先级：用户自定义 > 内置注册表 > 发现记录 > 保守回退。
-   - 项目级模型选择持久化（`.doufu_project_config.json`）。
-   - 线程级模型选择持久化（`.doufu_thread_selections.json`）。
+   - App / Project / Thread 三层模型选择均持久化到 SQLite 表。
    - 设置页默认模型选择入口。
    - 首次使用聊天时 LLM 快速设置引导。
    - 三层模型选择产品语义见 `docs/product/model-selection.md`。
@@ -67,7 +66,8 @@
     - Agent 可自主搜索技术文档辅助开发。
 11. 本地化与安全
     - 文案已本地化（`en / zh-Hans / zh-Hant / zh-HK`）。
-    - Provider 凭证存 `Keychain`，元数据存 `UserDefaults`。
+    - Provider 凭证存 `Keychain`，元数据存 SQLite。
+    - 所有结构化数据（项目、Provider、聊天、token 用量、模型选择）统一存储在 SQLite 数据库。
     - 文件操作限制在项目目录，含路径安全校验。
     - 调试日志脱敏，禁止输出凭证。
 12. CDN 资源缓存

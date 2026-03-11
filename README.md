@@ -1,6 +1,6 @@
 # Doufu
 
-一个基于 `UIKit` 的 iOS App，目标是让用户通过自然语言快速生成并迭代本地 `html + css + js` 项目，并在 `WKWebView` 中直接运行。
+一个基于 `UIKit` 的 iOS App，目标是让用户通过自然语言快速生成并迭代本地 `html + css + js` 项目，并在 `WKWebView` 中直接运行。使用 `GRDB.swift`（SQLite）作为统一数据存储层。
 
 ## 文档目录（协作入口）
 
@@ -37,7 +37,7 @@
    - `Settings -> Manage Providers -> Add Provider`。
    - 支持 `OpenAI Compatible`、`Anthropic`、`Google Gemini`。
    - 每个 Provider 支持 `API Key` 与 `OAuth` 模式。
-   - Provider 元数据在 `UserDefaults`，凭证在 `Keychain`。
+   - Provider 元数据在 SQLite，凭证在 `Keychain`。
    - 支持模型列表管理（发现/自定义/编辑能力参数）。
 6. Agent 聊天改工程（Project Chat）：
    - 会话支持多线程（thread）持久化，可切换历史线程。
@@ -53,9 +53,8 @@
 7. 模型管理：
    - `LLMModelRegistry` 统一模型能力解析（reasoning effort / thinking / structured output / token 预算）。
    - 解析优先级：用户自定义 > 内置注册表 > 发现记录 > 保守回退。
-   - 支持 `App / Project / Thread` 三层统一的模型选择持久化（`provider / model / reasoning / thinking` 同构）。
+   - 支持 `App / Project / Thread` 三层统一的模型选择持久化（`provider / model / reasoning / thinking` 同构），均存储在 SQLite 表中。
    - `ModelSelectionStateStore` 作为单一状态源统一管理三层选择，Chat / Settings / Project Settings 都通过同一份状态和通知刷新。
-   - 持久化文件包括 App 默认、项目配置和 Thread 级 `thread_selections`；坏的单条 Thread 数据不会拖垮整份选择文件。
    - 模型配置页会显式保留 invalid selection / missing selection，不做 silent fallback 到首个可用模型。
    - 设置页支持选择 App 默认模型，项目页支持设置 Project 默认模型。
    - 首次使用聊天时提供 LLM 快速设置引导。
@@ -77,4 +76,4 @@
 2. 新增用户可见文案时，必须同步 `Localizable.xcstrings`。
 3. 涉及架构调整时，必须同步 `technical-architecture.md` 与 `module-design.md`。
 
-文档已按当前实现同步更新（2026-03-11）。
+文档已按当前实现同步更新（2026-03-11）。所有结构化数据已迁移到 SQLite（GRDB.swift 7.10.0）。
