@@ -78,6 +78,7 @@ enum ProjectChatService {
     }
 
     struct RequestTokenUsage: Codable, Equatable, Hashable {
+        let tokenUsageID: Int64?
         let inputTokens: Int64
         let outputTokens: Int64
 

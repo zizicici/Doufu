@@ -10,21 +10,12 @@ import UIKit
 @MainActor
 final class ChatViewController: UIViewController {
 
-    var onProjectFilesUpdated: (() -> Void)?
     var isReadOnly = false
 
-    private var project: AppProjectRecord
-    private lazy var dataService: ChatDataService = {
-        ChatDataService(projectID: project.id)
-    }()
-
-    private lazy var taskCoordinator: ChatTaskCoordinator = {
-        let coordinator = ChatTaskCoordinator()
-        coordinator.delegate = self
-        return coordinator
-    }()
+    private let session: ChatSession
     private var toolPermissionMode: ToolPermissionMode = .standard
     private var initialLoadTask: Task<Void, Never>?
+    private var appearReloadTask: Task<Void, Never>?
     private var modelSelectionReloadTask: Task<Void, Never>?
     private var pendingModelSelectionReload = false
 
@@ -37,32 +28,16 @@ final class ChatViewController: UIViewController {
     private let inputMaxHeight: CGFloat = 120
     private var inputHeightConstraint: NSLayoutConstraint?
 
-    // MARK: - Extracted Modules
+    // MARK: - Convenience Accessors
 
-    private lazy var messageStore: ChatMessageStore = {
-        let store = ChatMessageStore()
-        store.mutationDelegate = self
-        return store
-    }()
-
-    private lazy var modelSelection: ChatModelSelectionManager = {
-        let manager = ChatModelSelectionManager(
-            projectID: project.id,
-            currentThreadIDProvider: { [weak self] in self?.threadSession.currentThread?.id }
-        )
-        return manager
-    }()
-
-    private lazy var threadSession: ChatThreadSessionManager = {
-        let manager = ChatThreadSessionManager(
-            dataService: dataService,
-            messageStore: messageStore,
-            modelSelection: modelSelection,
-            isExecutingProvider: { [weak self] in self?.taskCoordinator.isExecuting ?? false }
-        )
-        manager.delegate = self
-        return manager
-    }()
+    private var messageStore: ChatMessageStore { session.messageStore }
+    private var modelSelection: ChatModelSelectionManager { session.modelSelection }
+    private var threadSession: ChatThreadSessionManager { session.threadSession }
+    private var taskCoordinator: ChatTaskCoordinator { session.taskCoordinator }
+    private var project: AppProjectRecord { session.project }
+    private var projectIdentifier: String { session.projectID }
+    private var projectName: String { session.project.name }
+    private var workspaceURL: URL { session.project.appURL }
 
     // MARK: - UI Elements
 
@@ -148,12 +123,8 @@ final class ChatViewController: UIViewController {
         return button
     }()
 
-    private var projectIdentifier: String { project.id }
-    private var projectName: String { project.name }
-    private var workspaceURL: URL { project.appURL }
-
-    init(project: AppProjectRecord) {
-        self.project = project
+    init(session: ChatSession) {
+        self.session = session
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -169,8 +140,8 @@ final class ChatViewController: UIViewController {
         title = nil
         view.backgroundColor = .doufuBackground
 
-        messageStore.delegate = self
-        modelSelection.delegate = self
+        session.observationDelegate = self
+        session.activeConfirmationHandler = self
 
         configureNavigation()
         configureLayout()
@@ -187,9 +158,9 @@ final class ChatViewController: UIViewController {
             defer { self.initialLoadTask = nil }
             await self.reloadModelSelectionContext()
             do {
-                try self.threadSession.restoreThreadStateIfNeeded()
+                try self.session.restoreThreadStateIfNeeded()
             } catch {
-                self.messageStore.appendMessage(role: .system, text: error.localizedDescription)
+                self.presentChatStorageError(error)
             }
             self.refreshSendButton()
         }
@@ -197,7 +168,17 @@ final class ChatViewController: UIViewController {
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        Task { [weak self] in
+        session.observationDelegate = self
+        session.activeConfirmationHandler = self
+
+        // Sync tableView with messageStore in case messages were added
+        // while the VC was dismissed (e.g., execution continued in background).
+        tableView.reloadData()
+        scrollToBottomIfNeeded(force: true)
+        refreshSendButton()
+
+        appearReloadTask?.cancel()
+        appearReloadTask = Task { [weak self] in
             guard let self else { return }
             if let initialLoadTask = self.initialLoadTask {
                 await initialLoadTask.value
@@ -214,8 +195,12 @@ final class ChatViewController: UIViewController {
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
         if view.window == nil {
+            session.observationDelegate = nil
+            session.activeConfirmationHandler = nil
             initialLoadTask?.cancel()
             initialLoadTask = nil
+            appearReloadTask?.cancel()
+            appearReloadTask = nil
             modelSelectionReloadTask?.cancel()
             modelSelectionReloadTask = nil
             pendingModelSelectionReload = false
@@ -514,14 +499,7 @@ final class ChatViewController: UIViewController {
         )
         settingsController.onProjectUpdated = { [weak self] updatedProjectName in
             guard let self else { return }
-            self.project = AppProjectRecord(
-                id: self.project.id,
-                name: updatedProjectName,
-                projectURL: self.project.projectURL,
-                createdAt: self.project.createdAt,
-                updatedAt: Date()
-            )
-            self.onProjectFilesUpdated?()
+            self.session.onProjectFilesUpdated?()
         }
         settingsController.onToolPermissionModeChanged = { [weak self] mode in
             self?.toolPermissionMode = mode
@@ -533,6 +511,22 @@ final class ChatViewController: UIViewController {
             sheet.prefersGrabberVisible = true
         }
         present(navigationController, animated: true)
+    }
+
+    private func presentChatStorageError(_ error: Error) {
+        guard !(presentedViewController is UIAlertController) else {
+            return
+        }
+        let alert = UIAlertController(
+            title: String(
+                localized: "chat.storage.alert.title",
+                defaultValue: "Chat Storage Error"
+            ),
+            message: error.localizedDescription,
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
+        present(alert, animated: true)
     }
 
     @objc
@@ -587,64 +581,66 @@ final class ChatViewController: UIViewController {
             credential: credential,
             memory: threadSession.sessionMemory,
             executionOptions: modelSelection.executionOptions(for: credential),
-            confirmationHandler: self,
+            confirmationHandler: session,
             permissionMode: toolPermissionMode,
             validationServerBaseURL: validationServerBaseURL,
             validationBridge: validationBridge
         )
-        taskCoordinator.execute(request)
+        session.execute(request)
         refreshSendButton()
     }
 
 }
 
-// MARK: - ChatMessageStoreDelegate
+// MARK: - ChatSessionObservationDelegate
 
-extension ChatViewController: ChatMessageStoreDelegate {
-    func messageStoreDidInsertRow(at index: Int) {
+extension ChatViewController: ChatSessionObservationDelegate {
+    func sessionDidInsertMessage(at index: Int) {
         UIView.performWithoutAnimation {
             tableView.insertRows(at: [IndexPath(row: index, section: 0)], with: .none)
         }
     }
 
-    func messageStoreDidUpdateCell(at index: Int, message: ChatMessage) {
+    func sessionDidUpdateMessage(at index: Int, message: ChatMessage) {
         let ip = IndexPath(row: index, section: 0)
         if let cell = tableView.cellForRow(at: ip) as? ChatMessageCell {
             cell.configure(message: message, now: Date())
         }
     }
 
-    func messageStoreDidUpdateStreamingText(at index: Int, text: String) {
+    func sessionDidUpdateStreamingText(at index: Int, text: String) {
         let ip = IndexPath(row: index, section: 0)
         if let cell = tableView.cellForRow(at: ip) as? ChatMessageCell {
             cell.updateText(text)
         }
     }
 
-    func messageStoreDidRequestBatchUpdate() {
+    func sessionDidRequestBatchUpdate() {
         tableView.performBatchUpdates(nil)
     }
 
-    func messageStoreDidRequestScroll(force: Bool) {
+    func sessionDidRequestScroll(force: Bool) {
         scrollToBottomIfNeeded(force: force)
     }
-}
 
-// MARK: - ChatMessageStoreMutationDelegate
-
-extension ChatViewController: ChatMessageStoreMutationDelegate {
-    func messageStoreDidMutateMessages() {
-        guard let threadID = threadSession.currentThread?.id else { return }
-        dataService.persistMessages(messageStore.messages, threadID: threadID)
+    func sessionDidFinishExecution() {
+        refreshSendButton()
     }
-}
 
-// MARK: - ChatModelSelectionManagerDelegate
-
-extension ChatViewController: ChatModelSelectionManagerDelegate {
-    func modelSelectionDidChange() {
+    func sessionDidSwitchThread() {
+        tableView.reloadData()
+        scrollToBottomIfNeeded(force: true)
         refreshNavigationItems()
         refreshSendButton()
+    }
+
+    func sessionModelSelectionDidChange() {
+        refreshNavigationItems()
+        refreshSendButton()
+    }
+
+    func sessionDidEncounterError(_ error: Error) {
+        presentChatStorageError(error)
     }
 }
 
@@ -669,10 +665,10 @@ extension ChatViewController: UITableViewDataSource {
         cell.configure(message: message, now: Date())
 
         if message.isProgress {
+            let progressText = message.text
             cell.onExpandTapped = { [weak self] in
                 guard let self else { return }
-                let fullText = self.messageStore.messages[indexPath.row].text
-                let detailVC = MessageDetailViewController(text: fullText)
+                let detailVC = MessageDetailViewController(text: progressText)
                 let nav = UINavigationController(rootViewController: detailVC)
                 nav.modalPresentationStyle = .pageSheet
                 if let sheet = nav.sheetPresentationController {
@@ -687,21 +683,6 @@ extension ChatViewController: UITableViewDataSource {
         }
 
         return cell
-    }
-}
-
-// MARK: - ChatThreadSessionManagerDelegate
-
-extension ChatViewController: ChatThreadSessionManagerDelegate {
-    func threadSessionDidSwitchThread() {
-        tableView.reloadData()
-        scrollToBottomIfNeeded(force: true)
-        refreshNavigationItems()
-        refreshSendButton()
-    }
-
-    func threadSessionDidEncounterError(_ error: Error) {
-        messageStore.appendMessage(role: .system, text: error.localizedDescription)
     }
 }
 
@@ -739,6 +720,14 @@ extension ChatViewController: ToolConfirmationHandler {
                 allowStyle = .destructive
             }
 
+            // If the VC is no longer in the window hierarchy, presenting
+            // will silently fail and the continuation will never resume.
+            // Reject the action to avoid a permanent hang.
+            guard self.view.window != nil else {
+                continuation.resume(returning: false)
+                return
+            }
+
             let alert = UIAlertController(
                 title: title,
                 message: description,
@@ -758,57 +747,5 @@ extension ChatViewController: ToolConfirmationHandler {
             })
             self.present(alert, animated: true)
         }
-    }
-}
-
-// MARK: - ChatTaskCoordinatorDelegate
-
-extension ChatViewController: ChatTaskCoordinatorDelegate {
-    func coordinatorDidReceiveStreamedText(_ chunk: String) {
-        messageStore.receiveStreamedText(chunk)
-    }
-
-    func coordinatorDidReceiveProgressEvent(_ event: ToolProgressEvent) {
-        messageStore.receiveProgressEvent(event)
-    }
-
-    func coordinatorDidCompleteWithResult(_ result: ChatTaskResult) {
-        guard threadSession.currentThread != nil else { return }
-
-        threadSession.updateSessionMemory(result.updatedMemory)
-
-        var assistantText = result.assistantMessage
-        if !result.changedPaths.isEmpty {
-            let changesSummary = result.changedPaths.joined(separator: ", ")
-            assistantText += String(
-                format: String(localized: "chat.system.files_updated.append_format"),
-                changesSummary
-            )
-        }
-
-        messageStore.completeWithResult(
-            text: assistantText,
-            requestTokenUsage: result.requestTokenUsage,
-            toolSummary: result.toolActivitySummary
-        )
-
-        threadSession.touchCurrentThread()
-
-        if !result.changedPaths.isEmpty {
-            onProjectFilesUpdated?()
-        }
-    }
-
-    func coordinatorDidCancel() {
-        messageStore.handleCancellation()
-    }
-
-    func coordinatorDidFailWithError(_ error: Error) {
-        messageStore.handleError(error)
-    }
-
-    func coordinatorDidFinishExecution() {
-        messageStore.finishExecution()
-        refreshSendButton()
     }
 }

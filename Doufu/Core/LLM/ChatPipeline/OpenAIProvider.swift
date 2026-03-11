@@ -16,8 +16,6 @@ final class OpenAIProvider: LLMProviderAdapter {
         return enc
     }()
 
-    private let tokenUsageStore = LLMTokenUsageStore.shared
-
     init(configuration: ProjectChatConfiguration) {
         self.configuration = configuration
     }
@@ -109,13 +107,6 @@ final class OpenAIProvider: LLMProviderAdapter {
                     bytes: bytes, request: request, httpResponse: httpResponse,
                     onStreamedText: onStreamedText,
                     timeoutSeconds: timeoutSeconds, requestLabel: requestLabel
-                )
-                tokenUsageStore.recordUsage(
-                    providerID: credential.providerID,
-                    model: model,
-                    inputTokens: responseResult.usage?.inputTokens,
-                    outputTokens: responseResult.usage?.outputTokens,
-                    projectIdentifier: projectUsageIdentifier
                 )
                 onUsage?(responseResult.usage?.inputTokens, responseResult.usage?.outputTokens)
                 return responseResult.text
@@ -274,12 +265,6 @@ final class OpenAIProvider: LLMProviderAdapter {
                 }
             }
 
-            tokenUsageStore.recordUsage(
-                providerID: credential.providerID,
-                model: model,
-                inputTokens: usage?.inputTokens, outputTokens: usage?.outputTokens,
-                projectIdentifier: projectUsageIdentifier
-            )
             onUsage?(usage?.inputTokens, usage?.outputTokens)
 
             let stopReason: AgentStopReason

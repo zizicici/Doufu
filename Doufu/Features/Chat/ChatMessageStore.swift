@@ -298,6 +298,11 @@ final class ChatMessageStore {
     private func transitionToProgress(text: String) {
         let now = Date()
 
+        // Cancel any pending stream refresh from a previous streaming phase
+        // to avoid stale index updates after the state transition.
+        streamRefreshWorkItem?.cancel()
+        streamRefreshWorkItem = nil
+
         // Finalize whatever is currently live.
         finalizeActiveFlowCell(finishedAt: now)
 

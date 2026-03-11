@@ -25,14 +25,11 @@ final class ProjectChatOrchestrator {
             }
         }
 
-        var usage: ProjectChatService.RequestTokenUsage? {
+        var totals: (inputTokens: Int64, outputTokens: Int64)? {
             guard inputTokens > 0 || outputTokens > 0 else {
                 return nil
             }
-            return ProjectChatService.RequestTokenUsage(
-                inputTokens: inputTokens,
-                outputTokens: outputTokens
-            )
+            return (inputTokens, outputTokens)
         }
     }
 
@@ -40,6 +37,7 @@ final class ProjectChatOrchestrator {
     private let memoryManager: SessionMemoryManager
     private let promptBuilder: PromptBuilder
     private let streamingClient: LLMStreamingClient
+    private let tokenUsageStore = LLMTokenUsageStore.shared
     private let gitService = ProjectGitService.shared
 
     init(
@@ -85,6 +83,7 @@ final class ProjectChatOrchestrator {
         toolProvider.validationServerBaseURL = validationServerBaseURL
         toolProvider.validationBridge = validationBridge
 
+        do {
         // Auto-save any uncommitted changes (e.g. user manual edits)
         // before the agent starts, so they are preserved for undo.
         autoSaveBeforeAgentLoop(workspaceURL: workspaceURL)
@@ -188,9 +187,11 @@ final class ProjectChatOrchestrator {
                 projectUsageIdentifier: projectIdentifier,
                 executionOptions: executionOptions,
                 onStreamedText: streamCallback,
-                onUsage: { inputTokens, outputTokens in
-                    Task { await usageAccumulator.record(inputTokens: inputTokens, outputTokens: outputTokens) }
-                }
+                onUsage: nil
+            )
+            await usageAccumulator.record(
+                inputTokens: response.usage?.inputTokens,
+                outputTokens: response.usage?.outputTokens
             )
 
             let responseText = response.textContent.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
@@ -243,8 +244,11 @@ final class ProjectChatOrchestrator {
                     assistantMessage: finalMessage,
                     changedPaths: allChangedPaths,
                     updatedMemory: updatedMemory,
-
-                    requestTokenUsage: await usageAccumulator.usage,
+                    requestTokenUsage: await persistedUsage(
+                        from: usageAccumulator,
+                        credential: credential,
+                        projectIdentifier: projectIdentifier
+                    ),
                     toolActivitySummary: toolActivityLog.isEmpty ? nil : toolActivityLog.joined(separator: "\n"),
                     toolMetadata: allToolMetadata
                 )
@@ -364,10 +368,24 @@ final class ProjectChatOrchestrator {
             assistantMessage: finalMessage,
             changedPaths: allChangedPaths,
             updatedMemory: updatedMemory,
-            requestTokenUsage: await usageAccumulator.usage,
+            requestTokenUsage: await persistedUsage(
+                from: usageAccumulator,
+                credential: credential,
+                projectIdentifier: projectIdentifier
+            ),
             toolActivitySummary: toolActivityLog.isEmpty ? nil : toolActivityLog.joined(separator: "\n"),
             toolMetadata: allToolMetadata
         )
+
+        } catch {
+            // Always record consumed tokens, even on cancel/error
+            let _ = await persistedUsage(
+                from: usageAccumulator,
+                credential: credential,
+                projectIdentifier: projectIdentifier
+            )
+            throw error
+        }
     }
 
     // MARK: - Helpers
@@ -416,6 +434,40 @@ final class ProjectChatOrchestrator {
         default:
             return String(format: String(localized: "tool.activity.unknown"), toolCall.name)
         }
+    }
+
+    private func persistedUsage(
+        from accumulator: UsageAccumulator,
+        credential: ProjectChatService.ProviderCredential,
+        projectIdentifier: String?
+    ) async -> ProjectChatService.RequestTokenUsage? {
+        guard let totals = await accumulator.totals else {
+            return nil
+        }
+
+        let tokenUsageID = tokenUsageStore.recordUsage(
+            providerID: credential.providerID,
+            model: credential.modelID,
+            inputTokens: clampedTokenCount(totals.inputTokens),
+            outputTokens: clampedTokenCount(totals.outputTokens),
+            projectIdentifier: projectIdentifier
+        )
+
+        return ProjectChatService.RequestTokenUsage(
+            tokenUsageID: tokenUsageID,
+            inputTokens: totals.inputTokens,
+            outputTokens: totals.outputTokens
+        )
+    }
+
+    private func clampedTokenCount(_ value: Int64) -> Int {
+        if value <= 0 {
+            return 0
+        }
+        if value >= Int64(Int.max) {
+            return Int.max
+        }
+        return Int(value)
     }
 
     private func readAgentsMarkdown(workspaceURL: URL) -> String? {

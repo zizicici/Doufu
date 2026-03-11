@@ -57,8 +57,6 @@ final class DatabaseManager {
                 t.column("label", .text).notNull()
                 t.column("base_url", .text).notNull()
                 t.column("auto_append_v1", .boolean).notNull().defaults(to: false)
-                t.column("chatgpt_account_id", .text)
-                t.column("model_id", .text)
                 t.column("extra", .text)
                 t.column("created_at", .integer).notNull()
                 t.column("updated_at", .integer).notNull()
@@ -155,6 +153,7 @@ final class DatabaseManager {
                 t.column("message_type", .integer).notNull().defaults(to: 1)
                 t.column("content", .text).notNull()
                 t.column("sort_order", .integer).notNull()
+                t.column("created_at", .integer).notNull()
                 t.column("token_usage_id", .integer)
                     .references("token_usage")
                 t.column("summary", .text)
@@ -188,5 +187,6 @@ final class DatabaseManager {
                 t.primaryKey(["project_id", "thread_id"])
             }
         }
+
     }
 }

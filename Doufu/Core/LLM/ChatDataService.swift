@@ -32,8 +32,8 @@ final class ChatDataService {
         modelSelection: ModelSelection?
     ) {
         let thread = try dataStore.switchCurrentThread(projectID: projectID, threadID: threadID)
-        let persisted = dataStore.loadMessages(projectID: projectID, threadID: threadID)
-        let memory = dataStore.loadSessionMemory(projectID: projectID, threadID: threadID)
+        let persisted = try dataStore.loadMessages(projectID: projectID, threadID: threadID)
+        let memory = try dataStore.loadSessionMemory(projectID: projectID, threadID: threadID)
         let modelSelection = LLMProviderSettingsStore.shared.loadThreadModelSelection(
             projectID: projectID, threadID: threadID
         )
@@ -69,6 +69,7 @@ final class ChatDataService {
                     let output = max(0, persistedMessage.outputTokens ?? 0)
                     guard input > 0 || output > 0 else { return nil }
                     return ProjectChatService.RequestTokenUsage(
+                        tokenUsageID: persistedMessage.tokenUsageID,
                         inputTokens: input,
                         outputTokens: output
                     )
@@ -86,7 +87,7 @@ final class ChatDataService {
 
     // MARK: - Auto-Persistence
 
-    func persistMessages(_ messages: [ChatMessage], threadID: String) {
+    func persistMessages(_ messages: [ChatMessage], threadID: String) throws {
         let persisted = messages.compactMap { message -> ProjectChatPersistedMessage? in
             let text = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { return nil }
@@ -97,26 +98,27 @@ final class ChatDataService {
                 startedAt: message.startedAt,
                 finishedAt: message.finishedAt,
                 isProgress: message.isProgress,
+                tokenUsageID: message.requestTokenUsage?.tokenUsageID,
                 inputTokens: message.requestTokenUsage?.inputTokens,
                 outputTokens: message.requestTokenUsage?.outputTokens,
                 toolSummary: message.toolSummary
             )
         }
-        dataStore.saveMessages(projectID: projectID, threadID: threadID, messages: persisted)
+        try dataStore.saveMessages(projectID: projectID, threadID: threadID, messages: persisted)
     }
 
-    func persistSessionMemory(_ memory: SessionMemory?, threadID: String) {
-        dataStore.saveSessionMemory(projectID: projectID, threadID: threadID, memory: memory)
+    func persistSessionMemory(_ memory: SessionMemory?, threadID: String) throws {
+        try dataStore.saveSessionMemory(projectID: projectID, threadID: threadID, memory: memory)
     }
 
     // MARK: - Ordered Persistence (used before thread switch)
 
-    func persistMessagesAsync(_ messages: [ChatMessage], threadID: String) {
-        persistMessages(messages, threadID: threadID)
+    func persistMessagesAsync(_ messages: [ChatMessage], threadID: String) throws {
+        try persistMessages(messages, threadID: threadID)
     }
 
-    func persistSessionMemoryAsync(_ memory: SessionMemory?, threadID: String) {
-        persistSessionMemory(memory, threadID: threadID)
+    func persistSessionMemoryAsync(_ memory: SessionMemory?, threadID: String) throws {
+        try persistSessionMemory(memory, threadID: threadID)
     }
 
     func touchThread(threadID: String) throws {

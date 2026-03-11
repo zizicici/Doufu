@@ -12,11 +12,23 @@ final class ChatDataStore {
 
     enum Error: LocalizedError {
         case missingProject(projectID: String)
+        case messageLoadFailed(threadID: String, underlying: any Swift.Error)
+        case messageSaveFailed(threadID: String, underlying: any Swift.Error)
+        case sessionMemoryLoadFailed(threadID: String, underlying: any Swift.Error)
+        case sessionMemorySaveFailed(threadID: String, underlying: any Swift.Error)
 
         var errorDescription: String? {
             switch self {
             case .missingProject(let projectID):
                 return "Project not found: \(projectID)"
+            case .messageLoadFailed(let threadID, let underlying):
+                return "Failed to load chat history for thread \(threadID): \(underlying.localizedDescription)"
+            case .messageSaveFailed(let threadID, let underlying):
+                return "Failed to save chat history for thread \(threadID): \(underlying.localizedDescription)"
+            case .sessionMemoryLoadFailed(let threadID, let underlying):
+                return "Failed to load session memory for thread \(threadID): \(underlying.localizedDescription)"
+            case .sessionMemorySaveFailed(let threadID, let underlying):
+                return "Failed to save session memory for thread \(threadID): \(underlying.localizedDescription)"
             }
         }
     }
@@ -86,39 +98,35 @@ final class ChatDataStore {
         let now = Date()
         let threadID = makeThreadID()
 
-        let threadCount = try dbPool.read { db in
-            try DBChatThread
+        let thread = try dbPool.write { db -> ProjectChatThreadRecord in
+            let threadCount = try DBChatThread
                 .filter(DBChatThread.Columns.projectID == projectID)
                 .fetchCount(db)
-        }
 
-        let nextCount = threadCount + 1
-        let resolvedTitle = normalizedThreadTitle(
-            title,
-            fallback: String(format: String(localized: "thread.default_title_format"), nextCount)
-        )
+            let nextCount = threadCount + 1
+            let resolvedTitle = normalizedThreadTitle(
+                title,
+                fallback: String(format: String(localized: "thread.default_title_format"), nextCount)
+            )
 
-        let thread = ProjectChatThreadRecord(
-            id: threadID,
-            title: resolvedTitle,
-            createdAt: now,
-            updatedAt: now,
-            currentVersion: 0
-        )
+            let record = ProjectChatThreadRecord(
+                id: threadID,
+                title: resolvedTitle,
+                createdAt: now,
+                updatedAt: now,
+                currentVersion: 0
+            )
 
-        try dbPool.write { db in
             if makeCurrent {
-                // Clear is_current for all threads in this project
                 try db.execute(
                     sql: "UPDATE thread SET is_current = 0 WHERE project_id = ?",
                     arguments: [projectID]
                 )
             }
 
-            let dbThread = DBChatThread.from(thread, projectID: projectID, isCurrent: makeCurrent, sortOrder: nextCount - 1)
+            let dbThread = DBChatThread.from(record, projectID: projectID, isCurrent: makeCurrent, sortOrder: nextCount - 1)
             try dbThread.insert(db)
 
-            // Create default assistant
             let assistant = DBAssistant(
                 id: UUID().uuidString.lowercased(),
                 threadID: threadID,
@@ -127,6 +135,8 @@ final class ChatDataStore {
                 createdAt: DatabaseTimestamp.toNanos(now)
             )
             try assistant.insert(db)
+
+            return record
         }
 
         return thread
@@ -160,9 +170,6 @@ final class ChatDataStore {
                   dbThread.projectID == projectID else {
                 throw ProjectChatThreadStoreError.threadNotFound
             }
-
-            // Clean up thread model selection from DB
-            LLMProviderSettingsStore.shared.removeThreadModelSelection(projectID: projectID, threadID: threadID)
 
             // CASCADE deletes assistant, message, session_memory
             try DBChatThread.deleteOne(db, key: threadID)
@@ -253,55 +260,85 @@ final class ChatDataStore {
 
     // MARK: - Messages
 
-    func loadMessages(projectID: String, threadID: String) -> [ProjectChatPersistedMessage] {
-        (try? dbPool.read { db in
-            let rows = try DBChatMessage
-                .filter(DBChatMessage.Columns.threadID == threadID)
-                .order(DBChatMessage.Columns.sortOrder)
-                .fetchAll(db)
-            return rows.map { $0.toPersistedMessage() }
-        }) ?? []
+    func loadMessages(projectID: String, threadID: String) throws -> [ProjectChatPersistedMessage] {
+        do {
+            return try dbPool.read { db in
+                let rows = try DBChatMessage
+                    .filter(DBChatMessage.Columns.threadID == threadID)
+                    .order(DBChatMessage.Columns.sortOrder)
+                    .fetchAll(db)
+                let tokenUsageIDs = Array(Set(rows.compactMap(\.tokenUsageID)))
+                let tokenUsageByID: [Int64: DBTokenUsage]
+
+                if tokenUsageIDs.isEmpty {
+                    tokenUsageByID = [:]
+                } else {
+                    let tokenUsageRows = try DBTokenUsage
+                        .filter(tokenUsageIDs.contains(Column("id")))
+                        .fetchAll(db)
+                    tokenUsageByID = Dictionary(
+                        uniqueKeysWithValues: tokenUsageRows.compactMap { row in
+                            guard let id = row.id else { return nil }
+                            return (id, row)
+                        }
+                    )
+                }
+
+                return rows.map { row in
+                    row.toPersistedMessage(tokenUsage: row.tokenUsageID.flatMap { tokenUsageByID[$0] })
+                }
+            }
+        } catch {
+            throw Error.messageLoadFailed(threadID: threadID, underlying: error)
+        }
     }
 
-    func saveMessages(projectID: String, threadID: String, messages: [ProjectChatPersistedMessage]) {
-        // Look up assistant_id for this thread
-        let assistantID: String? = try? dbPool.read { db in
-            try DBAssistant
-                .filter(DBAssistant.Columns.threadID == threadID)
-                .order(DBAssistant.Columns.sortOrder)
-                .fetchOne(db)?.id
-        }
+    func saveMessages(projectID: String, threadID: String, messages: [ProjectChatPersistedMessage]) throws {
+        do {
+            try dbPool.write { db in
+                let assistantID = try DBAssistant
+                    .filter(DBAssistant.Columns.threadID == threadID)
+                    .order(DBAssistant.Columns.sortOrder)
+                    .fetchOne(db)?.id
 
-        try? dbPool.write { db in
-            // Delete existing messages
-            try DBChatMessage
-                .filter(DBChatMessage.Columns.threadID == threadID)
-                .deleteAll(db)
+                try DBChatMessage
+                    .filter(DBChatMessage.Columns.threadID == threadID)
+                    .deleteAll(db)
 
-            // Batch insert
-            for (index, msg) in messages.enumerated() {
-                let dbMsg = DBChatMessage.from(msg, threadID: threadID, assistantID: assistantID, sortOrder: index)
-                try dbMsg.insert(db)
+                for (index, msg) in messages.enumerated() {
+                    let dbMsg = DBChatMessage.from(msg, threadID: threadID, assistantID: assistantID, sortOrder: index)
+                    try dbMsg.insert(db)
+                }
             }
+        } catch {
+            throw Error.messageSaveFailed(threadID: threadID, underlying: error)
         }
     }
 
     // MARK: - Session Memory
 
-    func loadSessionMemory(projectID: String, threadID: String) -> SessionMemory? {
-        try? dbPool.read { db in
-            try DBSessionMemory.fetchOne(db, key: threadID)?.toSessionMemory()
+    func loadSessionMemory(projectID: String, threadID: String) throws -> SessionMemory? {
+        do {
+            return try dbPool.read { db in
+                try DBSessionMemory.fetchOne(db, key: threadID)?.toSessionMemory()
+            }
+        } catch {
+            throw Error.sessionMemoryLoadFailed(threadID: threadID, underlying: error)
         }
     }
 
-    func saveSessionMemory(projectID: String, threadID: String, memory: SessionMemory?) {
-        try? dbPool.write { db in
-            guard let memory else {
-                try DBSessionMemory.deleteOne(db, key: threadID)
-                return
+    func saveSessionMemory(projectID: String, threadID: String, memory: SessionMemory?) throws {
+        do {
+            try dbPool.write { db in
+                guard let memory else {
+                    try DBSessionMemory.deleteOne(db, key: threadID)
+                    return
+                }
+                let dbMemory = DBSessionMemory.from(memory, threadID: threadID)
+                try dbMemory.save(db)
             }
-            let dbMemory = DBSessionMemory.from(memory, threadID: threadID)
-            try dbMemory.save(db)
+        } catch {
+            throw Error.sessionMemorySaveFailed(threadID: threadID, underlying: error)
         }
     }
 

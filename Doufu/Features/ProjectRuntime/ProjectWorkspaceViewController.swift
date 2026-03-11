@@ -61,7 +61,6 @@ final class ProjectWorkspaceViewController: UIViewController {
     private var webLoadingCover: UIView?
     private let webServer: LocalWebServer
     private let doufuBridge: DoufuBridge
-    private lazy var chatDataService = ChatDataService(projectID: project.id)
     private var chatPresentationTask: Task<Void, Never>?
 
     private lazy var webView: WKWebView = {
@@ -244,6 +243,20 @@ final class ProjectWorkspaceViewController: UIViewController {
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
         if isBeingDismissed {
+            // End the chat session only if no execution is in flight.
+            // If the agent is still running, the session will persist in the
+            // manager until it finishes (and can be retrieved if the project
+            // is reopened).
+            if let session = ChatSessionManager.shared.existingSession(projectID: project.id) {
+                // Clear the closure to avoid holding references to this VC's
+                // resources (webView, projectStore) after dismissal.
+                session.onProjectFilesUpdated = nil
+                if !session.taskCoordinator.isExecuting {
+                    ChatSessionManager.shared.endSession(projectID: project.id)
+                }
+                // If executing, the session self-cleans via
+                // coordinatorDidFinishExecution when the task ends.
+            }
             onDismissed?()
         }
     }
@@ -793,7 +806,14 @@ final class ProjectWorkspaceViewController: UIViewController {
     }
 
     private func presentChatController(readOnly: Bool) {
-        let chatController = ChatViewController(project: project)
+        let session = ChatSessionManager.shared.session(for: project)
+        session.onProjectFilesUpdated = { [weak self] in
+            guard let self else { return }
+            self.hasProjectBeenModified = true
+            self.projectStore.touchProjectUpdatedAt(projectID: self.project.id)
+            self.webView.reload()
+        }
+        let chatController = ChatViewController(session: session)
         chatController.isReadOnly = readOnly
         chatController.validationServerBaseURL = webServer.baseURL
         // Use a temp bridge for validation so localStorage writes don't pollute real user data.
@@ -801,12 +821,6 @@ final class ProjectWorkspaceViewController: UIViewController {
             .appendingPathComponent("doufu_validation", isDirectory: true)
             .appendingPathComponent(projectIdentifier, isDirectory: true)
         chatController.validationBridge = DoufuBridge(projectURL: projectURL, storageDirectoryOverride: tempStorageDir)
-        chatController.onProjectFilesUpdated = { [weak self] in
-            guard let self else { return }
-            self.hasProjectBeenModified = true
-            self.projectStore.touchProjectUpdatedAt(projectID: self.project.id)
-            self.webView.reload()
-        }
 
         let navigationController = UINavigationController(rootViewController: chatController)
         navigationController.modalPresentationStyle = .pageSheet

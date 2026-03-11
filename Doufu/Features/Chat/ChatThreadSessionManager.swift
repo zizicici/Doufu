@@ -58,7 +58,7 @@ final class ChatThreadSessionManager {
     func createAndSwitchThread() {
         guard !isExecutingProvider() else { return }
         do {
-            persistCurrentState()
+            try persistCurrentState()
             _ = try dataService.createThread(title: nil)
             threadIndex = try dataService.loadThreadIndex()
             guard let currentThreadID = threadIndex?.currentThreadID else {
@@ -71,7 +71,7 @@ final class ChatThreadSessionManager {
     }
 
     private func switchToThread(threadID: String) throws {
-        persistCurrentState()
+        try persistCurrentState()
 
         let result = try dataService.switchThread(threadID: threadID)
         threadIndex = try dataService.loadThreadIndex()
@@ -88,7 +88,11 @@ final class ChatThreadSessionManager {
 
     func updateSessionMemory(_ memory: SessionMemory?) {
         sessionMemory = memory
-        persistSessionMemory()
+        do {
+            try persistSessionMemory()
+        } catch {
+            delegate?.threadSessionDidEncounterError(error)
+        }
     }
 
     // MARK: - Thread Metadata
@@ -133,15 +137,15 @@ final class ChatThreadSessionManager {
 
     // MARK: - Private
 
-    private func persistCurrentState() {
+    private func persistCurrentState() throws {
         guard let currentThread else { return }
-        dataService.persistMessages(messageStore.messages, threadID: currentThread.id)
+        try dataService.persistMessages(messageStore.messages, threadID: currentThread.id)
         modelSelection.persistCurrentModelSelection()
-        dataService.persistSessionMemory(sessionMemory, threadID: currentThread.id)
+        try dataService.persistSessionMemory(sessionMemory, threadID: currentThread.id)
     }
 
-    private func persistSessionMemory() {
+    private func persistSessionMemory() throws {
         guard let currentThread else { return }
-        dataService.persistSessionMemory(sessionMemory, threadID: currentThread.id)
+        try dataService.persistSessionMemory(sessionMemory, threadID: currentThread.id)
     }
 }

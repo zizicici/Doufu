@@ -16,8 +16,6 @@ final class AnthropicProvider: LLMProviderAdapter {
         return enc
     }()
 
-    private let tokenUsageStore = LLMTokenUsageStore.shared
-
     init(configuration: ProjectChatConfiguration) {
         self.configuration = configuration
     }
@@ -181,12 +179,6 @@ final class AnthropicProvider: LLMProviderAdapter {
                 throw ProjectChatService.ServiceError.invalidResponse
             }
 
-            self.tokenUsageStore.recordUsage(
-                providerID: credential.providerID,
-                model: model,
-                inputTokens: inputTokens, outputTokens: outputTokens,
-                projectIdentifier: projectUsageIdentifier
-            )
             onUsage?(inputTokens, outputTokens)
 
             return streamedText
@@ -415,12 +407,6 @@ final class AnthropicProvider: LLMProviderAdapter {
                 }
             }
 
-            self.tokenUsageStore.recordUsage(
-                providerID: credential.providerID,
-                model: model,
-                inputTokens: inputTokens, outputTokens: outputTokens,
-                projectIdentifier: projectUsageIdentifier
-            )
             onUsage?(inputTokens, outputTokens)
 
             let usage = ResponsesUsage(

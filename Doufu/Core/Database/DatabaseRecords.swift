@@ -517,6 +517,7 @@ struct DBChatMessage: Codable, FetchableRecord, PersistableRecord {
     var messageType: Int
     var content: String
     var sortOrder: Int
+    var createdAt: Int64
     var tokenUsageID: Int64?
     var summary: String?
     var startedAt: Int64?
@@ -529,6 +530,7 @@ struct DBChatMessage: Codable, FetchableRecord, PersistableRecord {
         case messageType = "message_type"
         case content
         case sortOrder = "sort_order"
+        case createdAt = "created_at"
         case tokenUsageID = "token_usage_id"
         case summary
         case startedAt = "started_at"
@@ -542,6 +544,7 @@ struct DBChatMessage: Codable, FetchableRecord, PersistableRecord {
         case messageType = "message_type"
         case content
         case sortOrder = "sort_order"
+        case createdAt = "created_at"
         case tokenUsageID = "token_usage_id"
         case summary
         case startedAt = "started_at"
@@ -619,14 +622,15 @@ extension DBChatMessage {
             messageType: messageType,
             content: msg.text,
             sortOrder: sortOrder,
-            tokenUsageID: nil,
+            createdAt: DatabaseTimestamp.toNanos(msg.createdAt),
+            tokenUsageID: msg.tokenUsageID,
             summary: msg.toolSummary,
             startedAt: msg.startedAt.map(DatabaseTimestamp.toNanos),
             finishedAt: msg.finishedAt.map(DatabaseTimestamp.toNanos)
         )
     }
 
-    func toPersistedMessage() -> ProjectChatPersistedMessage {
+    func toPersistedMessage(tokenUsage: DBTokenUsage?) -> ProjectChatPersistedMessage {
         let role: String
         if messageType == DBChatMessage.typeSystem {
             role = "system"
@@ -639,12 +643,13 @@ extension DBChatMessage {
         return ProjectChatPersistedMessage(
             role: role,
             text: content,
-            createdAt: startedAt.map(DatabaseTimestamp.fromNanos) ?? Date(),
+            createdAt: DatabaseTimestamp.fromNanos(createdAt),
             startedAt: startedAt.map(DatabaseTimestamp.fromNanos),
             finishedAt: finishedAt.map(DatabaseTimestamp.fromNanos),
             isProgress: messageType == DBChatMessage.typeProgress,
-            inputTokens: nil,
-            outputTokens: nil,
+            tokenUsageID: tokenUsageID,
+            inputTokens: tokenUsage?.inputTokens,
+            outputTokens: tokenUsage?.outputTokens,
             toolSummary: summary
         )
     }

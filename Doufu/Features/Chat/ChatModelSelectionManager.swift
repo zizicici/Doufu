@@ -28,7 +28,7 @@ final class ChatModelSelectionManager {
     private let modelSelectionStore: ModelSelectionStateStore
 
     private let projectID: String
-    private let currentThreadIDProvider: () -> String?
+    var currentThreadIDProvider: () -> String?
 
     private var modelRefreshTask: Task<Void, Never>?
     private var modelSelectionObserver: NSObjectProtocol?

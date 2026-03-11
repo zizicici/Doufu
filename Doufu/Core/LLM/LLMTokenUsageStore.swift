@@ -55,25 +55,26 @@ final class LLMTokenUsageStore {
 
     init() {}
 
+    @discardableResult
     func recordUsage(
         providerID: String,
         model: String,
         inputTokens: Int?,
         outputTokens: Int?,
         projectIdentifier: String? = nil
-    ) {
+    ) -> Int64? {
         let normalizedProviderID = providerID.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedProjectIdentifier = normalizeProjectIdentifier(projectIdentifier)
 
         guard !normalizedProviderID.isEmpty, !normalizedModel.isEmpty else {
-            return
+            return nil
         }
 
         let normalizedInput = Int64(max(0, inputTokens ?? 0))
         let normalizedOutput = Int64(max(0, outputTokens ?? 0))
         guard normalizedInput > 0 || normalizedOutput > 0 else {
-            return
+            return nil
         }
 
         let row = DBTokenUsage(
@@ -85,9 +86,10 @@ final class LLMTokenUsageStore {
             outputTokens: normalizedOutput,
             createdAt: DatabaseTimestamp.toNanos(Date())
         )
-        try? dbPool.write { db in
+        return try? dbPool.write { db in
             var mutableRow = row
             try mutableRow.insert(db)
+            return mutableRow.id
         }
     }
 
@@ -144,7 +146,9 @@ final class LLMTokenUsageStore {
                 arguments += [normalizedProject]
             }
 
-            let row = try Row.fetchOne(db, sql: sql, arguments: arguments)!
+            guard let row = try Row.fetchOne(db, sql: sql, arguments: arguments) else {
+                return LLMTokenUsageTotals(inputTokens: 0, outputTokens: 0)
+            }
             return LLMTokenUsageTotals(
                 inputTokens: row["input_total"],
                 outputTokens: row["output_total"]

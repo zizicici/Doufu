@@ -16,8 +16,6 @@ final class GeminiProvider: LLMProviderAdapter {
         return enc
     }()
 
-    private let tokenUsageStore = LLMTokenUsageStore.shared
-
     init(configuration: ProjectChatConfiguration) {
         self.configuration = configuration
     }
@@ -108,13 +106,6 @@ final class GeminiProvider: LLMProviderAdapter {
 
             if let onStreamedText { await onStreamedText(finalResponseText) }
 
-            tokenUsageStore.recordUsage(
-                providerID: credential.providerID,
-                model: model,
-                inputTokens: decoded.usageMetadata?.promptTokenCount,
-                outputTokens: geminiOutputTokenCount(from: decoded.usageMetadata),
-                projectIdentifier: projectUsageIdentifier
-            )
             onUsage?(decoded.usageMetadata?.promptTokenCount, geminiOutputTokenCount(from: decoded.usageMetadata))
             return finalResponseText
         }
@@ -229,12 +220,6 @@ final class GeminiProvider: LLMProviderAdapter {
         let outputTokens = (decoded.usageMetadata?.candidatesTokenCount != nil || decoded.usageMetadata?.thoughtsTokenCount != nil)
             ? candidates + thoughts : nil
 
-        tokenUsageStore.recordUsage(
-            providerID: credential.providerID,
-            model: model,
-            inputTokens: inputTokens, outputTokens: outputTokens,
-            projectIdentifier: projectUsageIdentifier
-        )
         onUsage?(inputTokens, outputTokens)
 
         let usage = ResponsesUsage(

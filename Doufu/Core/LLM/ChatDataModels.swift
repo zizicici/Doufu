@@ -27,6 +27,7 @@ struct ProjectChatPersistedMessage: Codable {
     let startedAt: Date?
     let finishedAt: Date?
     let isProgress: Bool
+    let tokenUsageID: Int64?
     let inputTokens: Int64?
     let outputTokens: Int64?
     let toolSummary: String?
@@ -38,6 +39,7 @@ struct ProjectChatPersistedMessage: Codable {
         startedAt: Date? = nil,
         finishedAt: Date? = nil,
         isProgress: Bool = false,
+        tokenUsageID: Int64? = nil,
         inputTokens: Int64? = nil,
         outputTokens: Int64? = nil,
         toolSummary: String? = nil
@@ -48,6 +50,7 @@ struct ProjectChatPersistedMessage: Codable {
         self.startedAt = startedAt
         self.finishedAt = finishedAt
         self.isProgress = isProgress
+        self.tokenUsageID = tokenUsageID
         self.inputTokens = inputTokens
         self.outputTokens = outputTokens
         self.toolSummary = toolSummary
@@ -60,6 +63,7 @@ struct ProjectChatPersistedMessage: Codable {
         case startedAt
         case finishedAt
         case isProgress
+        case tokenUsageID
         case inputTokens
         case outputTokens
         case toolSummary
@@ -73,6 +77,7 @@ struct ProjectChatPersistedMessage: Codable {
         startedAt = try container.decodeIfPresent(Date.self, forKey: .startedAt)
         finishedAt = try container.decodeIfPresent(Date.self, forKey: .finishedAt)
         isProgress = try container.decodeIfPresent(Bool.self, forKey: .isProgress) ?? false
+        tokenUsageID = try container.decodeIfPresent(Int64.self, forKey: .tokenUsageID)
         inputTokens = try container.decodeIfPresent(Int64.self, forKey: .inputTokens)
         outputTokens = try container.decodeIfPresent(Int64.self, forKey: .outputTokens)
         toolSummary = try container.decodeIfPresent(String.self, forKey: .toolSummary)
