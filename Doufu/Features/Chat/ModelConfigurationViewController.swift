@@ -11,13 +11,13 @@ import UIKit
 final class ModelConfigurationViewController: UITableViewController {
     struct SelectionState {
         var selectedProviderID: String
-        var selectedModelIDByProviderID: [String: String]
-        var selectedReasoningEffortsByModelID: [String: ProjectChatService.ReasoningEffort]
-        var selectedAnthropicThinkingEnabledByModelID: [String: Bool]
-        var selectedGeminiThinkingEnabledByModelID: [String: Bool]
+        var selectedModelRecordID: String
+        var selectedReasoningEffort: ProjectChatService.ReasoningEffort?
+        var selectedThinkingEnabled: Bool?
     }
 
-    var onSelectionStateChanged: ((SelectionState) -> Void)?
+    var onSelectionStateChanged: ((SelectionState) -> SelectionApplyOutcome)?
+    var onResetToDefaults: (() -> SelectionState)?
 
     private enum Section: Int, CaseIterable {
         case provider
@@ -27,16 +27,20 @@ final class ModelConfigurationViewController: UITableViewController {
     }
 
     private enum ManageRow: Int, CaseIterable {
+        case useDefault
+        case manageProviders
         case refreshOfficialModels
         case addCustomModel
     }
 
-    private let providers: [ProjectChatService.ProviderCredential]
+    private var providers: [LLMProviderRecord] = []
+    private var availableProviderIDs: Set<String> = []
     private var state: SelectionState
     private let projectUsageIdentifier: String
     private let usageStore = LLMTokenUsageStore.shared
     private let providerStore = LLMProviderSettingsStore.shared
     private let modelDiscoveryService = LLMProviderModelDiscoveryService()
+    private var showsResetToDefaults: Bool
     private var usageRecords: [LLMTokenUsageRecord] = []
     private var usageByProviderID: [String: Int64] = [:]
     private var usageByProviderModel: [String: Int64] = [:]
@@ -50,12 +54,12 @@ final class ModelConfigurationViewController: UITableViewController {
     }()
 
     init(
-        providers: [ProjectChatService.ProviderCredential],
         initialState: SelectionState,
+        showsResetToDefaults: Bool,
         projectUsageIdentifier: String
     ) {
-        self.providers = providers
         state = initialState
+        self.showsResetToDefaults = showsResetToDefaults
         self.projectUsageIdentifier = projectUsageIdentifier
         super.init(style: .insetGrouped)
     }
@@ -67,14 +71,15 @@ final class ModelConfigurationViewController: UITableViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        refreshNavigationTitle()
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "ProjectModelConfigCell")
         tableView.register(SettingsToggleCell.self, forCellReuseIdentifier: SettingsToggleCell.reuseIdentifier)
+        reloadProviderContext()
         reloadUsageData()
     }
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
+        reloadProviderContext()
         reloadUsageData()
     }
 
@@ -97,30 +102,29 @@ final class ModelConfigurationViewController: UITableViewController {
         case .provider:
             return providers.count
         case .model:
-            guard let selectedProvider = selectedProviderCredential() else {
+            guard let selectedProvider = selectedProviderRecord() else {
                 return 0
             }
             return availableModels(for: selectedProvider).count
         case .parameter:
-            guard let selectedProvider = selectedProviderCredential() else {
+            guard let selectedProvider = selectedProviderRecord() else {
                 return 0
             }
-            let selectedModelRecordID = selectedModelRecordID(for: selectedProvider)
-            guard !selectedModelRecordID.isEmpty else {
+            guard let selectedModel = selectedModelRecord(for: selectedProvider) else {
                 return 0
             }
-            switch selectedProvider.providerKind {
+            switch selectedProvider.kind {
             case .openAICompatible:
-                return reasoningProfile(for: selectedProvider, modelID: selectedModelRecordID)?
+                return reasoningProfile(for: selectedProvider, modelID: selectedModel.id)?
                     .supported.count ?? 0
             case .anthropic, .googleGemini:
-                return resolveModelProfile(for: selectedProvider, modelID: selectedModelRecordID).thinkingSupported ? 1 : 0
+                return resolveModelProfile(for: selectedProvider, modelID: selectedModel.id).thinkingSupported ? 1 : 0
             }
         case .manage:
-            guard selectedProviderCredential() != nil else {
+            guard selectedProviderRecord() != nil else {
                 return 0
             }
-            return ManageRow.allCases.count
+            return visibleManageRows.count
         }
     }
 
@@ -134,10 +138,13 @@ final class ModelConfigurationViewController: UITableViewController {
         case .model:
             return String(localized: "chat.menu.model")
         case .parameter:
-            guard let selectedProvider = selectedProviderCredential() else {
+            guard let selectedProvider = selectedProviderRecord() else {
                 return nil
             }
-            switch selectedProvider.providerKind {
+            guard selectedModelRecord(for: selectedProvider) != nil else {
+                return nil
+            }
+            switch selectedProvider.kind {
             case .openAICompatible:
                 return String(localized: "chat.menu.reasoning")
             case .anthropic, .googleGemini:
@@ -154,7 +161,7 @@ final class ModelConfigurationViewController: UITableViewController {
         }
         switch section {
         case .model:
-            let models = selectedProviderCredential().flatMap { availableModels(for: $0) } ?? []
+            let models = selectedProviderRecord().flatMap { availableModels(for: $0) } ?? []
             return models.isEmpty ? nil : String(localized: "model_config.section.model.footer")
         default:
             return nil
@@ -178,12 +185,12 @@ final class ModelConfigurationViewController: UITableViewController {
             configuration.secondaryText = providerSubtitle(for: provider)
             configuration.secondaryTextProperties.color = .secondaryLabel
             cell.contentConfiguration = configuration
-            cell.accessoryType = provider.providerID == state.selectedProviderID ? .checkmark : .none
+            cell.accessoryType = provider.id == state.selectedProviderID ? .checkmark : .none
             return cell
 
         case .model:
             let cell = tableView.dequeueReusableCell(withIdentifier: "ProjectModelConfigCell", for: indexPath)
-            guard let selectedProvider = selectedProviderCredential() else {
+            guard let selectedProvider = selectedProviderRecord() else {
                 return cell
             }
             let models = availableModels(for: selectedProvider)
@@ -196,7 +203,7 @@ final class ModelConfigurationViewController: UITableViewController {
             configuration.text = model.effectiveDisplayName
             let usageText = usedTokenCountText(
                 modelTokenUsage(
-                    providerID: selectedProvider.providerID,
+                    providerID: selectedProvider.id,
                     modelID: modelID
                 )
             )
@@ -216,14 +223,14 @@ final class ModelConfigurationViewController: UITableViewController {
             return cell
 
         case .parameter:
-            guard let selectedProvider = selectedProviderCredential() else {
+            guard let selectedProvider = selectedProviderRecord() else {
                 return UITableViewCell()
             }
-            let selectedModelRecordID = selectedModelRecordID(for: selectedProvider)
-            guard !selectedModelRecordID.isEmpty else {
+            guard let selectedModel = selectedModelRecord(for: selectedProvider) else {
                 return UITableViewCell()
             }
-            switch selectedProvider.providerKind {
+            let selectedModelRecordID = selectedModel.id
+            switch selectedProvider.kind {
             case .openAICompatible:
                 let cell = tableView.dequeueReusableCell(withIdentifier: "ProjectModelConfigCell", for: indexPath)
                 let profile = reasoningProfile(for: selectedProvider, modelID: selectedModelRecordID)
@@ -235,7 +242,7 @@ final class ModelConfigurationViewController: UITableViewController {
                 var configuration = cell.defaultContentConfiguration()
                 configuration.text = effort.displayName
                 cell.contentConfiguration = configuration
-                let currentEffort = selectedReasoningEffort(for: selectedProvider, modelID: selectedModelRecordID)
+                let currentEffort = resolvedReasoningEffort(for: selectedProvider, modelID: selectedModelRecordID)
                 cell.accessoryType = effort == currentEffort ? .checkmark : .none
                 return cell
 
@@ -249,15 +256,11 @@ final class ModelConfigurationViewController: UITableViewController {
                     return UITableViewCell()
                 }
                 let capabilities = resolveModelProfile(for: selectedProvider, modelID: selectedModelRecordID)
-                let isOn: Bool
-                switch selectedProvider.providerKind {
-                case .anthropic:
-                    isOn = selectedAnthropicThinkingEnabled(for: selectedProvider, modelID: selectedModelRecordID)
-                case .googleGemini:
-                    isOn = selectedGeminiThinkingEnabled(for: selectedProvider, modelID: selectedModelRecordID)
-                case .openAICompatible:
-                    isOn = true
-                }
+                let isOn = resolvedThinkingEnabled(
+                    for: selectedProvider,
+                    modelID: selectedModelRecordID,
+                    thinkingEnabled: state.selectedThinkingEnabled
+                )
                 cell.configure(
                     title: capabilities.thinkingCanDisable
                         ? String(localized: "chat.menu.thinking")
@@ -265,15 +268,8 @@ final class ModelConfigurationViewController: UITableViewController {
                     isOn: isOn
                 ) { [weak self] value in
                     guard let self else { return }
-                    let key = self.normalizedModelID(selectedModelRecordID)
-                    switch selectedProvider.providerKind {
-                    case .anthropic:
-                        self.state.selectedAnthropicThinkingEnabledByModelID[key] = value
-                    case .googleGemini:
-                        self.state.selectedGeminiThinkingEnabledByModelID[key] = value
-                    case .openAICompatible:
-                        break
-                    }
+                    guard value != isOn else { return }
+                    self.applyThinkingEnabled(value, for: selectedProvider, modelID: selectedModelRecordID)
                     self.notifySelectionChanged()
                 }
                 cell.isUserInteractionEnabled = capabilities.thinkingCanDisable
@@ -282,11 +278,24 @@ final class ModelConfigurationViewController: UITableViewController {
             }
         case .manage:
             let cell = tableView.dequeueReusableCell(withIdentifier: "ProjectModelConfigCell", for: indexPath)
-            guard let row = ManageRow(rawValue: indexPath.row) else {
+            let rows = visibleManageRows
+            guard rows.indices.contains(indexPath.row) else {
                 return cell
             }
+            let row = rows[indexPath.row]
             var configuration = cell.defaultContentConfiguration()
             switch row {
+            case .useDefault:
+                configuration.text = String(localized: "project_settings.chat.tool_permission.use_default")
+                configuration.secondaryText = nil
+                cell.accessoryType = .none
+            case .manageProviders:
+                configuration.text = String(localized: "settings.providers.title")
+                configuration.secondaryText = String(
+                    localized: "chat.model_selection.manage_provider",
+                    defaultValue: "Fix provider credentials or add providers."
+                )
+                cell.accessoryType = .disclosureIndicator
             case .refreshOfficialModels:
                 configuration.text = isRefreshingModels
                     ? String(localized: "model_config.manage.refreshing_models")
@@ -312,10 +321,10 @@ final class ModelConfigurationViewController: UITableViewController {
         case .provider, .model:
             return indexPath
         case .parameter:
-            guard let selectedProvider = selectedProviderCredential() else {
+            guard let selectedProvider = selectedProviderRecord() else {
                 return nil
             }
-            switch selectedProvider.providerKind {
+            switch selectedProvider.kind {
             case .openAICompatible:
                 return indexPath
             case .anthropic, .googleGemini:
@@ -331,7 +340,7 @@ final class ModelConfigurationViewController: UITableViewController {
         trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath
     ) -> UISwipeActionsConfiguration? {
         guard Section(rawValue: indexPath.section) == .model,
-              let selectedProvider = selectedProviderCredential()
+              let selectedProvider = selectedProviderRecord()
         else { return nil }
         let models = availableModels(for: selectedProvider)
         guard models.indices.contains(indexPath.row) else { return nil }
@@ -363,18 +372,18 @@ final class ModelConfigurationViewController: UITableViewController {
                 return
             }
             let selectedProvider = providers[indexPath.row]
-            state.selectedProviderID = selectedProvider.providerID
-            let selectedModelRecordID = selectedModelRecordID(for: selectedProvider)
-            if selectedModelRecordID.isEmpty {
-                state.selectedModelIDByProviderID.removeValue(forKey: selectedProvider.providerID)
-            } else {
-                state.selectedModelIDByProviderID[selectedProvider.providerID] = selectedModelRecordID
+            guard selectedProvider.id != state.selectedProviderID else {
+                return
             }
+            state.selectedProviderID = selectedProvider.id
+            state.selectedModelRecordID = availableModels(for: selectedProvider).first?.id ?? ""
+            state.selectedReasoningEffort = nil
+            state.selectedThinkingEnabled = nil
             notifySelectionChanged()
             tableView.reloadData()
 
         case .model:
-            guard let selectedProvider = selectedProviderCredential() else {
+            guard let selectedProvider = selectedProviderRecord() else {
                 return
             }
             let models = availableModels(for: selectedProvider)
@@ -382,19 +391,24 @@ final class ModelConfigurationViewController: UITableViewController {
                 return
             }
             let modelID = models[indexPath.row].id
-            state.selectedModelIDByProviderID[selectedProvider.providerID] = modelID
-            if selectedProvider.providerKind == .openAICompatible {
-                _ = selectedReasoningEffort(for: selectedProvider, modelID: modelID)
+            guard modelID.caseInsensitiveCompare(selectedModelRecordID(for: selectedProvider)) != .orderedSame else {
+                return
             }
+            state.selectedModelRecordID = modelID
+            state.selectedReasoningEffort = nil
+            state.selectedThinkingEnabled = nil
             notifySelectionChanged()
             tableView.reloadData()
 
         case .parameter:
-            guard let selectedProvider = selectedProviderCredential() else {
+            guard let selectedProvider = selectedProviderRecord() else {
                 return
             }
-            let selectedModelRecordID = selectedModelRecordID(for: selectedProvider)
-            switch selectedProvider.providerKind {
+            guard let selectedModel = selectedModelRecord(for: selectedProvider) else {
+                return
+            }
+            let selectedModelRecordID = selectedModel.id
+            switch selectedProvider.kind {
             case .openAICompatible:
                 guard
                     let profile = reasoningProfile(for: selectedProvider, modelID: selectedModelRecordID),
@@ -403,80 +417,100 @@ final class ModelConfigurationViewController: UITableViewController {
                     return
                 }
                 let selectedEffort = profile.supported[indexPath.row]
-                state.selectedReasoningEffortsByModelID[normalizedModelID(selectedModelRecordID)] = selectedEffort
+                guard selectedEffort != resolvedReasoningEffort(for: selectedProvider, modelID: selectedModelRecordID) else {
+                    return
+                }
+                applyReasoningEffort(selectedEffort, for: selectedProvider, modelID: selectedModelRecordID)
                 notifySelectionChanged()
                 tableView.reloadSections(IndexSet(integer: Section.parameter.rawValue), with: .none)
             case .anthropic, .googleGemini:
                 return
             }
         case .manage:
-            guard
-                let selectedProvider = selectedProviderCredential(),
-                let row = ManageRow(rawValue: indexPath.row)
-            else {
+            guard visibleManageRows.indices.contains(indexPath.row) else {
                 return
             }
+            let row = visibleManageRows[indexPath.row]
             switch row {
+            case .useDefault:
+                guard let resetState = onResetToDefaults?() else {
+                    return
+                }
+                state = resetState
+                showsResetToDefaults = false
+                refreshNavigationTitle()
+                tableView.reloadData()
+            case .manageProviders:
+                let controller = ManageProvidersViewController()
+                navigationController?.pushViewController(controller, animated: true)
             case .refreshOfficialModels:
+                guard let selectedProvider = selectedProviderRecord() else {
+                    return
+                }
                 refreshOfficialModels(for: selectedProvider)
             case .addCustomModel:
+                guard let selectedProvider = selectedProviderRecord() else {
+                    return
+                }
                 presentModelEditor(provider: selectedProvider, existingModel: nil)
             }
         }
     }
 
-    private func selectedProviderCredential() -> ProjectChatService.ProviderCredential? {
-        if let credential = providers.first(where: { $0.providerID == state.selectedProviderID }) {
-            return credential
+    private func selectedProviderRecord() -> LLMProviderRecord? {
+        if let provider = providers.first(where: { $0.id == state.selectedProviderID }) {
+            return provider
         }
         return providers.first
     }
 
-    private func selectedModelRecordID(for provider: ProjectChatService.ProviderCredential) -> String {
-        let remembered = state.selectedModelIDByProviderID[provider.providerID]?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    private func selectedModelRecordID(for provider: LLMProviderRecord) -> String {
+        let remembered = state.selectedProviderID == provider.id
+            ? state.selectedModelRecordID.trimmingCharacters(in: .whitespacesAndNewlines)
+            : ""
         if !remembered.isEmpty {
             return remembered
         }
         return availableModels(for: provider).first?.id ?? ""
     }
 
-    private func selectedModelID(for provider: ProjectChatService.ProviderCredential) -> String {
+    private func selectedModelRecord(for provider: LLMProviderRecord) -> LLMProviderModelRecord? {
         let selectedRecordID = selectedModelRecordID(for: provider)
-        if let model = availableModels(for: provider).first(where: { $0.normalizedID == selectedRecordID.lowercased() }) {
-            return model.modelID
+        guard !selectedRecordID.isEmpty else {
+            return nil
         }
-        let fallback = provider.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
-        return fallback
+        return availableModels(for: provider).first(where: {
+            $0.normalizedID == selectedRecordID.lowercased()
+        })
     }
 
-    private func availableModels(for provider: ProjectChatService.ProviderCredential) -> [LLMProviderModelRecord] {
-        providerStore.availableModels(forProviderID: provider.providerID)
+    private func availableModels(for provider: LLMProviderRecord) -> [LLMProviderModelRecord] {
+        providerStore.availableModels(forProviderID: provider.id)
     }
 
-    private func providerTitle(for provider: ProjectChatService.ProviderCredential) -> String {
-        let normalizedLabel = provider.providerLabel.trimmingCharacters(in: .whitespacesAndNewlines)
-        return normalizedLabel.isEmpty ? provider.providerKind.displayName : normalizedLabel
+    private func providerTitle(for provider: LLMProviderRecord) -> String {
+        let normalizedLabel = provider.label.trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalizedLabel.isEmpty ? provider.kind.displayName : normalizedLabel
     }
 
     private func resolveModelProfile(
-        for provider: ProjectChatService.ProviderCredential,
+        for provider: LLMProviderRecord,
         modelID: String
     ) -> ResolvedModelProfile {
-        let record = providerStore.modelRecord(providerID: provider.providerID, modelID: modelID)
+        let record = providerStore.modelRecord(providerID: provider.id, modelID: modelID)
             ?? availableModels(for: provider).first(where: { $0.normalizedModelID == normalizedModelID(modelID) })
         return LLMModelRegistry.resolve(
-            providerKind: provider.providerKind,
+            providerKind: provider.kind,
             modelID: record?.modelID ?? modelID,
             modelRecord: record
         )
     }
 
     private func reasoningProfile(
-        for provider: ProjectChatService.ProviderCredential,
+        for provider: LLMProviderRecord,
         modelID: String
     ) -> (supported: [ProjectChatService.ReasoningEffort], defaultEffort: ProjectChatService.ReasoningEffort)? {
-        guard provider.providerKind == .openAICompatible else {
+        guard provider.kind == .openAICompatible else {
             return nil
         }
         let supported = resolveModelProfile(for: provider, modelID: modelID).reasoningEfforts
@@ -489,65 +523,103 @@ final class ModelConfigurationViewController: UITableViewController {
         return (supported: supported, defaultEffort: defaultEffort)
     }
 
-    private func selectedReasoningEffort(
-        for provider: ProjectChatService.ProviderCredential,
+    private func resolvedReasoningEffort(
+        for provider: LLMProviderRecord,
         modelID: String
     ) -> ProjectChatService.ReasoningEffort {
         guard let profile = reasoningProfile(for: provider, modelID: modelID) else {
             return .high
         }
-        let key = normalizedModelID(modelID)
-        if let selected = state.selectedReasoningEffortsByModelID[key], profile.supported.contains(selected) {
+        if let selected = state.selectedReasoningEffort, profile.supported.contains(selected) {
             return selected
         }
-        state.selectedReasoningEffortsByModelID[key] = profile.defaultEffort
         return profile.defaultEffort
     }
 
-    private func selectedAnthropicThinkingEnabled(
-        for provider: ProjectChatService.ProviderCredential,
+    private func applyReasoningEffort(
+        _ effort: ProjectChatService.ReasoningEffort,
+        for provider: LLMProviderRecord,
         modelID: String
-    ) -> Bool {
-        let key = normalizedModelID(modelID)
-        let capabilities = resolveModelProfile(for: provider, modelID: modelID)
-        guard capabilities.thinkingSupported else {
-            state.selectedAnthropicThinkingEnabledByModelID[key] = false
-            return false
+    ) {
+        guard let profile = reasoningProfile(for: provider, modelID: modelID) else {
+            state.selectedReasoningEffort = nil
+            return
         }
-        guard capabilities.thinkingCanDisable else {
-            state.selectedAnthropicThinkingEnabledByModelID[key] = true
-            return true
+        guard profile.supported.contains(effort), effort != profile.defaultEffort else {
+            state.selectedReasoningEffort = nil
+            return
         }
-        if let selected = state.selectedAnthropicThinkingEnabledByModelID[key] {
-            return selected
-        }
-        state.selectedAnthropicThinkingEnabledByModelID[key] = true
-        return true
+        state.selectedReasoningEffort = effort
     }
 
-    private func selectedGeminiThinkingEnabled(
-        for provider: ProjectChatService.ProviderCredential,
-        modelID: String
+    private func resolvedThinkingEnabled(
+        for provider: LLMProviderRecord,
+        modelID: String,
+        thinkingEnabled: Bool?
     ) -> Bool {
-        let key = normalizedModelID(modelID)
         let capabilities = resolveModelProfile(for: provider, modelID: modelID)
         guard capabilities.thinkingSupported else {
-            state.selectedGeminiThinkingEnabledByModelID[key] = false
             return false
         }
         guard capabilities.thinkingCanDisable else {
-            state.selectedGeminiThinkingEnabledByModelID[key] = true
             return true
         }
-        if let selected = state.selectedGeminiThinkingEnabledByModelID[key] {
-            return selected
+        return thinkingEnabled ?? true
+    }
+
+    private func applyThinkingEnabled(
+        _ value: Bool,
+        for provider: LLMProviderRecord,
+        modelID: String
+    ) {
+        let capabilities = resolveModelProfile(for: provider, modelID: modelID)
+        guard capabilities.thinkingSupported else {
+            state.selectedThinkingEnabled = nil
+            return
         }
-        state.selectedGeminiThinkingEnabledByModelID[key] = true
-        return true
+        guard capabilities.thinkingCanDisable else {
+            state.selectedThinkingEnabled = nil
+            return
+        }
+        if value {
+            state.selectedThinkingEnabled = nil
+        } else {
+            state.selectedThinkingEnabled = false
+        }
     }
 
     private func normalizedModelID(_ modelID: String) -> String {
         modelID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private func reloadProviderContext() {
+        providers = providerStore.loadProviders()
+        availableProviderIDs = Set(
+            ProviderCredentialResolver.resolveAvailableCredentials(providerStore: providerStore)
+                .map(\.providerID)
+        )
+
+        if let selectedProvider = providers.first(where: { $0.id == state.selectedProviderID }) {
+            if !availableModels(for: selectedProvider).contains(where: {
+                $0.normalizedID == state.selectedModelRecordID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            }) {
+                state.selectedReasoningEffort = nil
+                state.selectedThinkingEnabled = nil
+            }
+        } else if let fallbackProvider = providers.first {
+            state.selectedProviderID = fallbackProvider.id
+            state.selectedModelRecordID = availableModels(for: fallbackProvider).first?.id ?? ""
+            state.selectedReasoningEffort = nil
+            state.selectedThinkingEnabled = nil
+        } else {
+            state.selectedProviderID = ""
+            state.selectedModelRecordID = ""
+            state.selectedReasoningEffort = nil
+            state.selectedThinkingEnabled = nil
+        }
+
+        refreshNavigationTitle()
+        tableView.reloadData()
     }
 
     private func reloadUsageData() {
@@ -578,13 +650,19 @@ final class ModelConfigurationViewController: UITableViewController {
         usageByProviderModel[providerModelUsageKey(providerID: providerID, modelID: modelID)] ?? 0
     }
 
-    private func providerSubtitle(for provider: ProjectChatService.ProviderCredential) -> String {
-        let providerKindName = provider.providerKind.displayName
-        let usageText = usedTokenCountText(providerTokenUsage(for: provider.providerID))
-        return String(
-            format: String(localized: "providers.usage.detail.section.model_format"),
-            providerKindName,
-            usageText
+    private func providerSubtitle(for provider: LLMProviderRecord) -> String {
+        let providerKindName = provider.kind.displayName
+        let usageText = usedTokenCountText(providerTokenUsage(for: provider.id))
+        if availableProviderIDs.contains(provider.id) {
+            return String(
+                format: String(localized: "providers.usage.detail.section.model_format"),
+                providerKindName,
+                usageText
+            )
+        }
+        return providerKindName + " · " + String(
+            localized: "chat.model_selection.provider_unavailable",
+            defaultValue: "Credential unavailable"
         )
     }
 
@@ -599,11 +677,7 @@ final class ModelConfigurationViewController: UITableViewController {
         return String(format: String(localized: "providers.usage.tokens_format"), formatted)
     }
 
-    private func refreshOfficialModels(for provider: ProjectChatService.ProviderCredential) {
-        guard let providerRecord = providerStore.loadProvider(id: provider.providerID) else {
-            return
-        }
-
+    private func refreshOfficialModels(for provider: LLMProviderRecord) {
         isRefreshingModels = true
         tableView.reloadSections(IndexSet(integer: Section.manage.rawValue), with: .none)
         modelRefreshTask?.cancel()
@@ -618,15 +692,25 @@ final class ModelConfigurationViewController: UITableViewController {
                 }
             }
 
-            let token = (try? self.providerStore.loadBearerToken(for: providerRecord))?
+            let token = (try? self.providerStore.loadBearerToken(for: provider))?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             guard !token.isEmpty else {
+                let alert = UIAlertController(
+                    title: String(localized: "model_config.alert.refresh_failed"),
+                    message: String(
+                        localized: "chat.model_selection.provider_unavailable.fix_hint",
+                        defaultValue: "Configure this provider before refreshing models."
+                    ),
+                    preferredStyle: .alert
+                )
+                alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
+                self.present(alert, animated: true)
                 return
             }
 
             do {
-                let models = try await self.modelDiscoveryService.fetchModels(for: providerRecord, bearerToken: token)
-                _ = try self.providerStore.replaceOfficialModels(providerID: providerRecord.id, models: models)
+                let models = try await self.modelDiscoveryService.fetchModels(for: provider, bearerToken: token)
+                _ = try self.providerStore.replaceOfficialModels(providerID: provider.id, models: models)
             } catch {
                 let alert = UIAlertController(
                     title: String(localized: "model_config.alert.refresh_failed"),
@@ -639,12 +723,38 @@ final class ModelConfigurationViewController: UITableViewController {
         }
     }
 
+    private func editorCredential(for provider: LLMProviderRecord) -> ProjectChatService.ProviderCredential {
+        let modelID = provider.modelID ?? provider.kind.defaultModelID
+        let baseURL = URL(string: provider.effectiveBaseURLString)
+            ?? URL(string: provider.kind.defaultBaseURLString)!
+        let bearerToken = (try? providerStore.loadBearerToken(for: provider)) ?? ""
+        let modelRecord = provider.availableModels.first(where: {
+            $0.normalizedModelID == normalizedModelID(modelID)
+        })
+        let profile = LLMModelRegistry.resolve(
+            providerKind: provider.kind,
+            modelID: modelRecord?.modelID ?? modelID,
+            modelRecord: modelRecord
+        )
+        return ProjectChatService.ProviderCredential(
+            providerID: provider.id,
+            providerLabel: provider.label,
+            providerKind: provider.kind,
+            authMode: provider.authMode,
+            modelID: profile.modelID,
+            baseURL: baseURL,
+            bearerToken: bearerToken,
+            chatGPTAccountID: provider.chatGPTAccountID,
+            profile: profile
+        )
+    }
+
     private func presentModelDetail(
-        provider: ProjectChatService.ProviderCredential,
+        provider: LLMProviderRecord,
         model: LLMProviderModelRecord
     ) {
         let controller = ProviderModelEditorViewController(
-            provider: provider,
+            provider: editorCredential(for: provider),
             existingModel: model,
             readOnly: true
         )
@@ -652,11 +762,11 @@ final class ModelConfigurationViewController: UITableViewController {
     }
 
     private func presentModelEditor(
-        provider: ProjectChatService.ProviderCredential,
+        provider: LLMProviderRecord,
         existingModel: LLMProviderModelRecord?
     ) {
         let controller = ProviderModelEditorViewController(
-            provider: provider,
+            provider: editorCredential(for: provider),
             existingModel: existingModel
         )
         controller.onSave = { [weak self] payload in
@@ -665,7 +775,7 @@ final class ModelConfigurationViewController: UITableViewController {
             }
             do {
                 _ = try self.providerStore.saveCustomModel(
-                    providerID: provider.providerID,
+                    providerID: provider.id,
                     modelID: payload.modelID,
                     displayName: payload.displayName,
                     capabilities: payload.capabilities,
@@ -686,19 +796,30 @@ final class ModelConfigurationViewController: UITableViewController {
     }
 
     private func notifySelectionChanged() {
+        showsResetToDefaults = onSelectionStateChanged?(state).hasThreadOverride ?? true
         refreshNavigationTitle()
-        onSelectionStateChanged?(state)
+    }
+
+    private var visibleManageRows: [ManageRow] {
+        ManageRow.allCases.filter { row in
+            switch row {
+            case .useDefault:
+                return showsResetToDefaults
+            case .manageProviders, .refreshOfficialModels, .addCustomModel:
+                return true
+            }
+        }
     }
 
     private func refreshNavigationTitle() {
-        guard let provider = selectedProviderCredential() else {
+        guard let provider = selectedProviderRecord() else {
             title = String(localized: "chat.menu.model")
             return
         }
         let selectedRecordID = selectedModelRecordID(for: provider)
         let selectedTitle = availableModels(for: provider)
             .first(where: { $0.normalizedID == selectedRecordID.lowercased() })?
-            .effectiveDisplayName ?? ""
+            .effectiveDisplayName ?? selectedRecordID
         title = selectedTitle.isEmpty ? providerTitle(for: provider) : providerTitle(for: provider) + "-" + selectedTitle
     }
 }

@@ -13,16 +13,28 @@ import Foundation
 @MainActor
 final class ChatDataService {
 
+    private static var writeQueuesByProjectID: [String: SerialWriteQueue] = [:]
+
+    private static func acquireWriteQueue(projectID: String) -> SerialWriteQueue {
+        if let existing = writeQueuesByProjectID[projectID] {
+            return existing
+        }
+
+        let queue = SerialWriteQueue()
+        writeQueuesByProjectID[projectID] = queue
+        return queue
+    }
+
     let projectID: String
     private let dataStore: ChatDataStore
-
-    /// Serial write queue — ensures fire-and-forget persistence calls are
-    /// executed in order, preventing "old snapshot overwrites new" races.
-    private let writeQueue = SerialWriteQueue()
+    /// Per-project serial write queue shared across ChatDataService instances,
+    /// so settings/chat/controllers all observe writes in a single order.
+    private let writeQueue: SerialWriteQueue
 
     init(projectID: String, dataStore: ChatDataStore = .shared) {
         self.projectID = projectID
         self.dataStore = dataStore
+        self.writeQueue = Self.acquireWriteQueue(projectID: projectID)
     }
 
     // MARK: - Thread Operations
@@ -100,13 +112,40 @@ final class ChatDataService {
     // MARK: - Model Selection (Project-level)
 
     func loadProjectModelSelection() async -> ModelSelection? {
-        await dataStore.loadProjectModelSelection(projectID: projectID)
+        await writeQueue.flush()
+        return await dataStore.loadProjectModelSelection(projectID: projectID)
+    }
+
+    func loadThreadModelSelection(threadID: String) async -> ThreadModelSelection? {
+        await writeQueue.flush()
+        return await dataStore.loadThreadModelSelection(projectID: projectID, threadID: threadID)
+    }
+
+    func loadCurrentThreadModelSelection() async -> ThreadModelSelection? {
+        await writeQueue.flush()
+        return await dataStore.loadCurrentThreadModelSelection(projectID: projectID)
     }
 
     func persistProjectModelSelection(_ selection: ModelSelection?) {
         let dataStore = self.dataStore
         let projectID = self.projectID
         writeQueue.enqueue {
+            await dataStore.saveProjectModelSelection(selection, projectID: projectID)
+        }
+    }
+
+    func removeThreadModelSelection(threadID: String) {
+        let dataStore = self.dataStore
+        let projectID = self.projectID
+        writeQueue.enqueue {
+            await dataStore.removeThreadModelSelection(projectID: projectID, threadID: threadID)
+        }
+    }
+
+    func persistProjectModelSelectionAsync(_ selection: ModelSelection?) async {
+        let dataStore = self.dataStore
+        let projectID = self.projectID
+        await writeQueue.enqueueAndWait {
             await dataStore.saveProjectModelSelection(selection, projectID: projectID)
         }
     }

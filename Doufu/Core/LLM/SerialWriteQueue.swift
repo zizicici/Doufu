@@ -42,6 +42,11 @@ final class SerialWriteQueue {
         }
     }
 
+    /// Waits for all previously enqueued work to complete.
+    func flush() async {
+        await enqueueAndWait {}
+    }
+
     private func drainQueue() async {
         while !pendingWork.isEmpty {
             let work = pendingWork.removeFirst()

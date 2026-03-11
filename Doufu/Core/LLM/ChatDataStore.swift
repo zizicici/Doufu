@@ -260,6 +260,22 @@ actor ChatDataStore {
         return selections[threadID]
     }
 
+    func loadCurrentThreadModelSelection(projectID: String) -> ThreadModelSelection? {
+        let indexURL = threadIndexURL(projectID: projectID)
+        guard let data = try? Data(contentsOf: indexURL),
+              let index = try? makeDecoder().decode(ProjectChatThreadIndex.self, from: data)
+        else {
+            return nil
+        }
+
+        let sanitized = sanitizeIndex(index)
+        guard !sanitized.currentThreadID.isEmpty else {
+            return nil
+        }
+
+        return loadThreadModelSelection(projectID: projectID, threadID: sanitized.currentThreadID)
+    }
+
     func saveThreadModelSelection(_ selection: ThreadModelSelection, projectID: String, threadID: String) {
         var selections = loadThreadSelections(projectID: projectID)
         selections[threadID] = selection
@@ -407,10 +423,27 @@ actor ChatDataStore {
 
     private func loadThreadSelections(projectID: String) -> [String: ThreadModelSelection] {
         let url = threadSelectionsURL(projectID: projectID)
-        guard let data = try? Data(contentsOf: url),
-              let selections = try? JSONDecoder().decode([String: ThreadModelSelection].self, from: data)
+        guard let data = try? Data(contentsOf: url) else {
+            return [:]
+        }
+        guard
+            let rawObject = try? JSONSerialization.jsonObject(with: data),
+            let rawSelections = rawObject as? [String: Any]
         else {
             return [:]
+        }
+
+        // Decode each thread override independently so one bad entry does not drop the whole file.
+        let decoder = makeDecoder()
+        var selections: [String: ThreadModelSelection] = [:]
+        for (threadID, rawSelection) in rawSelections {
+            guard JSONSerialization.isValidJSONObject(rawSelection),
+                  let selectionData = try? JSONSerialization.data(withJSONObject: rawSelection),
+                  let selection = try? decoder.decode(ThreadModelSelection.self, from: selectionData)
+            else {
+                continue
+            }
+            selections[threadID] = selection
         }
         return selections
     }

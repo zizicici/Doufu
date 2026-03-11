@@ -102,8 +102,20 @@ final class LLMQuickSetupViewController: UITableViewController {
         guard let selection = store.loadDefaultModelSelection() else {
             return String(localized: "settings.default_model.not_set")
         }
-        guard let provider = store.loadProvider(id: selection.providerID) else {
-            return String(localized: "settings.default_model.not_set")
+        let resolution = ModelSelectionResolver.resolve(
+            appDefault: selection,
+            projectDefault: nil,
+            threadSelection: nil,
+            availableCredentials: ProviderCredentialResolver.resolveAvailableCredentials(providerStore: store),
+            providerStore: store
+        )
+        guard resolution.state == .valid,
+              let provider = store.loadProvider(id: selection.providerID)
+        else {
+            return String(
+                localized: "settings.default_model.invalid",
+                defaultValue: "Invalid App Default"
+            )
         }
         let model = provider.availableModels.first(where: {
             $0.id.caseInsensitiveCompare(selection.modelRecordID) == .orderedSame

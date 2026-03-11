@@ -24,6 +24,9 @@ final class ChatViewController: UIViewController {
         return coordinator
     }()
     private var toolPermissionMode: ToolPermissionMode = .standard
+    private var initialLoadTask: Task<Void, Never>?
+    private var modelSelectionReloadTask: Task<Void, Never>?
+    private var pendingModelSelectionReload = false
 
     /// Server base URL for code validation (uses localhost instead of file://).
     var validationServerBaseURL: URL?
@@ -180,22 +183,27 @@ final class ChatViewController: UIViewController {
         refreshInputPlaceholder()
         refreshSendButton()
 
-        Task {
-            await modelSelection.loadProjectModelSelection()
-            modelSelection.configureProvider()
+        initialLoadTask = Task { [weak self] in
+            guard let self else { return }
+            defer { self.initialLoadTask = nil }
+            await self.reloadModelSelectionContext()
             do {
-                try await threadSession.restoreThreadStateIfNeeded()
+                try await self.threadSession.restoreThreadStateIfNeeded()
             } catch {
-                messageStore.appendMessage(role: .system, text: error.localizedDescription)
+                self.messageStore.appendMessage(role: .system, text: error.localizedDescription)
             }
-            refreshSendButton()
+            self.refreshSendButton()
         }
     }
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        Task {
-            await modelSelection.refreshProjectModelSelectionIfNeeded()
+        Task { [weak self] in
+            guard let self else { return }
+            if let initialLoadTask = self.initialLoadTask {
+                await initialLoadTask.value
+            }
+            await self.reloadModelSelectionContext()
         }
     }
 
@@ -207,8 +215,36 @@ final class ChatViewController: UIViewController {
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
         if view.window == nil {
+            initialLoadTask?.cancel()
+            initialLoadTask = nil
+            modelSelectionReloadTask?.cancel()
+            modelSelectionReloadTask = nil
+            pendingModelSelectionReload = false
             modelSelection.cancelRefreshTask()
         }
+    }
+
+    private func reloadModelSelectionContext() async {
+        if let reloadTask = modelSelectionReloadTask {
+            pendingModelSelectionReload = true
+            await reloadTask.value
+            return
+        }
+
+        let reloadTask = Task { [weak self] in
+            guard let self else { return }
+            await self.runModelSelectionReloadLoop()
+        }
+        modelSelectionReloadTask = reloadTask
+        await reloadTask.value
+    }
+
+    private func runModelSelectionReloadLoop() async {
+        repeat {
+            pendingModelSelectionReload = false
+            await modelSelection.reloadModelSelectionContext()
+        } while pendingModelSelectionReload && !Task.isCancelled
+        modelSelectionReloadTask = nil
     }
 
     // MARK: - Navigation
@@ -230,10 +266,11 @@ final class ChatViewController: UIViewController {
         )
         threadBarButtonItem.isEnabled = !isExecuting
         navigationItem.leftBarButtonItem = threadBarButtonItem
+        navigationItem.prompt = modelSelection.currentStatusPrompt()
         modelBarButtonItem.image = UIImage(systemName: "theatermask.and.paintbrush")
         modelBarButtonItem.accessibilityLabel = modelSelection.currentModelMenuButtonTitle()
         modelBarButtonItem.menu = nil
-        modelBarButtonItem.isEnabled = !isExecuting && modelSelection.providerCredential != nil
+        modelBarButtonItem.isEnabled = !isExecuting && modelSelection.hasConfiguredProviders
         usageBarButtonItem.isEnabled = true
         moreBarButtonItem.menu = ChatMenuBuilder.moreMenu(
             isExecuting: isExecuting,
@@ -347,7 +384,6 @@ final class ChatViewController: UIViewController {
 
     private func refreshSendButton() {
         let hasText = !currentInputText().isEmpty
-        let hasProvider = modelSelection.providerCredential != nil
         let hasThread = threadSession.currentThread != nil
         if taskCoordinator.isExecuting {
             sendButton.isEnabled = true
@@ -359,7 +395,7 @@ final class ChatViewController: UIViewController {
             sendButton.configuration = configuration
             sendButton.accessibilityLabel = String(localized: "chat.action.cancel")
         } else {
-            sendButton.isEnabled = hasText && hasProvider && hasThread
+            sendButton.isEnabled = hasText && modelSelection.canSend && hasThread
             var configuration = sendButton.configuration ?? UIButton.Configuration.filled()
             configuration.image = UIImage(systemName: "arrow.up")
             configuration.baseBackgroundColor = .systemBlue
@@ -402,44 +438,29 @@ final class ChatViewController: UIViewController {
             return
         }
 
-        do {
-            modelSelection.availableProviderCredentials = try modelSelection.resolveProviderCredentials()
-        } catch {
-            modelSelection.providerCredential = nil
-            modelSelection.selectedProviderID = nil
-            messageStore.appendMessage(role: .system, text: error.localizedDescription)
-            refreshNavigationItems()
-            return
-        }
-
-        guard let fallbackProvider = modelSelection.availableProviderCredentials.first else {
+        let availableProviderCredentials = modelSelection.resolveProviderCredentials()
+        modelSelection.refreshWithResolvedCredentials(availableProviderCredentials)
+        guard modelSelection.hasConfiguredProviders else {
+            Task { [weak self] in
+                await self?.reloadModelSelectionContext()
+            }
             messageStore.appendMessage(role: .system, text: ChatProviderError.noAvailableProvider.localizedDescription)
             return
         }
 
-        let selectedProvider = modelSelection.providerCredential ?? fallbackProvider
-        modelSelection.providerCredential = selectedProvider
-        modelSelection.selectedProviderID = selectedProvider.providerID
-        if let currentModel = modelSelection.selectedModelID?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !currentModel.isEmpty {
-            modelSelection.selectedModelIDByProviderID[selectedProvider.providerID] = currentModel
-        } else {
-            let resolvedModel = modelSelection.resolvedModelID(for: selectedProvider)
-            if resolvedModel.isEmpty {
-                modelSelection.selectedModelIDByProviderID.removeValue(forKey: selectedProvider.providerID)
-            } else {
-                modelSelection.selectedModelIDByProviderID[selectedProvider.providerID] = resolvedModel
-            }
-        }
-
         let selectionState = modelSelection.selectionSnapshot
         let controller = ModelConfigurationViewController(
-            providers: modelSelection.availableProviderCredentials,
             initialState: selectionState,
+            showsResetToDefaults: modelSelection.hasThreadOverride,
             projectUsageIdentifier: projectIdentifier
         )
         controller.onSelectionStateChanged = { [weak self] state in
-            self?.modelSelection.applySelectionState(state)
+            self?.modelSelection.applySelectionState(state) ?? SelectionApplyOutcome(hasThreadOverride: false)
+        }
+        controller.onResetToDefaults = { [weak self] in
+            guard let self else { return selectionState }
+            self.modelSelection.resetToDefaults()
+            return self.modelSelection.selectionSnapshot
         }
 
         let navigationController = UINavigationController(rootViewController: controller)
@@ -523,15 +544,14 @@ final class ChatViewController: UIViewController {
         guard !userInput.isEmpty else {
             return
         }
-        guard let baseProviderCredential = modelSelection.providerCredential else {
-            messageStore.appendMessage(role: .system, text: ChatProviderError.noAvailableProvider.localizedDescription)
-            return
-        }
         guard threadSession.currentThread != nil else {
             messageStore.appendMessage(role: .system, text: ChatProviderError.noThreadAvailable.localizedDescription)
             return
         }
-        guard modelSelection.ensureModelSelectionForSend(providerCredential: baseProviderCredential) else {
+        guard modelSelection.canSend, let baseProviderCredential = modelSelection.providerCredential else {
+            if let blockedMessage = modelSelection.sendBlockedMessage() {
+                messageStore.appendMessage(role: .system, text: blockedMessage)
+            }
             return
         }
         let credential = modelSelection.runtimeCredential(from: baseProviderCredential)
@@ -614,6 +634,7 @@ extension ChatViewController: ChatMessageStoreMutationDelegate {
 extension ChatViewController: ChatModelSelectionManagerDelegate {
     func modelSelectionDidChange() {
         refreshNavigationItems()
+        refreshSendButton()
     }
 }
 
@@ -666,6 +687,7 @@ extension ChatViewController: ChatThreadSessionManagerDelegate {
         tableView.reloadData()
         scrollToBottomIfNeeded(force: true)
         refreshNavigationItems()
+        refreshSendButton()
     }
 
     func threadSessionDidEncounterError(_ error: Error) {

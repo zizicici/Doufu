@@ -51,6 +51,7 @@
    - 线程级模型选择持久化（`.doufu_thread_selections.json`）。
    - 设置页默认模型选择入口。
    - 首次使用聊天时 LLM 快速设置引导。
+   - 三层模型选择产品语义见 `docs/product/model-selection.md`。
 8. Token Usage 统计
    - 设置页与项目页复用同一套 Dashboard。
    - 展示总输入/总输出 Token。

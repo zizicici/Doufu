@@ -278,6 +278,11 @@ final class LLMProviderSettingsStore {
         defaults.set(modelRecordID, forKey: defaultModelRecordIDKey)
     }
 
+    func clearDefaultModelSelection() {
+        defaults.removeObject(forKey: defaultProviderIDKey)
+        defaults.removeObject(forKey: defaultModelRecordIDKey)
+    }
+
     func loadProviders() -> [LLMProviderRecord] {
         guard
             let data = defaults.data(forKey: providersKey),

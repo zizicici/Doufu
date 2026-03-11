@@ -12,9 +12,13 @@ final class ProjectModelSelectionViewController: BaseModelSelectionViewControlle
 
     /// Whether the user explicitly chose "Use App Default" (nil selection).
     private var isUsingAppDefault: Bool = true
+    private var storedSelection: ModelSelection?
+    private var storedResolution = ModelSelectionResolution.missingSelection(hasUsableProviderEnvironment: false)
+    private var appDefaultSummaryText: String?
 
     init(projectID: String, currentSelection: ModelSelection?) {
         super.init()
+        storedSelection = currentSelection
         if let selection = currentSelection {
             self.selectedProviderID = selection.providerID
             self.selectedModelRecordID = selection.modelRecordID
@@ -37,14 +41,13 @@ final class ProjectModelSelectionViewController: BaseModelSelectionViewControlle
         if row == 0 {
             var configuration = cell.defaultContentConfiguration()
             configuration.text = String(localized: "project_settings.default_model.use_app_default")
-            if let appDefault = providerStore.loadDefaultModelSelection() {
-                let providerLabel = providers.first(where: { $0.id == appDefault.providerID })?.label ?? appDefault.providerID
-                let modelLabel = providers.first(where: { $0.id == appDefault.providerID })?
-                    .availableModels.first(where: { $0.normalizedID == appDefault.modelRecordID.lowercased() })?
-                    .effectiveDisplayName ?? appDefault.modelRecordID
-                configuration.secondaryText = "\(providerLabel) · \(modelLabel)"
+            if case .invalidOverride = storedResolution.state {
+                configuration.secondaryText = String(
+                    localized: "project_settings.default_model.invalid",
+                    defaultValue: "Invalid Project Default"
+                )
             } else {
-                configuration.secondaryText = String(localized: "settings.default_model.not_set")
+                configuration.secondaryText = appDefaultSummaryText
             }
             configuration.secondaryTextProperties.color = .secondaryLabel
             cell.contentConfiguration = configuration
@@ -67,6 +70,13 @@ final class ProjectModelSelectionViewController: BaseModelSelectionViewControlle
             isUsingAppDefault = true
             selectedProviderID = nil
             selectedModelRecordID = nil
+            storedSelection = nil
+            storedResolution = .missingSelection(
+                hasUsableProviderEnvironment: !ProviderCredentialResolver
+                    .resolveAvailableCredentials(providerStore: providerStore)
+                    .isEmpty
+            )
+            navigationItem.prompt = nil
             onSelectionChanged?(nil)
             tableView.reloadData()
             return true
@@ -84,6 +94,9 @@ final class ProjectModelSelectionViewController: BaseModelSelectionViewControlle
 
     override func handleModelSelected(providerID: String, model: LLMProviderModelRecord) {
         let selection = ModelSelection(providerID: providerID, modelRecordID: model.id)
+        storedSelection = selection
+        isUsingAppDefault = false
+        reloadStoredSelectionState()
         onSelectionChanged?(selection)
     }
 
@@ -96,11 +109,64 @@ final class ProjectModelSelectionViewController: BaseModelSelectionViewControlle
     }
 
     override func onProvidersReloaded() {
-        if let providerID = selectedProviderID,
-           !providers.contains(where: { $0.id == providerID }) {
+        reloadStoredSelectionState()
+    }
+
+    private func reloadStoredSelectionState() {
+        let credentials = ProviderCredentialResolver.resolveAvailableCredentials(providerStore: providerStore)
+        appDefaultSummaryText = {
+            guard let appDefault = providerStore.loadDefaultModelSelection() else {
+                return String(localized: "settings.default_model.not_set")
+            }
+            let resolution = ModelSelectionResolver.resolve(
+                appDefault: appDefault,
+                projectDefault: nil,
+                threadSelection: nil,
+                availableCredentials: credentials,
+                providerStore: providerStore
+            )
+            guard resolution.state == .valid else {
+                return String(
+                    localized: "settings.default_model.invalid",
+                    defaultValue: "Invalid App Default"
+                )
+            }
+            let providerLabel = providers.first(where: { $0.id == appDefault.providerID })?.label ?? appDefault.providerID
+            let modelLabel = providers.first(where: { $0.id == appDefault.providerID })?
+                .availableModels.first(where: { $0.normalizedID == appDefault.modelRecordID.lowercased() })?
+                .effectiveDisplayName ?? appDefault.modelRecordID
+            return "\(providerLabel) · \(modelLabel)"
+        }()
+
+        if let storedSelection {
+            storedResolution = ModelSelectionResolver.resolve(
+                appDefault: nil,
+                projectDefault: storedSelection,
+                threadSelection: nil,
+                availableCredentials: credentials,
+                providerStore: providerStore
+            )
+            isUsingAppDefault = false
+            if providers.contains(where: { $0.id == storedSelection.providerID }) {
+                selectedProviderID = storedSelection.providerID
+                selectedModelRecordID = storedSelection.modelRecordID
+            } else {
+                selectedProviderID = nil
+                selectedModelRecordID = nil
+            }
+        } else {
+            storedResolution = .missingSelection(hasUsableProviderEnvironment: !credentials.isEmpty)
+            isUsingAppDefault = true
             selectedProviderID = nil
             selectedModelRecordID = nil
-            isUsingAppDefault = true
         }
+
+        navigationItem.prompt = {
+            guard case .invalidOverride = storedResolution.state else { return nil }
+            return String(
+                localized: "project_settings.default_model.invalid",
+                defaultValue: "Invalid Project Default"
+            )
+        }()
     }
 }

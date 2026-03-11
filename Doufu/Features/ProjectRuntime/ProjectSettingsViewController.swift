@@ -318,6 +318,19 @@ final class ProjectSettingsViewController: UITableViewController {
 
     private func projectModelDisplayName(for selection: ModelSelection) -> String {
         let providerStore = LLMProviderSettingsStore.shared
+        let resolution = ModelSelectionResolver.resolve(
+            appDefault: nil,
+            projectDefault: selection,
+            threadSelection: nil,
+            availableCredentials: ProviderCredentialResolver.resolveAvailableCredentials(providerStore: providerStore),
+            providerStore: providerStore
+        )
+        guard resolution.state == .valid else {
+            return String(
+                localized: "project_settings.default_model.invalid",
+                defaultValue: "Invalid Project Default"
+            )
+        }
         let providerLabel = providerStore.loadProvider(id: selection.providerID)?.label ?? selection.providerID
         let modelLabel = providerStore.availableModels(forProviderID: selection.providerID)
             .first(where: { $0.normalizedID == selection.modelRecordID.lowercased() })?
@@ -333,7 +346,9 @@ final class ProjectSettingsViewController: UITableViewController {
         controller.onSelectionChanged = { [weak self] selection in
             guard let self else { return }
             self.projectModelSelection = selection
-            self.dataService.persistProjectModelSelection(selection)
+            Task {
+                await self.dataService.persistProjectModelSelectionAsync(selection)
+            }
             self.tableView.reloadSections(IndexSet(integer: Section.chat.rawValue), with: .none)
         }
         navigationController?.pushViewController(controller, animated: true)

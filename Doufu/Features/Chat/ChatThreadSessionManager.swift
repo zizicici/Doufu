@@ -82,11 +82,7 @@ final class ChatThreadSessionManager {
         currentThread = result.thread
         sessionMemory = result.memory
 
-        if let selection = result.modelSelection {
-            modelSelection.restoreFromThreadModelSelection(selection)
-        } else {
-            modelSelection.resetToDefaults()
-        }
+        modelSelection.restoreFromThreadModelSelection(result.modelSelection)
 
         messageStore.replaceMessages(result.messages)
         delegate?.threadSessionDidSwitchThread()

@@ -61,6 +61,8 @@ final class ProjectWorkspaceViewController: UIViewController {
     private var webLoadingCover: UIView?
     private let webServer: LocalWebServer
     private let doufuBridge: DoufuBridge
+    private lazy var chatDataService = ChatDataService(projectID: project.id)
+    private var chatPresentationTask: Task<Void, Never>?
 
     private lazy var webView: WKWebView = {
         let configuration = WKWebViewConfiguration()
@@ -690,63 +692,72 @@ final class ProjectWorkspaceViewController: UIViewController {
     @objc
     private func didTapChat() {
         scheduleAutoCollapse()
+        guard presentedViewController == nil, chatPresentationTask == nil else { return }
+
+        chatPresentationTask = Task { [weak self] in
+            guard let self else { return }
+            defer { self.chatPresentationTask = nil }
+            await self.handleChatTap()
+        }
+    }
+
+    private func handleChatTap() async {
+        let selectionResolution = await resolveChatSelection()
         guard presentedViewController == nil else { return }
 
         if let chatNavigationController {
-            // If cached chat was read-only but LLM is now configured, replace with full chat
-            if let chatVC = chatNavigationController.viewControllers.first as? ChatViewController,
-               chatVC.isReadOnly, isLLMConfigured() {
-                self.chatNavigationController = nil
-                presentChatController(readOnly: false)
-                return
+            if let chatVC = chatNavigationController.viewControllers.first as? ChatViewController {
+                if chatVC.isReadOnly, selectionResolution.hasUsableProviderEnvironment {
+                    self.chatNavigationController = nil
+                    presentChatController(readOnly: false)
+                    return
+                }
+                if !chatVC.isReadOnly, !selectionResolution.hasUsableProviderEnvironment {
+                    self.chatNavigationController = nil
+                    presentLLMSetupAlert(hasConfiguredProviders: hasConfiguredProviders())
+                    return
+                }
             }
             present(chatNavigationController, animated: true)
             return
         }
 
-        if !isLLMConfigured() {
-            presentLLMSetupAlert()
+        if !selectionResolution.hasUsableProviderEnvironment {
+            presentLLMSetupAlert(hasConfiguredProviders: hasConfiguredProviders())
             return
         }
 
         presentChatController(readOnly: false)
     }
 
-    private func isLLMConfigured() -> Bool {
+    private func resolveChatSelection() async -> ModelSelectionResolution {
         let store = LLMProviderSettingsStore.shared
-        let providers = store.loadProviders()
-        guard !providers.isEmpty else { return false }
+        let credentials = ProviderCredentialResolver.resolveAvailableCredentials(providerStore: store)
+        let projectDefault = await chatDataService.loadProjectModelSelection()
+        let threadSelection = await chatDataService.loadCurrentThreadModelSelection()
 
-        // Check App-level default
-        if let selection = store.loadDefaultModelSelection(),
-           let provider = providers.first(where: { $0.id == selection.providerID }),
-           provider.availableModels.contains(where: { $0.id.caseInsensitiveCompare(selection.modelRecordID) == .orderedSame }) {
-            return true
-        }
-
-        // Check Project-level default (synchronous read via ChatDataStore is not possible,
-        // so we check the on-disk config directly)
-        let projectID = projectURL.lastPathComponent
-        let chatDataRoot = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("ChatData")
-            .appendingPathComponent(projectID)
-            .appendingPathComponent("model_config.json")
-        if let data = try? Data(contentsOf: chatDataRoot),
-           let config = try? JSONDecoder().decode([String: String].self, from: data),
-           let providerID = config["selectedProviderID"], !providerID.isEmpty,
-           let modelRecordID = config["selectedModelRecordID"], !modelRecordID.isEmpty,
-           let provider = providers.first(where: { $0.id == providerID }),
-           provider.availableModels.contains(where: { $0.id.caseInsensitiveCompare(modelRecordID) == .orderedSame }) {
-            return true
-        }
-
-        return false
+        return ModelSelectionResolver.resolve(
+            appDefault: store.loadDefaultModelSelection(),
+            projectDefault: projectDefault,
+            threadSelection: threadSelection,
+            availableCredentials: credentials,
+            providerStore: store
+        )
     }
 
-    private func presentLLMSetupAlert() {
+    private func presentLLMSetupAlert(hasConfiguredProviders: Bool) {
+        let message: String
+        if hasConfiguredProviders {
+            message = String(
+                localized: "chat.setup_alert.message.credentials_unavailable",
+                defaultValue: "Configured providers were found, but their credentials are unavailable. Open Setup to fix them, or continue in read-only mode."
+            )
+        } else {
+            message = String(localized: "chat.setup_alert.message")
+        }
         let alert = UIAlertController(
             title: String(localized: "chat.setup_alert.title"),
-            message: String(localized: "chat.setup_alert.message"),
+            message: message,
             preferredStyle: .alert
         )
         alert.addAction(UIAlertAction(
@@ -766,6 +777,10 @@ final class ProjectWorkspaceViewController: UIViewController {
             style: .cancel
         ))
         present(alert, animated: true)
+    }
+
+    private func hasConfiguredProviders() -> Bool {
+        !LLMProviderSettingsStore.shared.loadProviders().isEmpty
     }
 
     private func presentLLMQuickSetup() {

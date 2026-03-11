@@ -987,6 +987,192 @@
         }
       }
     },
+    "chat.model_selection.invalid.app" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Invalid App Default"
+          }
+        }
+      }
+    },
+    "chat.model_selection.invalid.fix_hint" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Open model settings to change the model or use the default."
+          }
+        }
+      }
+    },
+    "chat.model_selection.invalid.generic" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Invalid Model Selection"
+          }
+        }
+      }
+    },
+    "chat.model_selection.invalid.project" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Invalid Project Default"
+          }
+        }
+      }
+    },
+    "chat.model_selection.invalid.thread" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Invalid Thread Selection"
+          }
+        }
+      }
+    },
+    "chat.model_selection.manage_provider" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fix provider credentials or add providers."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "修复供应商凭证或添加新的供应商。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "修復供應商憑證或新增供應商。"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "修復供應商憑證或新增供應商。"
+          }
+        }
+      }
+    },
+    "chat.model_selection.missing" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Missing Model Selection. Choose a model before sending."
+          }
+        }
+      }
+    },
+    "chat.model_selection.missing.short" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Missing Model Selection"
+          }
+        }
+      }
+    },
+    "chat.model_selection.provider_unavailable" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Credential unavailable"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "凭证不可用"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "憑證不可用"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "憑證不可用"
+          }
+        }
+      }
+    },
+    "chat.model_selection.provider_unavailable.fix_hint" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Configure this provider before refreshing models."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请先配置此供应商，再刷新模型列表。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請先設定此供應商，再重新整理模型清單。"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請先設定此供應商，再重新整理模型清單。"
+          }
+        }
+      }
+    },
+    "chat.model_selection.source.app" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Using App Default"
+          }
+        }
+      }
+    },
+    "chat.model_selection.source.project" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Using Project Default"
+          }
+        }
+      }
+    },
     "chat.progress.file_edited_format" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1505,6 +1691,35 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "使用聊天前需要先設定 LLM 供應商。現在設定？"
+          }
+        }
+      }
+    },
+    "chat.setup_alert.message.credentials_unavailable" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Configured providers were found, but their credentials are unavailable. Open Setup to fix them, or continue in read-only mode."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已发现已配置的供应商，但其凭证当前不可用。你可以进入设置修复，或继续以只读模式打开聊天。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已發現已設定的供應商，但其憑證目前不可用。你可以前往設定修復，或繼續以唯讀模式開啟聊天。"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已發現已設定的供應商，但其憑證目前不可用。你可以前往設定修復，或繼續以唯讀模式開啟聊天。"
           }
         }
       }
@@ -4903,16 +5118,149 @@
       }
     },
     "project_settings.default_model.footer" : {
-
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This default model applies only to the current project. Each thread can still override it."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这个默认模型只对当前项目生效。每个会话仍可单独覆盖。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此預設模型只對目前專案生效。每個會話仍可單獨覆蓋。"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此預設模型只對目前項目生效。每個會話仍可單獨覆蓋。"
+          }
+        }
+      }
+    },
+    "project_settings.default_model.invalid" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Invalid Project Default"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "项目默认模型无效"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "專案預設模型無效"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "項目預設模型無效"
+          }
+        }
+      }
     },
     "project_settings.default_model.provider_hint" : {
-
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose Use App Default to inherit the app model, or select a provider first and then choose a project model."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择“使用 App 默认”可继承全局模型；如需项目级默认值，请先选择供应商，再选择模型。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "選擇「使用 App 預設」可繼承全域模型；如需專案級預設值，請先選擇供應商，再選擇模型。"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "選擇「使用 App 預設」可繼承全域模型；如需項目級預設值，請先選擇供應商，再選擇模型。"
+          }
+        }
+      }
     },
     "project_settings.default_model.title" : {
-
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Default Model"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "默认模型"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "預設模型"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "預設模型"
+          }
+        }
+      }
     },
     "project_settings.default_model.use_app_default" : {
-
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Use App Default"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用 App 默认"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用 App 預設"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用 App 預設"
+          }
+        }
+      }
     },
     "project_settings.disable_edge_swipe.title" : {
       "extractionState" : "manual",
@@ -8999,6 +9347,35 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "預設模型用於新項目的初始選擇。每個項目和會話可以單獨設定不同的模型。"
+          }
+        }
+      }
+    },
+    "settings.default_model.invalid" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Invalid App Default"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "App 默认模型无效"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "App 預設模型無效"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "App 預設模型無效"
           }
         }
       }
