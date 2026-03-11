@@ -53,8 +53,11 @@
 7. 模型管理：
    - `LLMModelRegistry` 统一模型能力解析（reasoning effort / thinking / structured output / token 预算）。
    - 解析优先级：用户自定义 > 内置注册表 > 发现记录 > 保守回退。
-   - 支持项目级和线程级模型选择持久化（`.doufu_project_config.json` / `.doufu_thread_selections.json`）。
-   - 设置页支持选择默认模型。
+   - 支持 `App / Project / Thread` 三层统一的模型选择持久化（`provider / model / reasoning / thinking` 同构）。
+   - `ModelSelectionStateStore` 作为单一状态源统一管理三层选择，Chat / Settings / Project Settings 都通过同一份状态和通知刷新。
+   - 持久化文件包括 App 默认、项目配置和 Thread 级 `thread_selections`；坏的单条 Thread 数据不会拖垮整份选择文件。
+   - 模型配置页会显式保留 invalid selection / missing selection，不做 silent fallback 到首个可用模型。
+   - 设置页支持选择 App 默认模型，项目页支持设置 Project 默认模型。
    - 首次使用聊天时提供 LLM 快速设置引导。
 8. Token Usage：
    - 设置页和项目页共用 Dashboard。
@@ -74,4 +77,4 @@
 2. 新增用户可见文案时，必须同步 `Localizable.xcstrings`。
 3. 涉及架构调整时，必须同步 `technical-architecture.md` 与 `module-design.md`。
 
-文档已按当前实现同步更新（2026-03-09）。
+文档已按当前实现同步更新（2026-03-11）。

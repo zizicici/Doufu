@@ -6,109 +6,114 @@
 import UIKit
 
 /// App-level default model selection (Settings → Default Model).
-final class DefaultModelSelectionViewController: BaseModelSelectionViewController {
+/// Embeds `ModelConfigurationViewController` for full provider/model/reasoning/thinking configuration.
+@MainActor
+final class DefaultModelSelectionViewController: UIViewController {
 
-    private var storedSelection: ModelSelection?
-    private var storedResolution = ModelSelectionResolution.missingSelection(hasUsableProviderEnvironment: false)
+    private let providerStore = LLMProviderSettingsStore.shared
+    private let modelSelectionStore = ModelSelectionStateStore.shared
 
     override func viewDidLoad() {
         super.viewDidLoad()
         title = String(localized: "settings.default_model.title")
+        view.backgroundColor = .doufuBackground
+
+        let initialState = buildSelectionState()
+        let controller = ModelConfigurationViewController(
+            initialState: initialState,
+            showsResetToDefaults: modelSelectionStore.loadAppDefaultSelection() != nil,
+            projectUsageIdentifier: "app-default"
+        )
+        controller.onSelectionStateChanged = { [weak self] state in
+            guard let self else { return SelectionApplyOutcome(hasExplicitSelection: false) }
+            let selection = self.normalizedSelection(from: state)
+            self.modelSelectionStore.setAppDefaultSelection(selection)
+            self.refreshStatusPrompt(for: selection)
+            return SelectionApplyOutcome(hasExplicitSelection: selection != nil)
+        }
+        controller.onResetToDefaults = { [weak self] in
+            guard let self else { return initialState }
+            self.modelSelectionStore.setAppDefaultSelection(nil)
+            self.refreshStatusPrompt(for: nil)
+            return self.buildSelectionState()
+        }
+
+        addChild(controller)
+        view.addSubview(controller.view)
+        controller.view.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            controller.view.topAnchor.constraint(equalTo: view.topAnchor),
+            controller.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            controller.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            controller.view.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        ])
+        controller.didMove(toParent: self)
+        refreshStatusPrompt(for: modelSelectionStore.loadAppDefaultSelection())
     }
 
-    // MARK: - Hooks
-
-    override func providerRowCount() -> Int {
-        providers.count + 1
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        refreshStatusPrompt(for: modelSelectionStore.loadAppDefaultSelection())
     }
 
-    override func configureProviderCell(_ cell: UITableViewCell, at row: Int) {
-        if row == 0 {
-            var configuration = cell.defaultContentConfiguration()
-            configuration.text = String(localized: "settings.default_model.not_set")
-            if case .invalidOverride = storedResolution.state {
-                configuration.secondaryText = String(
-                    localized: "settings.default_model.invalid",
-                    defaultValue: "Invalid App Default"
-                )
-            } else {
-                configuration.secondaryText = nil
-            }
-            configuration.secondaryTextProperties.color = .secondaryLabel
-            cell.contentConfiguration = configuration
-            cell.accessoryType = storedSelection == nil ? .checkmark : .none
+    private func buildSelectionState() -> ModelConfigurationViewController.SelectionState {
+        if let stored = modelSelectionStore.loadAppDefaultSelection() {
+            return selectionState(from: stored)
+        }
+        let providers = providerStore.loadProviders()
+        let fallbackProviderID = providers.first?.id ?? ""
+        let fallbackModelID = providers.first.flatMap {
+            providerStore.availableModels(forProviderID: $0.id).first?.id
+        } ?? ""
+        return ModelConfigurationViewController.SelectionState(
+            selectedProviderID: fallbackProviderID,
+            selectedModelRecordID: fallbackModelID,
+            selectedReasoningEffort: nil,
+            selectedThinkingEnabled: nil
+        )
+    }
+
+    private func selectionState(from selection: ModelSelection) -> ModelConfigurationViewController.SelectionState {
+        ModelConfigurationViewController.SelectionState(
+            selectedProviderID: selection.providerID,
+            selectedModelRecordID: selection.modelRecordID,
+            selectedReasoningEffort: selection.reasoningEffort,
+            selectedThinkingEnabled: selection.thinkingEnabled
+        )
+    }
+
+    private func normalizedSelection(
+        from state: ModelConfigurationViewController.SelectionState
+    ) -> ModelSelection? {
+        ModelSelectionResolver.sanitizeSelection(
+            providerID: state.selectedProviderID,
+            modelRecordID: state.selectedModelRecordID,
+            reasoningEffort: state.selectedReasoningEffort,
+            thinkingEnabled: state.selectedThinkingEnabled,
+            providerStore: providerStore,
+            requiresExistingProviderAndModel: true
+        )
+    }
+
+    private func refreshStatusPrompt(for selection: ModelSelection?) {
+        guard let selection else {
+            navigationItem.prompt = nil
             return
         }
-        super.configureProviderCell(cell, at: row - 1)
-    }
-
-    override func handleProviderSelection(at row: Int) -> Bool {
-        if row == 0 {
-            selectedProviderID = nil
-            selectedModelRecordID = nil
-            providerStore.clearDefaultModelSelection()
-            storedSelection = nil
-            storedResolution = .missingSelection(
-                hasUsableProviderEnvironment: !ProviderCredentialResolver
-                    .resolveAvailableCredentials(providerStore: providerStore)
-                    .isEmpty
-            )
+        let resolution = ModelSelectionResolver.resolve(
+            appDefault: selection,
+            projectDefault: nil,
+            threadSelection: nil,
+            availableCredentials: ProviderCredentialResolver.resolveAvailableCredentials(providerStore: providerStore),
+            providerStore: providerStore
+        )
+        guard case .invalidOverride = resolution.state else {
             navigationItem.prompt = nil
-            tableView.reloadData()
-            return true
+            return
         }
-        return super.handleProviderSelection(at: row - 1)
-    }
-
-    override func providerSectionFooter() -> String? {
-        storedSelection == nil
-            ? String(localized: "settings.default_model.provider_hint")
-            : nil
-    }
-
-    override func modelSectionFooter() -> String? {
-        String(localized: "settings.default_model.footer")
-    }
-
-    override func handleModelSelected(providerID: String, model: LLMProviderModelRecord) {
-        providerStore.saveDefaultModelSelection(providerID: providerID, modelRecordID: model.id)
-        reloadStoredSelectionState()
-    }
-
-    override func onProvidersReloaded() {
-        reloadStoredSelectionState()
-    }
-
-    private func reloadStoredSelectionState() {
-        storedSelection = providerStore.loadDefaultModelSelection()
-        let credentials = ProviderCredentialResolver.resolveAvailableCredentials(providerStore: providerStore)
-        if let storedSelection {
-            storedResolution = ModelSelectionResolver.resolve(
-                appDefault: storedSelection,
-                projectDefault: nil,
-                threadSelection: nil,
-                availableCredentials: credentials,
-                providerStore: providerStore
-            )
-            if providers.contains(where: { $0.id == storedSelection.providerID }) {
-                selectedProviderID = storedSelection.providerID
-                selectedModelRecordID = storedSelection.modelRecordID
-            } else {
-                selectedProviderID = nil
-                selectedModelRecordID = nil
-            }
-        } else {
-            storedResolution = .missingSelection(hasUsableProviderEnvironment: !credentials.isEmpty)
-            selectedProviderID = nil
-            selectedModelRecordID = nil
-        }
-
-        navigationItem.prompt = {
-            guard case .invalidOverride = storedResolution.state else { return nil }
-            return String(
-                localized: "settings.default_model.invalid",
-                defaultValue: "Invalid App Default"
-            )
-        }()
+        navigationItem.prompt = String(
+            localized: "settings.default_model.invalid",
+            defaultValue: "Invalid App Default"
+        )
     }
 }

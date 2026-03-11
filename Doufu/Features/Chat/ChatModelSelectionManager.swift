@@ -12,7 +12,7 @@ protocol ChatModelSelectionManagerDelegate: AnyObject {
 
 @MainActor
 struct SelectionApplyOutcome {
-    let hasThreadOverride: Bool
+    let hasExplicitSelection: Bool
 }
 
 @MainActor
@@ -25,14 +25,26 @@ final class ChatModelSelectionManager {
 
     let providerStore: LLMProviderSettingsStore
     let modelDiscoveryService: LLMProviderModelDiscoveryService
+    private let modelSelectionStore: ModelSelectionStateStore
 
     private let projectID: String
     private let currentThreadIDProvider: () -> String?
-    var dataService: ChatDataService?
 
     private var modelRefreshTask: Task<Void, Never>?
-    private var projectDefault: ModelSelection?
-    private var threadOverride: ThreadModelSelection?
+    private var modelSelectionObserver: NSObjectProtocol?
+    private var currentSelections = ModelSelectionStateStore.Snapshot()
+
+    private var appDefault: ModelSelection? {
+        currentSelections.appDefault
+    }
+
+    private var projectDefault: ModelSelection? {
+        currentSelections.projectDefault
+    }
+
+    private var threadOverride: ModelSelection? {
+        currentSelections.threadSelection
+    }
 
     var providerCredential: ProjectChatService.ProviderCredential? {
         resolution.credential
@@ -58,12 +70,21 @@ final class ChatModelSelectionManager {
         projectID: String,
         currentThreadIDProvider: @escaping () -> String?,
         providerStore: LLMProviderSettingsStore? = nil,
-        modelDiscoveryService: LLMProviderModelDiscoveryService? = nil
+        modelDiscoveryService: LLMProviderModelDiscoveryService? = nil,
+        modelSelectionStore: ModelSelectionStateStore? = nil
     ) {
         self.projectID = projectID
         self.currentThreadIDProvider = currentThreadIDProvider
         self.providerStore = providerStore ?? .shared
         self.modelDiscoveryService = modelDiscoveryService ?? LLMProviderModelDiscoveryService()
+        self.modelSelectionStore = modelSelectionStore ?? .shared
+        observeModelSelectionState()
+    }
+
+    deinit {
+        if let modelSelectionObserver {
+            NotificationCenter.default.removeObserver(modelSelectionObserver)
+        }
     }
 
     func cancelRefreshTask() {
@@ -74,29 +95,27 @@ final class ChatModelSelectionManager {
         applyThreadOverride(nil, persist: true)
     }
 
-    func reloadModelSelectionContext() async {
-        projectDefault = await dataService?.loadProjectModelSelection()
-        if let threadID = currentThreadIDProvider() {
-            let loadedThreadOverride = await dataService?.loadThreadModelSelection(threadID: threadID)
+    func reloadModelSelectionContext(triggerModelRefresh: Bool = true) async {
+        let threadID = currentThreadIDProvider()
+        var snapshot = await modelSelectionStore.loadSnapshot(projectID: projectID, threadID: threadID)
+
+        if let threadID {
+            let loadedThreadOverride = snapshot.threadSelection
             let normalizedThreadOverride = normalizePersistedThreadOverride(loadedThreadOverride)
-            threadOverride = normalizedThreadOverride
+            snapshot.threadSelection = normalizedThreadOverride
             if loadedThreadOverride != normalizedThreadOverride {
-                persistThreadOverride(normalizedThreadOverride, threadID: threadID)
+                modelSelectionStore.setThreadSelection(
+                    normalizedThreadOverride,
+                    projectID: projectID,
+                    threadID: threadID
+                )
             }
         } else {
-            threadOverride = nil
+            snapshot.threadSelection = nil
         }
-        resolveAndApply()
-    }
 
-    func restoreFromThreadModelSelection(_ selection: ThreadModelSelection?) {
-        let normalizedSelection = normalizePersistedThreadOverride(selection)
-        let didChange = normalizedSelection != selection
-        threadOverride = normalizedSelection
-        if didChange, let threadID = currentThreadIDProvider() {
-            persistThreadOverride(normalizedSelection, threadID: threadID)
-        }
-        resolveAndApply(triggerModelRefresh: false)
+        currentSelections = snapshot
+        resolveAndApply(triggerModelRefresh: triggerModelRefresh)
     }
 
     func refreshOfficialModels() {
@@ -346,27 +365,74 @@ final class ChatModelSelectionManager {
     func currentStatusPrompt() -> String? {
         switch resolution.state {
         case .valid:
+            guard let summary = selectionPromptSummary() else {
+                return nil
+            }
             switch resolution.source {
-            case .project:
-                return String(
-                    localized: "chat.model_selection.source.project",
-                    defaultValue: "Using Project Default"
-                )
-            case .app:
-                return String(
-                    localized: "chat.model_selection.source.app",
-                    defaultValue: "Using App Default"
+            case .project, .app:
+                return summary + " " + String(
+                    localized: "chat.model_selection.default_suffix",
+                    defaultValue: "(default)"
                 )
             case .thread, .none:
-                return nil
+                return summary
             }
         case .missingSelection:
             return String(
-                localized: "chat.model_selection.missing.short",
-                defaultValue: "Missing Model Selection"
+                localized: "settings.default_model.not_set",
+                defaultValue: "Not Set"
             )
         case .invalidOverride:
-            return invalidStatusTitle(for: resolution.source)
+            return String(
+                localized: "chat.model_selection.invalid.short",
+                defaultValue: "Invalid"
+            )
+        }
+    }
+
+    private func selectionPromptSummary() -> String? {
+        let providerTitle = promptProviderTitle()
+        let modelTitle = promptModelTitle()
+        switch (providerTitle.isEmpty, modelTitle.isEmpty) {
+        case (false, false):
+            return providerTitle + " · " + modelTitle
+        case (false, true):
+            return providerTitle
+        case (true, false):
+            return modelTitle
+        case (true, true):
+            return nil
+        }
+    }
+
+    private func promptProviderTitle() -> String {
+        if let credential = providerCredential {
+            return providerMenuTitle(for: credential)
+        }
+        guard let providerID = resolution.providerID?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !providerID.isEmpty
+        else {
+            return ""
+        }
+        if let provider = providerStore.loadProvider(id: providerID) {
+            let label = provider.label.trimmingCharacters(in: .whitespacesAndNewlines)
+            return label.isEmpty ? provider.kind.displayName : label
+        }
+        return providerID
+    }
+
+    private func promptModelTitle() -> String {
+        let rawModelID = resolution.modelRecordID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        switch resolution.state {
+        case .valid:
+            guard let credential = providerCredential else {
+                return rawModelID
+            }
+            return resolvedModelRecord(for: credential)?.effectiveDisplayName ?? rawModelID
+        case .missingSelection:
+            return rawModelID
+        case .invalidOverride:
+            return rawModelID
         }
     }
 
@@ -375,42 +441,57 @@ final class ChatModelSelectionManager {
         return normalizedLabel.isEmpty ? credential.providerKind.displayName : normalizedLabel
     }
 
-    func persistCurrentThreadModelSelection() {
-        guard let snapshot = buildCurrentThreadModelSelection() else { return }
-        dataService?.persistModelSelection(snapshot.selection, threadID: snapshot.threadID)
+    func persistCurrentModelSelection() {
+        guard let snapshot = buildCurrentModelSelection() else { return }
+        modelSelectionStore.setThreadSelection(
+            snapshot.selection,
+            projectID: projectID,
+            threadID: snapshot.threadID
+        )
     }
 
-    func persistCurrentThreadModelSelectionAsync() async {
-        guard let snapshot = buildCurrentThreadModelSelection() else { return }
-        await dataService?.persistModelSelectionAsync(snapshot.selection, threadID: snapshot.threadID)
+    func persistCurrentModelSelectionAsync() async {
+        guard let snapshot = buildCurrentModelSelection() else { return }
+        await modelSelectionStore.setThreadSelectionAsync(
+            snapshot.selection,
+            projectID: projectID,
+            threadID: snapshot.threadID
+        )
+    }
+
+    /// The resolved state ignoring the thread override — represents what
+    /// the thread would inherit from project/app defaults.
+    var inheritedSnapshot: ModelConfigurationViewController.SelectionState {
+        let inheritedResolution = ModelSelectionResolver.resolve(
+            appDefault: appDefault,
+            projectDefault: projectDefault,
+            threadSelection: nil,
+            availableCredentials: availableProviderCredentials,
+            providerStore: providerStore
+        )
+        return ModelConfigurationViewController.SelectionState(
+            selectedProviderID: inheritedResolution.providerID ?? "",
+            selectedModelRecordID: inheritedResolution.modelRecordID ?? "",
+            selectedReasoningEffort: inheritedResolution.reasoningEffort,
+            selectedThinkingEnabled: inheritedResolution.thinkingEnabled
+        )
     }
 
     var selectionSnapshot: ModelConfigurationViewController.SelectionState {
         if let threadOverride {
             return ModelConfigurationViewController.SelectionState(
-                selectedProviderID: draftProviderID(for: threadOverride.providerID) ?? "",
+                selectedProviderID: threadOverride.providerID,
                 selectedModelRecordID: threadOverride.modelRecordID,
                 selectedReasoningEffort: threadOverride.reasoningEffort,
                 selectedThinkingEnabled: threadOverride.thinkingEnabled
             )
         }
 
-        let providerID = draftProviderID(for: resolution.providerID)
-        let modelRecordID: String = {
-            guard let providerID else { return "" }
-            if let currentProviderID = resolution.providerID,
-               currentProviderID == providerID,
-               let resolutionModelRecordID = resolution.modelRecordID {
-                return resolutionModelRecordID
-            }
-            return availableModelID(forProviderID: providerID) ?? ""
-        }()
-
         return ModelConfigurationViewController.SelectionState(
-            selectedProviderID: providerID ?? "",
-            selectedModelRecordID: modelRecordID,
-            selectedReasoningEffort: nil,
-            selectedThinkingEnabled: nil
+            selectedProviderID: resolution.providerID ?? "",
+            selectedModelRecordID: resolution.modelRecordID ?? "",
+            selectedReasoningEffort: resolution.reasoningEffort,
+            selectedThinkingEnabled: resolution.thinkingEnabled
         )
     }
 
@@ -418,7 +499,7 @@ final class ChatModelSelectionManager {
     func applySelectionState(_ state: ModelConfigurationViewController.SelectionState) -> SelectionApplyOutcome {
         let normalizedSelection = normalizeDraftState(state)
         let hasThreadOverride = applyThreadOverride(normalizedSelection, persist: true)
-        return SelectionApplyOutcome(hasThreadOverride: hasThreadOverride)
+        return SelectionApplyOutcome(hasExplicitSelection: hasThreadOverride)
     }
 
     func resolveProviderCredentials() -> [ProjectChatService.ProviderCredential] {
@@ -428,7 +509,7 @@ final class ChatModelSelectionManager {
     func refreshWithResolvedCredentials(_ credentials: [ProjectChatService.ProviderCredential]) {
         availableProviderCredentials = credentials
         resolution = ModelSelectionResolver.resolve(
-            appDefault: providerStore.loadDefaultModelSelection(),
+            appDefault: appDefault,
             projectDefault: projectDefault,
             threadSelection: threadOverride,
             availableCredentials: credentials,
@@ -440,7 +521,7 @@ final class ChatModelSelectionManager {
     private func resolveAndApply(triggerModelRefresh: Bool = true) {
         availableProviderCredentials = resolveProviderCredentials()
         resolution = ModelSelectionResolver.resolve(
-            appDefault: providerStore.loadDefaultModelSelection(),
+            appDefault: appDefault,
             projectDefault: projectDefault,
             threadSelection: threadOverride,
             availableCredentials: availableProviderCredentials,
@@ -462,7 +543,7 @@ final class ChatModelSelectionManager {
         if projectDefault?.providerID == providerID {
             return true
         }
-        if providerStore.loadDefaultModelSelection()?.providerID == providerID {
+        if appDefault?.providerID == providerID {
             return true
         }
         return false
@@ -476,16 +557,11 @@ final class ChatModelSelectionManager {
         guard let profile = reasoningProfile(forModelID: modelID, providerID: providerID, providerKind: providerKind) else {
             return .high
         }
-        guard let threadOverride,
-              resolution.source == .thread,
-              threadOverride.providerID == providerID,
-              normalizedModelID(threadOverride.modelRecordID) == normalizedModelID(modelID),
-              let reasoningEffort = threadOverride.reasoningEffort,
-              profile.supported.contains(reasoningEffort)
-        else {
-            return profile.defaultEffort
+        if let reasoningEffort = resolution.reasoningEffort,
+           profile.supported.contains(reasoningEffort) {
+            return reasoningEffort
         }
-        return reasoningEffort
+        return profile.defaultEffort
     }
 
     private func resolvedThinkingEnabled(
@@ -499,34 +575,29 @@ final class ChatModelSelectionManager {
         )
         guard capabilities.thinkingSupported else { return false }
         guard capabilities.thinkingCanDisable else { return true }
-        guard let threadOverride,
-              resolution.source == .thread,
-              threadOverride.providerID == providerCredential.providerID,
-              normalizedModelID(threadOverride.modelRecordID) == normalizedModelID(modelID),
-              let thinkingEnabled = threadOverride.thinkingEnabled
-        else {
-            return true
+        if let thinkingEnabled = resolution.thinkingEnabled {
+            return thinkingEnabled
         }
-        return thinkingEnabled
+        return true
     }
 
-    private func buildCurrentThreadModelSelection() -> (threadID: String, selection: ThreadModelSelection)? {
+    private func buildCurrentModelSelection() -> (threadID: String, selection: ModelSelection)? {
         guard let threadOverride else { return nil }
         guard let threadID = currentThreadIDProvider() else { return nil }
         return (threadID, threadOverride)
     }
 
-    private func persistThreadOverride(_ selection: ThreadModelSelection?, threadID: String) {
-        if let selection {
-            dataService?.persistModelSelection(selection, threadID: threadID)
-        } else {
-            dataService?.removeThreadModelSelection(threadID: threadID)
-        }
+    private func persistThreadOverride(_ selection: ModelSelection?, threadID: String) {
+        modelSelectionStore.setThreadSelection(
+            selection,
+            projectID: projectID,
+            threadID: threadID
+        )
     }
 
     @discardableResult
-    private func applyThreadOverride(_ selection: ThreadModelSelection?, persist: Bool) -> Bool {
-        threadOverride = selection
+    private func applyThreadOverride(_ selection: ModelSelection?, persist: Bool) -> Bool {
+        currentSelections.threadSelection = selection
         resolveAndApply(triggerModelRefresh: false)
         if persist, let threadID = currentThreadIDProvider() {
             persistThreadOverride(selection, threadID: threadID)
@@ -534,86 +605,29 @@ final class ChatModelSelectionManager {
         return selection != nil
     }
 
-    private func normalizePersistedThreadOverride(_ selection: ThreadModelSelection?) -> ThreadModelSelection? {
+    private func normalizePersistedThreadOverride(_ selection: ModelSelection?) -> ModelSelection? {
         guard let selection else { return nil }
-        return sanitizedThreadOverride(
+        return ModelSelectionResolver.sanitizeSelection(
             providerID: selection.providerID,
             modelRecordID: selection.modelRecordID,
             reasoningEffort: selection.reasoningEffort,
             thinkingEnabled: selection.thinkingEnabled,
+            providerStore: providerStore,
             requiresExistingProviderAndModel: false
         )
     }
 
     private func normalizeDraftState(
         _ state: ModelConfigurationViewController.SelectionState
-    ) -> ThreadModelSelection? {
-        sanitizedThreadOverride(
+    ) -> ModelSelection? {
+        ModelSelectionResolver.sanitizeSelection(
             providerID: state.selectedProviderID,
             modelRecordID: state.selectedModelRecordID,
             reasoningEffort: state.selectedReasoningEffort,
             thinkingEnabled: state.selectedThinkingEnabled,
+            providerStore: providerStore,
             requiresExistingProviderAndModel: true
         )
-    }
-
-    private func sanitizedThreadOverride(
-        providerID: String,
-        modelRecordID: String,
-        reasoningEffort: ProjectChatService.ReasoningEffort?,
-        thinkingEnabled: Bool?,
-        requiresExistingProviderAndModel: Bool
-    ) -> ThreadModelSelection? {
-        let trimmedProviderID = providerID.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedModelRecordID = modelRecordID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedProviderID.isEmpty, !trimmedModelRecordID.isEmpty else { return nil }
-
-        let provider = providerStore.loadProvider(id: trimmedProviderID)
-        let modelExists = providerStore.availableModels(forProviderID: trimmedProviderID)
-            .contains(where: { $0.normalizedID == trimmedModelRecordID.lowercased() })
-
-        if requiresExistingProviderAndModel, (provider == nil || !modelExists) {
-            return nil
-        }
-
-        var normalizedReasoningEffort: ProjectChatService.ReasoningEffort?
-        var normalizedThinkingEnabled: Bool?
-
-        if let provider, modelExists {
-            switch provider.kind {
-            case .openAICompatible:
-                if let profile = reasoningProfile(
-                    forModelID: trimmedModelRecordID,
-                    providerID: trimmedProviderID,
-                    providerKind: provider.kind
-                ),
-                   let reasoningEffort,
-                   profile.supported.contains(reasoningEffort),
-                   reasoningEffort != profile.defaultEffort {
-                    normalizedReasoningEffort = reasoningEffort
-                }
-            case .anthropic, .googleGemini:
-                let capabilities = resolveModelProfile(
-                    providerID: trimmedProviderID,
-                    providerKind: provider.kind,
-                    modelID: trimmedModelRecordID
-                )
-                if capabilities.thinkingSupported,
-                   capabilities.thinkingCanDisable,
-                   thinkingEnabled == false {
-                    normalizedThinkingEnabled = false
-                }
-            }
-        }
-
-        let normalizedSelection = ThreadModelSelection(
-            providerID: trimmedProviderID,
-            modelRecordID: trimmedModelRecordID,
-            reasoningEffort: normalizedReasoningEffort,
-            thinkingEnabled: normalizedThinkingEnabled
-        )
-
-        return normalizedSelection
     }
 
     private func currentProviderDisplayTitle() -> String {
@@ -626,19 +640,6 @@ final class ChatModelSelectionManager {
             return label.isEmpty ? provider.kind.displayName : label
         }
         return ""
-    }
-
-    private func draftProviderID(for preferredProviderID: String?) -> String? {
-        let providers = providerStore.loadProviders()
-        if let preferredProviderID,
-           providers.contains(where: { $0.id == preferredProviderID }) {
-            return preferredProviderID
-        }
-        return providers.first?.id
-    }
-
-    private func availableModelID(forProviderID providerID: String) -> String? {
-        providerStore.availableModels(forProviderID: providerID).first?.id
     }
 
     private func invalidStatusTitle(for source: ModelSelectionSource?) -> String {
@@ -663,6 +664,36 @@ final class ChatModelSelectionManager {
                 localized: "chat.model_selection.invalid.generic",
                 defaultValue: "Invalid Model Selection"
             )
+        }
+    }
+
+    private func observeModelSelectionState() {
+        modelSelectionObserver = modelSelectionStore.addObserver { [weak self] change in
+            guard let self else { return }
+            self.handleModelSelectionStateChange(change)
+        }
+    }
+
+    private func handleModelSelectionStateChange(_ change: ModelSelectionStateStore.Change) {
+        guard isRelevantModelSelectionChange(change) else {
+            return
+        }
+        Task { [weak self] in
+            await self?.reloadModelSelectionContext(triggerModelRefresh: false)
+        }
+    }
+
+    private func isRelevantModelSelectionChange(_ change: ModelSelectionStateStore.Change) -> Bool {
+        switch change.scope {
+        case .appDefault:
+            return true
+        case .projectDefault(let changedProjectID):
+            return changedProjectID == projectID
+        case .threadSelection(let changedProjectID, let changedThreadID):
+            guard changedProjectID == projectID else {
+                return false
+            }
+            return changedThreadID == currentThreadIDProvider()
         }
     }
 }

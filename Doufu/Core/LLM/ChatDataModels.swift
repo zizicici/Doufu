@@ -100,11 +100,6 @@ enum ProjectChatThreadStoreError: LocalizedError {
 }
 
 struct ModelSelection: Codable, Equatable {
-    let providerID: String
-    let modelRecordID: String
-}
-
-struct ThreadModelSelection: Codable, Equatable {
     var providerID: String
     var modelRecordID: String
     var reasoningEffort: ProjectChatService.ReasoningEffort?

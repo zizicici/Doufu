@@ -130,7 +130,7 @@ actor ChatDataStore {
         // Clean up thread files and model selection
         let threadDir = threadDirectoryURL(projectID: projectID, threadID: threadID)
         try? fileManager.removeItem(at: threadDir)
-        removeThreadModelSelection(projectID: projectID, threadID: threadID)
+        removeModelSelection(projectID: projectID, threadID: threadID)
 
         // If deleted thread was current, switch to another
         if index.currentThreadID == threadID {
@@ -243,24 +243,33 @@ actor ChatDataStore {
         else {
             return nil
         }
-        return ModelSelection(providerID: providerID, modelRecordID: modelRecordID)
+        let reasoningEffort = config?.selectedReasoningEffort
+            .flatMap(ProjectChatService.ReasoningEffort.init(rawValue:))
+        return ModelSelection(
+            providerID: providerID,
+            modelRecordID: modelRecordID,
+            reasoningEffort: reasoningEffort,
+            thinkingEnabled: config?.selectedThinkingEnabled
+        )
     }
 
     func saveProjectModelSelection(_ selection: ModelSelection?, projectID: String) {
         var config = loadProjectConfig(projectID: projectID) ?? ChatDataProjectConfig()
         config.selectedProviderID = selection?.providerID
         config.selectedModelRecordID = selection?.modelRecordID
+        config.selectedReasoningEffort = selection?.reasoningEffort?.rawValue
+        config.selectedThinkingEnabled = selection?.thinkingEnabled
         saveProjectConfig(config, projectID: projectID)
     }
 
     // MARK: - Model Selection (Thread-level)
 
-    func loadThreadModelSelection(projectID: String, threadID: String) -> ThreadModelSelection? {
+    func loadModelSelection(projectID: String, threadID: String) -> ModelSelection? {
         let selections = loadThreadSelections(projectID: projectID)
         return selections[threadID]
     }
 
-    func loadCurrentThreadModelSelection(projectID: String) -> ThreadModelSelection? {
+    func loadCurrentModelSelection(projectID: String) -> ModelSelection? {
         let indexURL = threadIndexURL(projectID: projectID)
         guard let data = try? Data(contentsOf: indexURL),
               let index = try? makeDecoder().decode(ProjectChatThreadIndex.self, from: data)
@@ -273,16 +282,16 @@ actor ChatDataStore {
             return nil
         }
 
-        return loadThreadModelSelection(projectID: projectID, threadID: sanitized.currentThreadID)
+        return loadModelSelection(projectID: projectID, threadID: sanitized.currentThreadID)
     }
 
-    func saveThreadModelSelection(_ selection: ThreadModelSelection, projectID: String, threadID: String) {
+    func saveModelSelection(_ selection: ModelSelection, projectID: String, threadID: String) {
         var selections = loadThreadSelections(projectID: projectID)
         selections[threadID] = selection
         saveThreadSelections(selections, projectID: projectID)
     }
 
-    func removeThreadModelSelection(projectID: String, threadID: String) {
+    func removeModelSelection(projectID: String, threadID: String) {
         var selections = loadThreadSelections(projectID: projectID)
         selections.removeValue(forKey: threadID)
         saveThreadSelections(selections, projectID: projectID)
@@ -421,7 +430,7 @@ actor ChatDataStore {
         try? data.write(to: url, options: .atomic)
     }
 
-    private func loadThreadSelections(projectID: String) -> [String: ThreadModelSelection] {
+    private func loadThreadSelections(projectID: String) -> [String: ModelSelection] {
         let url = threadSelectionsURL(projectID: projectID)
         guard let data = try? Data(contentsOf: url) else {
             return [:]
@@ -435,11 +444,11 @@ actor ChatDataStore {
 
         // Decode each thread override independently so one bad entry does not drop the whole file.
         let decoder = makeDecoder()
-        var selections: [String: ThreadModelSelection] = [:]
+        var selections: [String: ModelSelection] = [:]
         for (threadID, rawSelection) in rawSelections {
             guard JSONSerialization.isValidJSONObject(rawSelection),
                   let selectionData = try? JSONSerialization.data(withJSONObject: rawSelection),
-                  let selection = try? decoder.decode(ThreadModelSelection.self, from: selectionData)
+                  let selection = try? decoder.decode(ModelSelection.self, from: selectionData)
             else {
                 continue
             }
@@ -448,7 +457,7 @@ actor ChatDataStore {
         return selections
     }
 
-    private func saveThreadSelections(_ selections: [String: ThreadModelSelection], projectID: String) {
+    private func saveThreadSelections(_ selections: [String: ModelSelection], projectID: String) {
         let url = threadSelectionsURL(projectID: projectID)
         ensureDirectory(at: url.deletingLastPathComponent())
         guard let data = try? JSONEncoder().encode(selections) else {
@@ -462,4 +471,6 @@ actor ChatDataStore {
 private struct ChatDataProjectConfig: Codable {
     var selectedProviderID: String?
     var selectedModelRecordID: String?
+    var selectedReasoningEffort: String?
+    var selectedThinkingEnabled: Bool?
 }

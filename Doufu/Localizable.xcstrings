@@ -987,6 +987,35 @@
         }
       }
     },
+    "chat.model_selection.default_suffix" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "(Default)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "（默认）"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "（預設）"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "（預設）"
+          }
+        }
+      }
+    },
     "chat.model_selection.invalid.app" : {
       "extractionState" : "extracted_with_value",
       "localizations" : {
@@ -1031,6 +1060,35 @@
         }
       }
     },
+    "chat.model_selection.invalid.short" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Invalid Model"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型无效"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型無效"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型無效"
+          }
+        }
+      }
+    },
     "chat.model_selection.invalid.thread" : {
       "extractionState" : "extracted_with_value",
       "localizations" : {
@@ -1043,7 +1101,6 @@
       }
     },
     "chat.model_selection.manage_provider" : {
-      "extractionState" : "extracted_with_value",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -1094,7 +1151,6 @@
       }
     },
     "chat.model_selection.provider_unavailable" : {
-      "extractionState" : "extracted_with_value",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -1123,7 +1179,6 @@
       }
     },
     "chat.model_selection.provider_unavailable.fix_hint" : {
-      "extractionState" : "extracted_with_value",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -1147,28 +1202,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "請先設定此供應商，再重新整理模型清單。"
-          }
-        }
-      }
-    },
-    "chat.model_selection.source.app" : {
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Using App Default"
-          }
-        }
-      }
-    },
-    "chat.model_selection.source.project" : {
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Using Project Default"
           }
         }
       }
@@ -3754,6 +3787,64 @@
         }
       }
     },
+    "model_config.inherit.use_app_default" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Use App Default"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用App默认"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用App預設"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用App預設"
+          }
+        }
+      }
+    },
+    "model_config.inherit.use_project_default" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Use Project Default"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用项目默认"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用專案預設"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用專案預設"
+          }
+        }
+      }
+    },
     "model_config.manage.add_custom_model" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5147,7 +5238,6 @@
       }
     },
     "project_settings.default_model.invalid" : {
-      "extractionState" : "extracted_with_value",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -9352,7 +9442,6 @@
       }
     },
     "settings.default_model.invalid" : {
-      "extractionState" : "extracted_with_value",
       "localizations" : {
         "en" : {
           "stringUnit" : {

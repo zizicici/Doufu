@@ -7,6 +7,7 @@
 
 import UIKit
 
+@MainActor
 final class ProjectSettingsViewController: UITableViewController {
 
     var onProjectUpdated: ((String) -> Void)?
@@ -36,12 +37,13 @@ final class ProjectSettingsViewController: UITableViewController {
     private let projectID: String
     private let store = AppProjectStore.shared
     private let gitService = ProjectGitService.shared
-    private lazy var dataService = ChatDataService(projectID: projectID)
+    private let modelSelectionStore = ModelSelectionStateStore.shared
 
     private var projectNameText: String
     /// nil means "use app default"
     private var toolPermissionOverride: ToolPermissionMode?
     private var projectModelSelection: ModelSelection?
+    private var modelSelectionObserver: NSObjectProtocol?
 
     init(projectURL: URL, projectName: String) {
         self.projectURL = projectURL
@@ -56,6 +58,12 @@ final class ProjectSettingsViewController: UITableViewController {
         fatalError("init(coder:) has not been implemented")
     }
 
+    deinit {
+        if let modelSelectionObserver {
+            NotificationCenter.default.removeObserver(modelSelectionObserver)
+        }
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         title = String(localized: "project_settings.title")
@@ -65,8 +73,12 @@ final class ProjectSettingsViewController: UITableViewController {
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "CheckpointCell")
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "ChatSettingCell")
 
+        modelSelectionObserver = modelSelectionStore.addObserver { [weak self] change in
+            self?.handleModelSelectionChange(change)
+        }
+
         Task {
-            projectModelSelection = await dataService.loadProjectModelSelection()
+            projectModelSelection = await modelSelectionStore.loadProjectDefaultSelection(projectID: projectID)
             tableView.reloadSections(IndexSet(integer: Section.chat.rawValue), with: .none)
         }
     }
@@ -347,11 +359,31 @@ final class ProjectSettingsViewController: UITableViewController {
             guard let self else { return }
             self.projectModelSelection = selection
             Task {
-                await self.dataService.persistProjectModelSelectionAsync(selection)
+                await self.modelSelectionStore.setProjectDefaultSelectionAsync(
+                    selection,
+                    projectID: self.projectID
+                )
             }
             self.tableView.reloadSections(IndexSet(integer: Section.chat.rawValue), with: .none)
         }
         navigationController?.pushViewController(controller, animated: true)
+    }
+
+    private func handleModelSelectionChange(_ change: ModelSelectionStateStore.Change) {
+        switch change.scope {
+        case .appDefault:
+            guard projectModelSelection == nil else { return }
+        case .projectDefault(let changedProjectID):
+            guard changedProjectID == projectID else { return }
+        case .threadSelection:
+            return
+        }
+
+        Task { [weak self] in
+            guard let self else { return }
+            self.projectModelSelection = await self.modelSelectionStore.loadProjectDefaultSelection(projectID: self.projectID)
+            self.tableView.reloadSections(IndexSet(integer: Section.chat.rawValue), with: .none)
+        }
     }
 
     // MARK: - Actions

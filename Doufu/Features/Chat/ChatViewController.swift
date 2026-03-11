@@ -50,7 +50,6 @@ final class ChatViewController: UIViewController {
             projectID: project.id,
             currentThreadIDProvider: { [weak self] in self?.threadSession.currentThread?.id }
         )
-        manager.dataService = dataService
         return manager
     }()
 
@@ -452,10 +451,15 @@ final class ChatViewController: UIViewController {
         let controller = ModelConfigurationViewController(
             initialState: selectionState,
             showsResetToDefaults: modelSelection.hasThreadOverride,
-            projectUsageIdentifier: projectIdentifier
+            projectUsageIdentifier: projectIdentifier,
+            inheritedState: modelSelection.inheritedSnapshot,
+            inheritedStateProvider: { [weak self] in
+                self?.modelSelection.inheritedSnapshot
+            },
+            inheritTitle: String(localized: "model_config.inherit.use_project_default")
         )
         controller.onSelectionStateChanged = { [weak self] state in
-            self?.modelSelection.applySelectionState(state) ?? SelectionApplyOutcome(hasThreadOverride: false)
+            self?.modelSelection.applySelectionState(state) ?? SelectionApplyOutcome(hasExplicitSelection: false)
         }
         controller.onResetToDefaults = { [weak self] in
             guard let self else { return selectionState }

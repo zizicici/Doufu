@@ -7,6 +7,7 @@
 
 import UIKit
 
+@MainActor
 final class LLMQuickSetupViewController: UITableViewController {
 
     var onDismiss: (() -> Void)?
@@ -17,6 +18,8 @@ final class LLMQuickSetupViewController: UITableViewController {
     }
 
     private let store = LLMProviderSettingsStore.shared
+    private let modelSelectionStore = ModelSelectionStateStore.shared
+    private var modelSelectionObserver: NSObjectProtocol?
 
     init() {
         super.init(style: .insetGrouped)
@@ -25,6 +28,12 @@ final class LLMQuickSetupViewController: UITableViewController {
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    deinit {
+        if let modelSelectionObserver {
+            NotificationCenter.default.removeObserver(modelSelectionObserver)
+        }
     }
 
     override func viewDidLoad() {
@@ -37,6 +46,10 @@ final class LLMQuickSetupViewController: UITableViewController {
             action: #selector(didTapDone)
         )
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "Cell")
+        modelSelectionObserver = modelSelectionStore.addObserver { [weak self] change in
+            guard case .appDefault = change.scope else { return }
+            self?.reloadDefaultModelRow()
+        }
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -99,7 +112,7 @@ final class LLMQuickSetupViewController: UITableViewController {
     }
 
     private func defaultModelDisplayName() -> String {
-        guard let selection = store.loadDefaultModelSelection() else {
+        guard let selection = modelSelectionStore.loadAppDefaultSelection() else {
             return String(localized: "settings.default_model.not_set")
         }
         let resolution = ModelSelectionResolver.resolve(
@@ -122,5 +135,14 @@ final class LLMQuickSetupViewController: UITableViewController {
         })
         let modelName = model?.effectiveDisplayName ?? selection.modelRecordID
         return provider.label + " · " + modelName
+    }
+
+    private func reloadDefaultModelRow() {
+        guard isViewLoaded else { return }
+        let indexPath = IndexPath(row: Row.defaultModel.rawValue, section: 0)
+        guard tableView.numberOfRows(inSection: 0) > indexPath.row else {
+            return
+        }
+        tableView.reloadRows(at: [indexPath], with: .none)
     }
 }

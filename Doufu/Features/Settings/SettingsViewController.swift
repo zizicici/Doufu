@@ -7,6 +7,7 @@
 
 import UIKit
 
+@MainActor
 final class SettingsViewController: UITableViewController {
 
     private enum Section: Int, CaseIterable {
@@ -33,6 +34,8 @@ final class SettingsViewController: UITableViewController {
 
     private let store = LLMProviderSettingsStore.shared
     private let projectStore = AppProjectStore.shared
+    private let modelSelectionStore = ModelSelectionStateStore.shared
+    private var modelSelectionObserver: NSObjectProtocol?
 
     init() {
         super.init(style: .insetGrouped)
@@ -43,11 +46,21 @@ final class SettingsViewController: UITableViewController {
         fatalError("init(coder:) has not been implemented")
     }
 
+    deinit {
+        if let modelSelectionObserver {
+            NotificationCenter.default.removeObserver(modelSelectionObserver)
+        }
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         title = String(localized: "settings.title")
         tableView.backgroundColor = .doufuBackground
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "SettingsCell")
+        modelSelectionObserver = modelSelectionStore.addObserver { [weak self] change in
+            guard case .appDefault = change.scope else { return }
+            self?.reloadDefaultModelRow()
+        }
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -196,7 +209,7 @@ final class SettingsViewController: UITableViewController {
     // MARK: - Default Model
 
     private func defaultModelDisplayName() -> String {
-        guard let selection = store.loadDefaultModelSelection() else {
+        guard let selection = modelSelectionStore.loadAppDefaultSelection() else {
             return String(localized: "settings.default_model.not_set")
         }
         let resolution = ModelSelectionResolver.resolve(
@@ -219,6 +232,20 @@ final class SettingsViewController: UITableViewController {
         })
         let modelName = model?.effectiveDisplayName ?? selection.modelRecordID
         return provider.label + " · " + modelName
+    }
+
+    private func reloadDefaultModelRow() {
+        guard isViewLoaded else { return }
+        let indexPath = IndexPath(
+            row: LLMProvidersRow.defaultModel.rawValue,
+            section: Section.llmProviders.rawValue
+        )
+        guard tableView.numberOfSections > indexPath.section,
+              tableView.numberOfRows(inSection: indexPath.section) > indexPath.row
+        else {
+            return
+        }
+        tableView.reloadRows(at: [indexPath], with: .none)
     }
 
     // MARK: - Language

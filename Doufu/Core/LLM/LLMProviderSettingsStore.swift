@@ -253,6 +253,8 @@ final class LLMProviderSettingsStore {
     private let providersKey = "llm.providers.records.v2"
     private let defaultProviderIDKey = "llm.default.providerID"
     private let defaultModelRecordIDKey = "llm.default.modelRecordID"
+    private let defaultReasoningEffortKey = "llm.default.reasoningEffort"
+    private let defaultThinkingEnabledKey = "llm.default.thinkingEnabled"
     private let keychainService = Bundle.main.bundleIdentifier ?? "com.zizicici.doufu"
 
     init(defaults: UserDefaults = .standard) {
@@ -270,17 +272,37 @@ final class LLMProviderSettingsStore {
         else {
             return nil
         }
-        return ModelSelection(providerID: providerID, modelRecordID: modelRecordID)
+        let reasoningEffort = defaults.string(forKey: defaultReasoningEffortKey)
+            .flatMap(ProjectChatService.ReasoningEffort.init(rawValue:))
+        let thinkingEnabled: Bool? = defaults.object(forKey: defaultThinkingEnabledKey) as? Bool
+        return ModelSelection(
+            providerID: providerID,
+            modelRecordID: modelRecordID,
+            reasoningEffort: reasoningEffort,
+            thinkingEnabled: thinkingEnabled
+        )
     }
 
-    func saveDefaultModelSelection(providerID: String, modelRecordID: String) {
-        defaults.set(providerID, forKey: defaultProviderIDKey)
-        defaults.set(modelRecordID, forKey: defaultModelRecordIDKey)
+    func saveDefaultModelSelection(_ selection: ModelSelection) {
+        defaults.set(selection.providerID, forKey: defaultProviderIDKey)
+        defaults.set(selection.modelRecordID, forKey: defaultModelRecordIDKey)
+        if let effort = selection.reasoningEffort {
+            defaults.set(effort.rawValue, forKey: defaultReasoningEffortKey)
+        } else {
+            defaults.removeObject(forKey: defaultReasoningEffortKey)
+        }
+        if let thinking = selection.thinkingEnabled {
+            defaults.set(thinking, forKey: defaultThinkingEnabledKey)
+        } else {
+            defaults.removeObject(forKey: defaultThinkingEnabledKey)
+        }
     }
 
     func clearDefaultModelSelection() {
         defaults.removeObject(forKey: defaultProviderIDKey)
         defaults.removeObject(forKey: defaultModelRecordIDKey)
+        defaults.removeObject(forKey: defaultReasoningEffortKey)
+        defaults.removeObject(forKey: defaultThinkingEnabledKey)
     }
 
     func loadProviders() -> [LLMProviderRecord] {

@@ -82,7 +82,7 @@ final class ChatThreadSessionManager {
         currentThread = result.thread
         sessionMemory = result.memory
 
-        modelSelection.restoreFromThreadModelSelection(result.modelSelection)
+        await modelSelection.reloadModelSelectionContext(triggerModelRefresh: false)
 
         messageStore.replaceMessages(result.messages)
         delegate?.threadSessionDidSwitchThread()
@@ -144,7 +144,7 @@ final class ChatThreadSessionManager {
     private func persistCurrentState() async {
         guard let currentThread else { return }
         await dataService.persistMessagesAsync(messageStore.messages, threadID: currentThread.id)
-        await modelSelection.persistCurrentThreadModelSelectionAsync()
+        await modelSelection.persistCurrentModelSelectionAsync()
         await dataService.persistSessionMemoryAsync(sessionMemory, threadID: currentThread.id)
     }
 

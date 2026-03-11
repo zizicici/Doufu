@@ -9,17 +9,25 @@ import UIKit
 
 @MainActor
 final class ModelConfigurationViewController: UITableViewController {
-    struct SelectionState {
+    struct SelectionState: Equatable {
         var selectedProviderID: String
         var selectedModelRecordID: String
         var selectedReasoningEffort: ProjectChatService.ReasoningEffort?
         var selectedThinkingEnabled: Bool?
+
+        static let empty = SelectionState(
+            selectedProviderID: "",
+            selectedModelRecordID: "",
+            selectedReasoningEffort: nil,
+            selectedThinkingEnabled: nil
+        )
     }
 
     var onSelectionStateChanged: ((SelectionState) -> SelectionApplyOutcome)?
     var onResetToDefaults: (() -> SelectionState)?
 
     private enum Section: Int, CaseIterable {
+        case inherit
         case provider
         case model
         case parameter
@@ -41,6 +49,10 @@ final class ModelConfigurationViewController: UITableViewController {
     private let providerStore = LLMProviderSettingsStore.shared
     private let modelDiscoveryService = LLMProviderModelDiscoveryService()
     private var showsResetToDefaults: Bool
+    private var inheritedState: SelectionState?
+    private let inheritedStateProvider: (() -> SelectionState?)?
+    private let inheritTitle: String?
+    private var isFollowingParent: Bool
     private var usageRecords: [LLMTokenUsageRecord] = []
     private var usageByProviderID: [String: Int64] = [:]
     private var usageByProviderModel: [String: Int64] = [:]
@@ -56,11 +68,18 @@ final class ModelConfigurationViewController: UITableViewController {
     init(
         initialState: SelectionState,
         showsResetToDefaults: Bool,
-        projectUsageIdentifier: String
+        projectUsageIdentifier: String,
+        inheritedState: SelectionState? = nil,
+        inheritedStateProvider: (() -> SelectionState?)? = nil,
+        inheritTitle: String? = nil
     ) {
         state = initialState
         self.showsResetToDefaults = showsResetToDefaults
         self.projectUsageIdentifier = projectUsageIdentifier
+        self.inheritedStateProvider = inheritedStateProvider
+        self.inheritedState = inheritedStateProvider?() ?? inheritedState
+        self.inheritTitle = inheritTitle
+        self.isFollowingParent = (inheritedStateProvider != nil || inheritedState != nil) && !showsResetToDefaults
         super.init(style: .insetGrouped)
     }
 
@@ -68,6 +87,31 @@ final class ModelConfigurationViewController: UITableViewController {
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
+
+    // MARK: - Visible Sections
+
+    private var visibleSections: [Section] {
+        Section.allCases.filter { section in
+            switch section {
+            case .inherit:
+                return hasInheritedSelectionSource
+            default:
+                return true
+            }
+        }
+    }
+
+    private func section(for indexPath: IndexPath) -> Section? {
+        let sections = visibleSections
+        guard sections.indices.contains(indexPath.section) else { return nil }
+        return sections[indexPath.section]
+    }
+
+    private func sectionIndex(for section: Section) -> Int? {
+        visibleSections.firstIndex(of: section)
+    }
+
+    // MARK: - Lifecycle
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -90,28 +134,49 @@ final class ModelConfigurationViewController: UITableViewController {
         }
     }
 
+    // MARK: - DataSource
+
     override func numberOfSections(in tableView: UITableView) -> Int {
-        Section.allCases.count
+        visibleSections.count
     }
 
-    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        guard let section = Section(rawValue: section) else {
+    override func tableView(_ tableView: UITableView, numberOfRowsInSection sectionIndex: Int) -> Int {
+        guard let section = visibleSections[safe: sectionIndex] else {
             return 0
         }
         switch section {
+        case .inherit:
+            return 1
         case .provider:
+            if isFollowingParent {
+                // Show only the inherited provider (1 row)
+                return 1
+            }
             return providers.count
         case .model:
+            if isFollowingParent {
+                // Show only the inherited model (1 row)
+                return 1
+            }
             guard let selectedProvider = selectedProviderRecord() else {
                 return 0
             }
             return availableModels(for: selectedProvider).count
         case .parameter:
-            guard let selectedProvider = selectedProviderRecord() else {
+            let currentSelection = isFollowingParent ? (inheritedState ?? .empty) : state
+            guard let selectedProvider = providerRecord(for: currentSelection) else {
                 return 0
             }
-            guard let selectedModel = selectedModelRecord(for: selectedProvider) else {
+            guard let selectedModel = selectedModelRecord(for: selectedProvider, selection: currentSelection) else {
                 return 0
+            }
+            if isFollowingParent {
+                switch selectedProvider.kind {
+                case .openAICompatible:
+                    return reasoningProfile(for: selectedProvider, modelID: selectedModel.id) != nil ? 1 : 0
+                case .anthropic, .googleGemini:
+                        return resolveModelProfile(for: selectedProvider, modelID: selectedModel.id).thinkingSupported ? 1 : 0
+                }
             }
             switch selectedProvider.kind {
             case .openAICompatible:
@@ -121,27 +186,28 @@ final class ModelConfigurationViewController: UITableViewController {
                 return resolveModelProfile(for: selectedProvider, modelID: selectedModel.id).thinkingSupported ? 1 : 0
             }
         case .manage:
-            guard selectedProviderRecord() != nil else {
-                return 0
-            }
+            if isFollowingParent { return 0 }
             return visibleManageRows.count
         }
     }
 
-    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
-        guard let section = Section(rawValue: section) else {
+    override func tableView(_ tableView: UITableView, titleForHeaderInSection sectionIndex: Int) -> String? {
+        guard let section = visibleSections[safe: sectionIndex] else {
             return nil
         }
         switch section {
+        case .inherit:
+            return nil
         case .provider:
             return String(localized: "chat.menu.provider")
         case .model:
             return String(localized: "chat.menu.model")
         case .parameter:
-            guard let selectedProvider = selectedProviderRecord() else {
+            let currentSelection = isFollowingParent ? (inheritedState ?? .empty) : state
+            guard let selectedProvider = providerRecord(for: currentSelection) else {
                 return nil
             }
-            guard selectedModelRecord(for: selectedProvider) != nil else {
+            guard selectedModelRecord(for: selectedProvider, selection: currentSelection) != nil else {
                 return nil
             }
             switch selectedProvider.kind {
@@ -151,17 +217,19 @@ final class ModelConfigurationViewController: UITableViewController {
                 return String(localized: "chat.menu.thinking")
             }
         case .manage:
+            if isFollowingParent { return nil }
             return String(localized: "model_config.section.manage_models")
         }
     }
 
-    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
-        guard let section = Section(rawValue: section) else {
+    override func tableView(_ tableView: UITableView, titleForFooterInSection sectionIndex: Int) -> String? {
+        guard let section = visibleSections[safe: sectionIndex] else {
             return nil
         }
         switch section {
         case .model:
-            let models = selectedProviderRecord().flatMap { availableModels(for: $0) } ?? []
+            if isFollowingParent { return nil }
+            let models = providerRecord(for: state).flatMap { availableModels(for: $0) } ?? []
             return models.isEmpty ? nil : String(localized: "model_config.section.model.footer")
         default:
             return nil
@@ -169,13 +237,67 @@ final class ModelConfigurationViewController: UITableViewController {
     }
 
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        guard let section = Section(rawValue: indexPath.section) else {
+        guard let section = section(for: indexPath) else {
             return UITableViewCell()
         }
 
         switch section {
+        case .inherit:
+            guard let cell = tableView.dequeueReusableCell(
+                withIdentifier: SettingsToggleCell.reuseIdentifier,
+                for: indexPath
+            ) as? SettingsToggleCell else {
+                return UITableViewCell()
+            }
+            cell.configure(
+                title: inheritTitle ?? String(localized: "project_settings.chat.tool_permission.use_default"),
+                isOn: isFollowingParent
+            ) { [weak self] value in
+                guard let self else { return }
+                if value {
+                    self.isFollowingParent = true
+                    if let resetState = self.onResetToDefaults?() {
+                        self.state = resetState
+                    }
+                    self.showsResetToDefaults = false
+                    self.refreshNavigationTitle()
+                } else {
+                    self.isFollowingParent = false
+                    self.notifySelectionChanged()
+                }
+                self.tableView.reloadData()
+            }
+            cell.isUserInteractionEnabled = true
+            return cell
+
         case .provider:
             let cell = tableView.dequeueReusableCell(withIdentifier: "ProjectModelConfigCell", for: indexPath)
+            if isFollowingParent {
+                // Show inherited provider as read-only
+                var configuration = cell.defaultContentConfiguration()
+                let inherited = inheritedState ?? .empty
+                if let provider = providerRecord(for: inherited) {
+                    configuration.text = providerTitle(for: provider)
+                    configuration.secondaryText = provider.kind.displayName
+                } else if !trimmedProviderID(in: inherited).isEmpty {
+                    configuration.text = trimmedProviderID(in: inherited)
+                    configuration.secondaryText = String(
+                        localized: "chat.model_selection.invalid.generic",
+                        defaultValue: "Invalid Model Selection"
+                    )
+                } else {
+                    configuration.text = String(
+                        localized: "chat.model_selection.missing.short",
+                        defaultValue: "Missing Model Selection"
+                    )
+                    configuration.secondaryText = nil
+                }
+                configuration.textProperties.color = .tertiaryLabel
+                configuration.secondaryTextProperties.color = .tertiaryLabel
+                cell.contentConfiguration = configuration
+                cell.accessoryType = .none
+                return cell
+            }
             guard providers.indices.contains(indexPath.row) else {
                 return cell
             }
@@ -190,6 +312,26 @@ final class ModelConfigurationViewController: UITableViewController {
 
         case .model:
             let cell = tableView.dequeueReusableCell(withIdentifier: "ProjectModelConfigCell", for: indexPath)
+            if isFollowingParent {
+                // Show inherited model as read-only
+                var configuration = cell.defaultContentConfiguration()
+                let inherited = inheritedState ?? .empty
+                if let provider = providerRecord(for: inherited),
+                   let model = selectedModelRecord(for: provider, selection: inherited) {
+                    configuration.text = model.effectiveDisplayName
+                } else if !trimmedModelRecordID(in: inherited).isEmpty {
+                    configuration.text = trimmedModelRecordID(in: inherited)
+                } else {
+                    configuration.text = String(
+                        localized: "chat.model_selection.missing.short",
+                        defaultValue: "Missing Model Selection"
+                    )
+                }
+                configuration.textProperties.color = .tertiaryLabel
+                cell.contentConfiguration = configuration
+                cell.accessoryType = .none
+                return cell
+            }
             guard let selectedProvider = selectedProviderRecord() else {
                 return cell
             }
@@ -223,16 +365,30 @@ final class ModelConfigurationViewController: UITableViewController {
             return cell
 
         case .parameter:
-            guard let selectedProvider = selectedProviderRecord() else {
+            let currentSelection = isFollowingParent ? (inheritedState ?? .empty) : state
+            guard let selectedProvider = providerRecord(for: currentSelection) else {
                 return UITableViewCell()
             }
-            guard let selectedModel = selectedModelRecord(for: selectedProvider) else {
+            guard let selectedModel = selectedModelRecord(for: selectedProvider, selection: currentSelection) else {
                 return UITableViewCell()
             }
             let selectedModelRecordID = selectedModel.id
             switch selectedProvider.kind {
             case .openAICompatible:
                 let cell = tableView.dequeueReusableCell(withIdentifier: "ProjectModelConfigCell", for: indexPath)
+                let currentEffort = resolvedReasoningEffort(
+                    for: selectedProvider,
+                    modelID: selectedModelRecordID,
+                    reasoningEffort: currentSelection.selectedReasoningEffort
+                )
+                if isFollowingParent {
+                    var configuration = cell.defaultContentConfiguration()
+                    configuration.text = currentEffort.displayName
+                    configuration.textProperties.color = .tertiaryLabel
+                    cell.contentConfiguration = configuration
+                    cell.accessoryType = .none
+                    return cell
+                }
                 let profile = reasoningProfile(for: selectedProvider, modelID: selectedModelRecordID)
                 let efforts = profile?.supported ?? []
                 guard efforts.indices.contains(indexPath.row) else {
@@ -241,9 +397,8 @@ final class ModelConfigurationViewController: UITableViewController {
                 let effort = efforts[indexPath.row]
                 var configuration = cell.defaultContentConfiguration()
                 configuration.text = effort.displayName
-                cell.contentConfiguration = configuration
-                let currentEffort = resolvedReasoningEffort(for: selectedProvider, modelID: selectedModelRecordID)
                 cell.accessoryType = effort == currentEffort ? .checkmark : .none
+                cell.contentConfiguration = configuration
                 return cell
 
             case .anthropic, .googleGemini:
@@ -259,8 +414,9 @@ final class ModelConfigurationViewController: UITableViewController {
                 let isOn = resolvedThinkingEnabled(
                     for: selectedProvider,
                     modelID: selectedModelRecordID,
-                    thinkingEnabled: state.selectedThinkingEnabled
+                    thinkingEnabled: currentSelection.selectedThinkingEnabled
                 )
+                let canInteract = !isFollowingParent && capabilities.thinkingCanDisable
                 cell.configure(
                     title: capabilities.thinkingCanDisable
                         ? String(localized: "chat.menu.thinking")
@@ -268,12 +424,12 @@ final class ModelConfigurationViewController: UITableViewController {
                     isOn: isOn
                 ) { [weak self] value in
                     guard let self else { return }
+                    guard !self.isFollowingParent else { return }
                     guard value != isOn else { return }
                     self.applyThinkingEnabled(value, for: selectedProvider, modelID: selectedModelRecordID)
                     self.notifySelectionChanged()
                 }
-                cell.isUserInteractionEnabled = capabilities.thinkingCanDisable
-                cell.contentView.alpha = capabilities.thinkingCanDisable ? 1.0 : 0.72
+                cell.isUserInteractionEnabled = canInteract
                 return cell
             }
         case .manage:
@@ -313,14 +469,19 @@ final class ModelConfigurationViewController: UITableViewController {
         }
     }
 
+    // MARK: - Selection
+
     override func tableView(_ tableView: UITableView, willSelectRowAt indexPath: IndexPath) -> IndexPath? {
-        guard let section = Section(rawValue: indexPath.section) else {
+        guard let section = section(for: indexPath) else {
             return nil
         }
         switch section {
+        case .inherit:
+            return nil
         case .provider, .model:
-            return indexPath
+            return isFollowingParent ? nil : indexPath
         case .parameter:
+            if isFollowingParent { return nil }
             guard let selectedProvider = selectedProviderRecord() else {
                 return nil
             }
@@ -331,7 +492,7 @@ final class ModelConfigurationViewController: UITableViewController {
                 return nil
             }
         case .manage:
-            return indexPath
+            return isFollowingParent ? nil : indexPath
         }
     }
 
@@ -339,7 +500,8 @@ final class ModelConfigurationViewController: UITableViewController {
         _ tableView: UITableView,
         trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath
     ) -> UISwipeActionsConfiguration? {
-        guard Section(rawValue: indexPath.section) == .model,
+        if isFollowingParent { return nil }
+        guard section(for: indexPath) == .model,
               let selectedProvider = selectedProviderRecord()
         else { return nil }
         let models = availableModels(for: selectedProvider)
@@ -363,10 +525,14 @@ final class ModelConfigurationViewController: UITableViewController {
 
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         defer { tableView.deselectRow(at: indexPath, animated: true) }
-        guard let section = Section(rawValue: indexPath.section) else {
+        guard let section = section(for: indexPath) else {
             return
         }
         switch section {
+        case .inherit:
+            // Handled by SettingsToggleCell callback
+            return
+
         case .provider:
             guard providers.indices.contains(indexPath.row) else {
                 return
@@ -417,12 +583,18 @@ final class ModelConfigurationViewController: UITableViewController {
                     return
                 }
                 let selectedEffort = profile.supported[indexPath.row]
-                guard selectedEffort != resolvedReasoningEffort(for: selectedProvider, modelID: selectedModelRecordID) else {
+                guard selectedEffort != resolvedReasoningEffort(
+                    for: selectedProvider,
+                    modelID: selectedModelRecordID,
+                    reasoningEffort: state.selectedReasoningEffort
+                ) else {
                     return
                 }
                 applyReasoningEffort(selectedEffort, for: selectedProvider, modelID: selectedModelRecordID)
                 notifySelectionChanged()
-                tableView.reloadSections(IndexSet(integer: Section.parameter.rawValue), with: .none)
+                if let paramIndex = sectionIndex(for: .parameter) {
+                    tableView.reloadSections(IndexSet(integer: paramIndex), with: .none)
+                }
             case .anthropic, .googleGemini:
                 return
             }
@@ -438,6 +610,7 @@ final class ModelConfigurationViewController: UITableViewController {
                 }
                 state = resetState
                 showsResetToDefaults = false
+                isFollowingParent = hasInheritedSelectionSource
                 refreshNavigationTitle()
                 tableView.reloadData()
             case .manageProviders:
@@ -457,25 +630,54 @@ final class ModelConfigurationViewController: UITableViewController {
         }
     }
 
-    private func selectedProviderRecord() -> LLMProviderRecord? {
-        if let provider = providers.first(where: { $0.id == state.selectedProviderID }) {
-            return provider
-        }
-        return providers.first
+    // MARK: - Helpers
+
+    private var hasInheritedSelectionSource: Bool {
+        inheritedStateProvider != nil || inheritedState != nil
     }
 
-    private func selectedModelRecordID(for provider: LLMProviderRecord) -> String {
-        let remembered = state.selectedProviderID == provider.id
-            ? state.selectedModelRecordID.trimmingCharacters(in: .whitespacesAndNewlines)
-            : ""
-        if !remembered.isEmpty {
-            return remembered
+    private func refreshInheritedState() {
+        if let inheritedStateProvider {
+            inheritedState = inheritedStateProvider()
+        }
+    }
+
+    private func trimmedProviderID(in selection: SelectionState) -> String {
+        selection.selectedProviderID.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func trimmedModelRecordID(in selection: SelectionState) -> String {
+        selection.selectedModelRecordID.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func providerRecord(for selection: SelectionState) -> LLMProviderRecord? {
+        let providerID = trimmedProviderID(in: selection)
+        guard !providerID.isEmpty else {
+            return nil
+        }
+        return providers.first(where: { $0.id == providerID })
+    }
+
+    private func selectedProviderRecord() -> LLMProviderRecord? {
+        providerRecord(for: state)
+    }
+
+    private func selectedModelRecordID(
+        for provider: LLMProviderRecord,
+        selection: SelectionState? = nil
+    ) -> String {
+        let effectiveSelection = selection ?? state
+        if trimmedProviderID(in: effectiveSelection) == provider.id {
+            return trimmedModelRecordID(in: effectiveSelection)
         }
         return availableModels(for: provider).first?.id ?? ""
     }
 
-    private func selectedModelRecord(for provider: LLMProviderRecord) -> LLMProviderModelRecord? {
-        let selectedRecordID = selectedModelRecordID(for: provider)
+    private func selectedModelRecord(
+        for provider: LLMProviderRecord,
+        selection: SelectionState? = nil
+    ) -> LLMProviderModelRecord? {
+        let selectedRecordID = selectedModelRecordID(for: provider, selection: selection)
         guard !selectedRecordID.isEmpty else {
             return nil
         }
@@ -525,12 +727,13 @@ final class ModelConfigurationViewController: UITableViewController {
 
     private func resolvedReasoningEffort(
         for provider: LLMProviderRecord,
-        modelID: String
+        modelID: String,
+        reasoningEffort: ProjectChatService.ReasoningEffort?
     ) -> ProjectChatService.ReasoningEffort {
         guard let profile = reasoningProfile(for: provider, modelID: modelID) else {
             return .high
         }
-        if let selected = state.selectedReasoningEffort, profile.supported.contains(selected) {
+        if let selected = reasoningEffort, profile.supported.contains(selected) {
             return selected
         }
         return profile.defaultEffort
@@ -598,22 +801,31 @@ final class ModelConfigurationViewController: UITableViewController {
             ProviderCredentialResolver.resolveAvailableCredentials(providerStore: providerStore)
                 .map(\.providerID)
         )
+        refreshInheritedState()
 
-        if let selectedProvider = providers.first(where: { $0.id == state.selectedProviderID }) {
-            if !availableModels(for: selectedProvider).contains(where: {
-                $0.normalizedID == state.selectedModelRecordID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !isFollowingParent else {
+            refreshNavigationTitle()
+            tableView.reloadData()
+            return
+        }
+
+        let selectedProviderID = trimmedProviderID(in: state)
+        let selectedModelRecordID = trimmedModelRecordID(in: state)
+        if let selectedProvider = providers.first(where: { $0.id == selectedProviderID }) {
+            if selectedModelRecordID.isEmpty || !availableModels(for: selectedProvider).contains(where: {
+                $0.normalizedID == selectedModelRecordID.lowercased()
             }) {
                 state.selectedReasoningEffort = nil
                 state.selectedThinkingEnabled = nil
             }
-        } else if let fallbackProvider = providers.first {
+        } else if selectedProviderID.isEmpty, let fallbackProvider = providers.first {
             state.selectedProviderID = fallbackProvider.id
             state.selectedModelRecordID = availableModels(for: fallbackProvider).first?.id ?? ""
             state.selectedReasoningEffort = nil
             state.selectedThinkingEnabled = nil
+        } else if selectedProviderID.isEmpty {
+            state = .empty
         } else {
-            state.selectedProviderID = ""
-            state.selectedModelRecordID = ""
             state.selectedReasoningEffort = nil
             state.selectedThinkingEnabled = nil
         }
@@ -679,7 +891,9 @@ final class ModelConfigurationViewController: UITableViewController {
 
     private func refreshOfficialModels(for provider: LLMProviderRecord) {
         isRefreshingModels = true
-        tableView.reloadSections(IndexSet(integer: Section.manage.rawValue), with: .none)
+        if let manageIndex = sectionIndex(for: .manage) {
+            tableView.reloadSections(IndexSet(integer: manageIndex), with: .none)
+        }
         modelRefreshTask?.cancel()
         modelRefreshTask = Task { [weak self] in
             guard let self else {
@@ -796,7 +1010,7 @@ final class ModelConfigurationViewController: UITableViewController {
     }
 
     private func notifySelectionChanged() {
-        showsResetToDefaults = onSelectionStateChanged?(state).hasThreadOverride ?? true
+        showsResetToDefaults = onSelectionStateChanged?(state).hasExplicitSelection ?? true
         refreshNavigationTitle()
     }
 
@@ -804,22 +1018,63 @@ final class ModelConfigurationViewController: UITableViewController {
         ManageRow.allCases.filter { row in
             switch row {
             case .useDefault:
-                return showsResetToDefaults
-            case .manageProviders, .refreshOfficialModels, .addCustomModel:
+                return showsResetToDefaults && !hasInheritedSelectionSource
+            case .manageProviders:
                 return true
+            case .refreshOfficialModels, .addCustomModel:
+                return selectedProviderRecord() != nil
             }
         }
     }
 
     private func refreshNavigationTitle() {
-        guard let provider = selectedProviderRecord() else {
+        let selection = isFollowingParent ? inheritedState : state
+        guard let selection else {
             title = String(localized: "chat.menu.model")
+            navigationItem.prompt = nil
             return
         }
-        let selectedRecordID = selectedModelRecordID(for: provider)
-        let selectedTitle = availableModels(for: provider)
-            .first(where: { $0.normalizedID == selectedRecordID.lowercased() })?
-            .effectiveDisplayName ?? selectedRecordID
-        title = selectedTitle.isEmpty ? providerTitle(for: provider) : providerTitle(for: provider) + "-" + selectedTitle
+        if let provider = providerRecord(for: selection) {
+            let selectedRecordID = selectedModelRecordID(for: provider, selection: selection)
+            let selectedTitle = selectedModelRecord(for: provider, selection: selection)?.effectiveDisplayName ?? selectedRecordID
+            title = selectedTitle.isEmpty ? providerTitle(for: provider) : providerTitle(for: provider) + "-" + selectedTitle
+        } else {
+            let providerID = trimmedProviderID(in: selection)
+            let modelID = trimmedModelRecordID(in: selection)
+            if !providerID.isEmpty {
+                title = modelID.isEmpty ? providerID : providerID + "-" + modelID
+            } else {
+                title = String(localized: "chat.menu.model")
+            }
+        }
+        navigationItem.prompt = statusPrompt(for: selection)
+    }
+
+    private func statusPrompt(for selection: SelectionState) -> String? {
+        if trimmedProviderID(in: selection).isEmpty && trimmedModelRecordID(in: selection).isEmpty {
+            return String(
+                localized: "chat.model_selection.missing.short",
+                defaultValue: "Missing Model Selection"
+            )
+        }
+        guard let provider = providerRecord(for: selection) else {
+            return String(
+                localized: "chat.model_selection.invalid.generic",
+                defaultValue: "Invalid Model Selection"
+            )
+        }
+        guard selectedModelRecord(for: provider, selection: selection) != nil else {
+            return String(
+                localized: "chat.model_selection.invalid.generic",
+                defaultValue: "Invalid Model Selection"
+            )
+        }
+        return nil
+    }
+}
+
+private extension Array {
+    subscript(safe index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
     }
 }

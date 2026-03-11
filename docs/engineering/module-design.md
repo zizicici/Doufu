@@ -12,13 +12,13 @@
    - 主要文件：
      - `Features/ProjectRuntime/ProjectChatViewController.swift`：UI 布局、View 生命周期、UITableViewDataSource、输入处理、线程管理协调、ChatTaskCoordinatorDelegate 转发。
      - `Features/ProjectRuntime/ChatMessageStore.swift`：消息数组管理、FlowState 状态机（idle / progress / streaming 三态）、追加/finalize/streaming 生命周期、持久化。
-     - `Features/ProjectRuntime/ChatModelSelectionManager.swift`：Provider/Model 切换、reasoning/thinking 设置、per-thread 选择存取、运行时凭证解析。
+     - `Features/ProjectRuntime/ChatModelSelectionManager.swift`：消费共享模型状态、解析当前有效模型、生成运行时凭证与 reasoning/thinking 选项。
      - `Features/ProjectRuntime/ChatMenuBuilder.swift`：所有 UIMenu 构建（thread / more / model），纯 static 方法，不持有状态。
    - 责任：聊天消息流、线程管理、模型配置、进度展示、取消请求、extended thinking 展示、工具活动摘要展示。
    - 消息流状态机：`ChatMessageStore.FlowState` 保证任务执行期间恰好有一条消息处于 live 状态（`finishedAt == nil`），streaming 与 progress 消息通过原子状态转换交替出现。
 4. `Project Model Configuration`
-   - 主要文件：`Features/ProjectRuntime/ProjectModelConfigurationViewController.swift`
-   - 责任：项目内模型选择与参数配置（reasoning effort / thinking 开关）。
+   - 主要文件：`Features/Chat/ModelConfigurationViewController.swift`、`Features/ProjectRuntime/ProjectModelSelectionViewController.swift`
+   - 责任：Project / Thread 模型配置、继承态展示、invalid selection 显式修复入口。
 5. `Project File Browser`
    - 主要文件：`Features/ProjectRuntime/ProjectFileBrowserViewController.swift`
    - 责任：项目文件树浏览、文件编辑与保存（Runestone 优先）。
@@ -36,7 +36,7 @@
    - 责任：Provider 关联模型的发现、自定义、能力参数编辑。
 10. `Default Model Selection`
     - 主要文件：`Features/Settings/DefaultModelSelectionViewController.swift`
-    - 责任：全局默认模型选择（Provider → Model 两步选择）。
+    - 责任：全局默认模型选择（Provider / Model / reasoning / thinking）。
 11. `LLM Quick Setup`
     - 主要文件：`Features/Settings/LLMQuickSetupViewController.swift`
     - 责任：首次使用聊天时的快速配置引导（添加 Provider → 选择默认模型）。
@@ -56,8 +56,8 @@
     - 主要文件：`Core/LLM/LLMModelRegistry.swift`
     - 责任：统一模型能力解析，多级优先级回退（用户自定义 > 内置 > 发现 > 保守默认）。
 17. `Model Selection Store`
-    - 主要文件：`Core/LLM/ProjectModelSelectionStore.swift`
-    - 责任：项目级/线程级模型选择与参数偏好持久化。
+    - 主要文件：`Core/LLM/ModelSelectionStateStore.swift`、`Core/LLM/ChatDataStore.swift`、`Core/LLM/ChatDataService.swift`、`Core/LLM/ModelSelectionResolver.swift`
+    - 责任：App / Project / Thread 三层 `ModelSelection` 的单一状态源、持久化、解析、归一化与旧数据兼容。
 18. `OAuth Service`
     - 主要文件：`Core/LLM/OpenAIOAuthService.swift`
     - 责任：OpenAI OAuth 流程（授权 URL、callback、token 交换、结果回传）。
@@ -75,7 +75,7 @@
 
 1. UI 到业务：ViewController 直接调用 Service/Store。
 2. 模块间协作：通过结构化模型（如 `LLMProviderRecord`、`ResolvedModelProfile`、`ProjectChatThreadRecord`）。
-3. 页面刷新：主要通过闭包回调传递事件（项目文件更新、设置更新、排序更新）。
+3. 页面刷新：项目文件和列表页仍以闭包回调为主；模型选择状态统一通过 `ModelSelectionStateStore` 广播变更。
 
 ## 关键流程
 
@@ -98,8 +98,10 @@
    - 记忆：`thread_memory_{threadID}_{version}.md`
    - `thread_should_rollover=true` 时自动创建新版本 memory 文件
 5. 模型选择持久化
-   - 项目级：`.doufu_project_config.json` 存 `providerID + modelRecordID`
-   - 线程级：`.doufu_thread_selections.json` 存每线程 provider/model/reasoning/thinking 偏好
+   - App 级：`UserDefaults` 存默认 `ModelSelection`
+   - 项目级：`.doufu_project_config.json` 存 `provider/model/reasoning/thinking`
+   - 线程级：`.doufu_thread_selections.json` 存每线程 `ModelSelection`，按 entry 容错解码
+   - 运行时 UI 不直接各自缓存一份三层选择，而是通过 `ModelSelectionStateStore` 读取和订阅
 6. Git 检查点与 undo
    - Agent loop 开始前 `ProjectGitService.createCheckpoint()` 提交当前状态
    - `ProjectGitService.undo()` 可回退到最近检查点

@@ -271,13 +271,14 @@ Chat 内必须存在明确修复入口。
 
 ### Reasoning / Thinking
 
-不参与 `App -> Project -> Thread` 三层继承。
+`reasoning / thinking` 与 `provider / model` 一起组成同一个三层 `ModelSelection` 结构。
 
 规则：
 
-1. 只对当前 Thread 生效
-2. 切换到新模型时，回到该模型默认值
-3. 只有用户在当前 Thread 显式修改后，才形成 Thread 级参数 override
+1. `App / Project / Thread` 三层都可以保存 `reasoning / thinking`
+2. 当前层 `override == nil` 时，整份 `provider / model / reasoning / thinking` 一起向上继承
+3. 切换到新模型时，回到该模型默认值；不支持的参数必须被清空
+4. 持久化时只保存非默认、且当前模型真实支持的参数值
 
 ## 旧数据容错
 
@@ -295,6 +296,13 @@ Chat 内必须存在明确修复入口。
 
 1. 无效 override 仍按“显式但无效”处理，不伪装成 `Not Set / Use App Default`。
 2. 页面通过轻量状态文案（如导航栏 `prompt`）明确显示 `Invalid App Default / Invalid Project Default`。
+3. 打开编辑页时保留原始 `providerID / modelRecordID`，不自动勾选首个可用模型。
+
+对于继承态模型页（Project 继承 App、Thread 继承 Project/App）：
+
+1. 继承态展示的是当前上层解析结果，而不是本地草稿 fallback。
+2. 如果上层当前是 `missingSelection / invalidOverride`，页面必须显式展示该状态。
+3. 在模型页打开期间，如果上层默认或 Provider 配置发生变化，继承态展示需要在页面返回前刷新。
 
 ## Project 默认变更传播
 
@@ -322,5 +330,4 @@ Chat 内必须存在明确修复入口。
 当前版本不支持：
 
 1. Thread 记住每个 Provider 的历史模型选择
-2. `reasoning / thinking` 的 App / Project 默认值
-3. 无效 override 的自动 silent fallback
+2. 无效 override 的自动 silent fallback

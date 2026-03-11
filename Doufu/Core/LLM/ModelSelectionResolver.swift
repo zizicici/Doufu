@@ -30,6 +30,8 @@ struct ModelSelectionResolution: Equatable {
     let providerID: String?
     let modelRecordID: String?
     let credential: ProjectChatService.ProviderCredential?
+    let reasoningEffort: ProjectChatService.ReasoningEffort?
+    let thinkingEnabled: Bool?
 
     var canSend: Bool {
         state == .valid && credential != nil
@@ -42,7 +44,9 @@ struct ModelSelectionResolution: Equatable {
             source: nil,
             providerID: nil,
             modelRecordID: nil,
-            credential: nil
+            credential: nil,
+            reasoningEffort: nil,
+            thinkingEnabled: nil
         )
     }
 
@@ -55,6 +59,8 @@ struct ModelSelectionResolution: Equatable {
             && lhs.credential?.providerID == rhs.credential?.providerID
             && lhs.credential?.baseURL == rhs.credential?.baseURL
             && lhs.credential?.modelID == rhs.credential?.modelID
+            && lhs.reasoningEffort == rhs.reasoningEffort
+            && lhs.thinkingEnabled == rhs.thinkingEnabled
     }
 }
 
@@ -63,7 +69,7 @@ struct ModelSelectionResolver {
     static func resolve(
         appDefault: ModelSelection?,
         projectDefault: ModelSelection?,
-        threadSelection: ThreadModelSelection?,
+        threadSelection: ModelSelection?,
         availableCredentials: [ProjectChatService.ProviderCredential],
         providerStore: LLMProviderSettingsStore
     ) -> ModelSelectionResolution {
@@ -73,6 +79,8 @@ struct ModelSelectionResolver {
             return validateSelection(
                 providerID: thread.providerID,
                 modelRecordID: thread.modelRecordID,
+                reasoningEffort: thread.reasoningEffort,
+                thinkingEnabled: thread.thinkingEnabled,
                 source: .thread,
                 availableCredentials: availableCredentials,
                 providerStore: providerStore,
@@ -84,6 +92,8 @@ struct ModelSelectionResolver {
             return validateSelection(
                 providerID: project.providerID,
                 modelRecordID: project.modelRecordID,
+                reasoningEffort: project.reasoningEffort,
+                thinkingEnabled: project.thinkingEnabled,
                 source: .project,
                 availableCredentials: availableCredentials,
                 providerStore: providerStore,
@@ -95,6 +105,8 @@ struct ModelSelectionResolver {
             return validateSelection(
                 providerID: app.providerID,
                 modelRecordID: app.modelRecordID,
+                reasoningEffort: app.reasoningEffort,
+                thinkingEnabled: app.thinkingEnabled,
                 source: .app,
                 availableCredentials: availableCredentials,
                 providerStore: providerStore,
@@ -105,9 +117,73 @@ struct ModelSelectionResolver {
         return .missingSelection(hasUsableProviderEnvironment: hasUsableProviderEnvironment)
     }
 
+    static func sanitizeSelection(
+        providerID: String,
+        modelRecordID: String,
+        reasoningEffort: ProjectChatService.ReasoningEffort?,
+        thinkingEnabled: Bool?,
+        providerStore: LLMProviderSettingsStore,
+        requiresExistingProviderAndModel: Bool
+    ) -> ModelSelection? {
+        let trimmedProviderID = providerID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedModelRecordID = modelRecordID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedProviderID.isEmpty, !trimmedModelRecordID.isEmpty else {
+            return nil
+        }
+
+        let provider = providerStore.loadProvider(id: trimmedProviderID)
+        let modelExists = providerStore.availableModels(forProviderID: trimmedProviderID)
+            .contains(where: { $0.normalizedID == trimmedModelRecordID.lowercased() })
+
+        if requiresExistingProviderAndModel, (provider == nil || !modelExists) {
+            return nil
+        }
+
+        var normalizedReasoningEffort: ProjectChatService.ReasoningEffort?
+        var normalizedThinkingEnabled: Bool?
+
+        if let provider, modelExists {
+            switch provider.kind {
+            case .openAICompatible:
+                if let profile = reasoningProfile(
+                    providerID: trimmedProviderID,
+                    providerKind: provider.kind,
+                    modelID: trimmedModelRecordID,
+                    providerStore: providerStore
+                ),
+                   let reasoningEffort,
+                   profile.supported.contains(reasoningEffort),
+                   reasoningEffort != profile.defaultEffort {
+                    normalizedReasoningEffort = reasoningEffort
+                }
+            case .anthropic, .googleGemini:
+                let capabilities = resolveModelProfile(
+                    providerID: trimmedProviderID,
+                    providerKind: provider.kind,
+                    modelID: trimmedModelRecordID,
+                    providerStore: providerStore
+                )
+                if capabilities.thinkingSupported,
+                   capabilities.thinkingCanDisable,
+                   thinkingEnabled == false {
+                    normalizedThinkingEnabled = false
+                }
+            }
+        }
+
+        return ModelSelection(
+            providerID: trimmedProviderID,
+            modelRecordID: trimmedModelRecordID,
+            reasoningEffort: normalizedReasoningEffort,
+            thinkingEnabled: normalizedThinkingEnabled
+        )
+    }
+
     private static func validateSelection(
         providerID: String,
         modelRecordID: String,
+        reasoningEffort: ProjectChatService.ReasoningEffort?,
+        thinkingEnabled: Bool?,
         source: ModelSelectionSource,
         availableCredentials: [ProjectChatService.ProviderCredential],
         providerStore: LLMProviderSettingsStore,
@@ -122,7 +198,9 @@ struct ModelSelectionResolver {
                 source: source,
                 providerID: trimmedProviderID.isEmpty ? nil : trimmedProviderID,
                 modelRecordID: trimmedModelID.isEmpty ? nil : trimmedModelID,
-                credential: nil
+                credential: nil,
+                reasoningEffort: nil,
+                thinkingEnabled: nil
             )
         }
 
@@ -133,7 +211,9 @@ struct ModelSelectionResolver {
                 source: source,
                 providerID: trimmedProviderID,
                 modelRecordID: trimmedModelID,
-                credential: nil
+                credential: nil,
+                reasoningEffort: nil,
+                thinkingEnabled: nil
             )
         }
 
@@ -144,7 +224,9 @@ struct ModelSelectionResolver {
                 source: source,
                 providerID: trimmedProviderID,
                 modelRecordID: trimmedModelID,
-                credential: nil
+                credential: nil,
+                reasoningEffort: nil,
+                thinkingEnabled: nil
             )
         }
 
@@ -157,7 +239,9 @@ struct ModelSelectionResolver {
                 source: source,
                 providerID: trimmedProviderID,
                 modelRecordID: trimmedModelID,
-                credential: nil
+                credential: nil,
+                reasoningEffort: nil,
+                thinkingEnabled: nil
             )
         }
 
@@ -167,7 +251,49 @@ struct ModelSelectionResolver {
             source: source,
             providerID: trimmedProviderID,
             modelRecordID: trimmedModelID,
-            credential: credential
+            credential: credential,
+            reasoningEffort: reasoningEffort,
+            thinkingEnabled: thinkingEnabled
         )
+    }
+
+    private static func resolveModelProfile(
+        providerID: String,
+        providerKind: LLMProviderRecord.Kind,
+        modelID: String,
+        providerStore: LLMProviderSettingsStore
+    ) -> ResolvedModelProfile {
+        let record = providerStore.modelRecord(providerID: providerID, modelID: modelID)
+            ?? providerStore.availableModels(forProviderID: providerID)
+                .first(where: { $0.normalizedModelID == modelID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() })
+        return LLMModelRegistry.resolve(
+            providerKind: providerKind,
+            modelID: record?.modelID ?? modelID,
+            modelRecord: record
+        )
+    }
+
+    private static func reasoningProfile(
+        providerID: String,
+        providerKind: LLMProviderRecord.Kind,
+        modelID: String,
+        providerStore: LLMProviderSettingsStore
+    ) -> (supported: [ProjectChatService.ReasoningEffort], defaultEffort: ProjectChatService.ReasoningEffort)? {
+        guard providerKind == .openAICompatible else {
+            return nil
+        }
+        let supported = resolveModelProfile(
+            providerID: providerID,
+            providerKind: providerKind,
+            modelID: modelID,
+            providerStore: providerStore
+        ).reasoningEfforts
+        guard !supported.isEmpty else {
+            return nil
+        }
+        let defaultEffort: ProjectChatService.ReasoningEffort = supported.contains(.high)
+            ? .high
+            : (supported.first ?? .medium)
+        return (supported: supported, defaultEffort: defaultEffort)
     }
 }

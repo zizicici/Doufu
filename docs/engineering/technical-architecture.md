@@ -27,7 +27,9 @@
 3. `Doufu/Core/LLM/`
    - `ProjectChatService`：聊天服务对外入口与数据模型定义。
    - `LLMModelRegistry`：统一模型能力解析（capabilities + token budgets）。
-   - `ProjectModelSelectionStore`：项目级/线程级模型选择持久化。
+   - `ChatDataStore` / `ChatDataService`：Project/Thread 会话数据与三层模型选择持久化。
+   - `ModelSelectionStateStore`：App / Project / Thread 三层模型选择的共享状态源、缓存与变更通知。
+   - `ModelSelectionResolver`：三层 `ModelSelection` 解析、校验与归一化。
    - `OpenAIOAuthService`：OpenAI OAuth（PKCE + localhost 回调）。
    - `LLMProviderSettingsStore`：Provider 元数据与 Keychain 凭证管理。
    - `LLMProviderModelDiscoveryService`：Provider 模型列表发现。
@@ -53,9 +55,9 @@
    - `ProjectWorkspaceViewController`：项目运行页与悬浮面板。
    - `ProjectChatViewController`：聊天页 UI 布局与胶水代码（线程切换、输入处理、coordinator delegate 转发）。
    - `ChatMessageStore`：消息数组管理与 FlowState 状态机（idle / progress / streaming），通过 delegate 回调驱动 UI。
-   - `ChatModelSelectionManager`：Provider/Model 选择逻辑、reasoning/thinking 设置、per-thread 持久化。
+   - `ChatModelSelectionManager`：消费 `ModelSelectionStateStore`、解析当前有效模型、生成 reasoning/thinking 运行时选项。
    - `ChatMenuBuilder`：所有 UIMenu 构建（static 方法，无状态）。
-   - `ProjectModelConfigurationViewController`：项目内模型配置。
+   - `ModelConfigurationViewController`：共享模型配置页（App / Project / Thread）。
    - `ProjectTokenUsageViewController`：项目级 token 使用量。
    - `ProjectFileBrowserViewController`：文件树浏览与内容编辑。
    - `ProjectSettingsViewController`：项目设置与快照入口。
@@ -92,8 +94,8 @@
    - Provider 关联的模型记录，含 `source`（discovered / custom）和 `capabilities`。
 4. `ResolvedModelProfile`
    - 统一的模型能力描述：`reasoningEfforts`, `thinkingSupported`, `thinkingCanDisable`, `structuredOutputSupported`, `maxOutputTokens`, `contextWindowTokens`。
-5. `ProjectModelSelection` / `ThreadModelSelection`
-   - 项目级/线程级模型选择与参数偏好。
+5. `ModelSelection`
+   - 统一的模型选择类型（providerID, modelRecordID, reasoningEffort?, thinkingEnabled?），App/Project/Thread 三层共用。
 6. `ProjectChatThreadRecord` / `ProjectChatThreadIndex`
    - 线程元数据与当前线程指针。
 7. `ProjectChatPersistedMessage`
@@ -111,8 +113,10 @@
    - `.doufu_thread_messages_{threadID}.json`
    - `thread_memory_{threadID}_{version}.md`
 4. 模型选择：
+   - App 默认：`UserDefaults`
    - `.doufu_project_config.json`（项目级模型选择）
-   - `.doufu_thread_selections.json`（线程级模型选择与参数）
+   - `.doufu_thread_selections.json`（线程级模型选择与参数；按 entry 独立解码）
+   - 内存态由 `ModelSelectionStateStore` 统一持有并向页面广播变更
 5. 快照：
    - `{project}/.doufu_snapshots/manual/*`
    - `{project}/.doufu_snapshots/auto/*`
@@ -188,6 +192,7 @@
    - 走 `/models/{model}:generateContent`。
    - 支持 thinking budget；若后端拒绝则自动降级。
 4. 聊天页按 Provider/Model 维度选择模型与参数：
+   - `App / Project / Thread` 三层共享同一份 `ModelSelection(provider, model, reasoning, thinking)` 结构
    - OpenAI Compatible：`reasoning effort`
    - Anthropic/Gemini：`thinking` 开关
 

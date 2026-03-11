@@ -733,11 +733,12 @@ final class ProjectWorkspaceViewController: UIViewController {
     private func resolveChatSelection() async -> ModelSelectionResolution {
         let store = LLMProviderSettingsStore.shared
         let credentials = ProviderCredentialResolver.resolveAvailableCredentials(providerStore: store)
-        let projectDefault = await chatDataService.loadProjectModelSelection()
-        let threadSelection = await chatDataService.loadCurrentThreadModelSelection()
+        let projectDefault = await ModelSelectionStateStore.projectDefaultSelection(projectID: project.id)
+        let threadSelection = await ModelSelectionStateStore.currentThreadSelection(projectID: project.id)
+        let appDefault = await ModelSelectionStateStore.appDefaultSelection()
 
         return ModelSelectionResolver.resolve(
-            appDefault: store.loadDefaultModelSelection(),
+            appDefault: appDefault,
             projectDefault: projectDefault,
             threadSelection: threadSelection,
             availableCredentials: credentials,

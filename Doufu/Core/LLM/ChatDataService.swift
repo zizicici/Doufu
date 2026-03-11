@@ -56,12 +56,12 @@ final class ChatDataService {
         thread: ProjectChatThreadRecord,
         messages: [ChatMessage],
         memory: SessionMemory?,
-        modelSelection: ThreadModelSelection?
+        modelSelection: ModelSelection?
     ) {
         let thread = try await dataStore.switchCurrentThread(projectID: projectID, threadID: threadID)
         let persisted = await dataStore.loadMessages(projectID: projectID, threadID: threadID)
         let memory = await dataStore.loadSessionMemory(projectID: projectID, threadID: threadID)
-        let modelSelection = await dataStore.loadThreadModelSelection(projectID: projectID, threadID: threadID)
+        let modelSelection = await dataStore.loadModelSelection(projectID: projectID, threadID: threadID)
 
         let messages = persisted.compactMap { persistedMessage -> ChatMessage? in
             let normalizedRole = persistedMessage.role.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -116,14 +116,14 @@ final class ChatDataService {
         return await dataStore.loadProjectModelSelection(projectID: projectID)
     }
 
-    func loadThreadModelSelection(threadID: String) async -> ThreadModelSelection? {
+    func loadModelSelection(threadID: String) async -> ModelSelection? {
         await writeQueue.flush()
-        return await dataStore.loadThreadModelSelection(projectID: projectID, threadID: threadID)
+        return await dataStore.loadModelSelection(projectID: projectID, threadID: threadID)
     }
 
-    func loadCurrentThreadModelSelection() async -> ThreadModelSelection? {
+    func loadCurrentModelSelection() async -> ModelSelection? {
         await writeQueue.flush()
-        return await dataStore.loadCurrentThreadModelSelection(projectID: projectID)
+        return await dataStore.loadCurrentModelSelection(projectID: projectID)
     }
 
     func persistProjectModelSelection(_ selection: ModelSelection?) {
@@ -134,11 +134,19 @@ final class ChatDataService {
         }
     }
 
-    func removeThreadModelSelection(threadID: String) {
+    func removeModelSelection(threadID: String) {
         let dataStore = self.dataStore
         let projectID = self.projectID
         writeQueue.enqueue {
-            await dataStore.removeThreadModelSelection(projectID: projectID, threadID: threadID)
+            await dataStore.removeModelSelection(projectID: projectID, threadID: threadID)
+        }
+    }
+
+    func removeModelSelectionAsync(threadID: String) async {
+        let dataStore = self.dataStore
+        let projectID = self.projectID
+        await writeQueue.enqueueAndWait {
+            await dataStore.removeModelSelection(projectID: projectID, threadID: threadID)
         }
     }
 
@@ -183,11 +191,11 @@ final class ChatDataService {
         }
     }
 
-    func persistModelSelection(_ selection: ThreadModelSelection, threadID: String) {
+    func persistModelSelection(_ selection: ModelSelection, threadID: String) {
         let dataStore = self.dataStore
         let projectID = self.projectID
         writeQueue.enqueue {
-            await dataStore.saveThreadModelSelection(selection, projectID: projectID, threadID: threadID)
+            await dataStore.saveModelSelection(selection, projectID: projectID, threadID: threadID)
         }
     }
 
@@ -224,11 +232,11 @@ final class ChatDataService {
         }
     }
 
-    func persistModelSelectionAsync(_ selection: ThreadModelSelection, threadID: String) async {
+    func persistModelSelectionAsync(_ selection: ModelSelection, threadID: String) async {
         let dataStore = self.dataStore
         let projectID = self.projectID
         await writeQueue.enqueueAndWait {
-            await dataStore.saveThreadModelSelection(selection, projectID: projectID, threadID: threadID)
+            await dataStore.saveModelSelection(selection, projectID: projectID, threadID: threadID)
         }
     }
 
