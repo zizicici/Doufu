@@ -81,20 +81,11 @@ struct ProjectChatPersistedMessage: Codable {
 
 enum ProjectChatThreadStoreError: LocalizedError {
     case threadNotFound
-    case invalidThreadData
-    case indexReadFailed(underlying: Error)
-    case indexCorrupted(backupPath: String, underlying: Error)
 
     var errorDescription: String? {
         switch self {
         case .threadNotFound:
             return String(localized: "thread_store.error.thread_not_found")
-        case .invalidThreadData:
-            return String(localized: "thread_store.error.invalid_thread_data")
-        case .indexReadFailed(let underlying):
-            return "Failed to read thread index: \(underlying.localizedDescription)"
-        case .indexCorrupted(let backupPath, _):
-            return "Thread index was corrupted. A backup was saved to \(backupPath). Starting fresh."
         }
     }
 }

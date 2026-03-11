@@ -22,9 +22,9 @@ final class LocalWebServer: @unchecked Sendable {
     private let urlSession: URLSession
     private(set) var port: UInt16 = 0
 
-    init(projectURL: URL) {
+    init(projectURL: URL, projectID: String) {
         self.projectURL = projectURL
-        self.preferredPort = Self.stablePort(for: projectURL.lastPathComponent)
+        self.preferredPort = Self.stablePort(for: projectID)
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 30
         self.urlSession = URLSession(configuration: config)

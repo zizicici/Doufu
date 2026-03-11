@@ -7,6 +7,7 @@
 
 import Foundation
 import Security
+import GRDB
 
 struct LLMProviderModelCapabilities: Codable, Equatable, Hashable {
     var reasoningEfforts: [ProjectChatService.ReasoningEffort]
@@ -246,78 +247,77 @@ enum LLMProviderSettingsStoreError: LocalizedError {
 final class LLMProviderSettingsStore {
     static let shared = LLMProviderSettingsStore()
 
-    private let defaults: UserDefaults
-    private let encoder = JSONEncoder()
-    private let decoder = JSONDecoder()
-
-    private let providersKey = "llm.providers.records.v2"
-    private let defaultProviderIDKey = "llm.default.providerID"
-    private let defaultModelRecordIDKey = "llm.default.modelRecordID"
-    private let defaultReasoningEffortKey = "llm.default.reasoningEffort"
-    private let defaultThinkingEnabledKey = "llm.default.thinkingEnabled"
     private let keychainService = Bundle.main.bundleIdentifier ?? "com.zizicici.doufu"
 
-    init(defaults: UserDefaults = .standard) {
-        self.defaults = defaults
+    private var dbPool: DatabasePool {
+        DatabaseManager.shared.dbPool
     }
+
+    init() {}
 
     // MARK: - App-level Default Model
 
     func loadDefaultModelSelection() -> ModelSelection? {
-        guard
-            let providerID = defaults.string(forKey: defaultProviderIDKey),
-            !providerID.isEmpty,
-            let modelRecordID = defaults.string(forKey: defaultModelRecordIDKey),
-            !modelRecordID.isEmpty
-        else {
+        guard let row = try? dbPool.read({ db in
+            try DBAppModelSelection.fetchOne(db, key: "default")
+        }) else {
             return nil
         }
-        let reasoningEffort = defaults.string(forKey: defaultReasoningEffortKey)
-            .flatMap(ProjectChatService.ReasoningEffort.init(rawValue:))
-        let thinkingEnabled: Bool? = defaults.object(forKey: defaultThinkingEnabledKey) as? Bool
-        return ModelSelection(
-            providerID: providerID,
-            modelRecordID: modelRecordID,
-            reasoningEffort: reasoningEffort,
-            thinkingEnabled: thinkingEnabled
-        )
+        return ModelSelection.from(row)
     }
 
     func saveDefaultModelSelection(_ selection: ModelSelection) {
-        defaults.set(selection.providerID, forKey: defaultProviderIDKey)
-        defaults.set(selection.modelRecordID, forKey: defaultModelRecordIDKey)
-        if let effort = selection.reasoningEffort {
-            defaults.set(effort.rawValue, forKey: defaultReasoningEffortKey)
-        } else {
-            defaults.removeObject(forKey: defaultReasoningEffortKey)
-        }
-        if let thinking = selection.thinkingEnabled {
-            defaults.set(thinking, forKey: defaultThinkingEnabledKey)
-        } else {
-            defaults.removeObject(forKey: defaultThinkingEnabledKey)
+        let row = DBAppModelSelection(
+            id: "default",
+            providerID: selection.providerID,
+            modelRecordID: selection.modelRecordID,
+            reasoningEffort: selection.reasoningEffort?.rawValue,
+            thinkingEnabled: selection.thinkingEnabled,
+            extra: nil,
+            updatedAt: DatabaseTimestamp.toNanos(Date())
+        )
+        try? dbPool.write { db in
+            try row.save(db)
         }
     }
 
     func clearDefaultModelSelection() {
-        defaults.removeObject(forKey: defaultProviderIDKey)
-        defaults.removeObject(forKey: defaultModelRecordIDKey)
-        defaults.removeObject(forKey: defaultReasoningEffortKey)
-        defaults.removeObject(forKey: defaultThinkingEnabledKey)
+        _ = try? dbPool.write { db in
+            try DBAppModelSelection.deleteOne(db, key: "default")
+        }
     }
 
+    // MARK: - Provider CRUD
+
     func loadProviders() -> [LLMProviderRecord] {
-        guard
-            let data = defaults.data(forKey: providersKey),
-            let records = try? decoder.decode([LLMProviderRecord].self, from: data)
-        else {
+        guard let result = try? dbPool.read({ db -> [LLMProviderRecord] in
+            let dbProviders = try DBProvider.order(Column("updated_at").desc).fetchAll(db)
+            return try dbProviders.map { dbProvider in
+                let dbModels = try DBProviderModel
+                    .filter(Column("provider_id") == dbProvider.id)
+                    .order(Column("sort_order").asc)
+                    .fetchAll(db)
+                let kind = DBProvider.kindEnum(from: dbProvider.kind)
+                let models = dbModels.map { $0.toLLMProviderModelRecord(providerKind: kind) }
+                return dbProvider.toLLMProviderRecord(models: models)
+            }
+        }) else {
             return []
         }
-
-        return records.sorted { $0.updatedAt > $1.updatedAt }
+        return result
     }
 
     func loadProvider(id: String) -> LLMProviderRecord? {
-        loadProviders().first { $0.id == id }
+        try? dbPool.read { db in
+            guard let dbProvider = try DBProvider.fetchOne(db, key: id) else { return nil }
+            let dbModels = try DBProviderModel
+                .filter(Column("provider_id") == id)
+                .order(Column("sort_order").asc)
+                .fetchAll(db)
+            let kind = DBProvider.kindEnum(from: dbProvider.kind)
+            let models = dbModels.map { $0.toLLMProviderModelRecord(providerKind: kind) }
+            return dbProvider.toLLMProviderRecord(models: models)
+        }
     }
 
     func availableModels(forProviderID providerID: String) -> [LLMProviderModelRecord] {
@@ -382,9 +382,7 @@ final class LLMProviderSettingsStore {
             models: []
         )
 
-        var allProviders = loadProviders()
-        allProviders.append(provider)
-        try saveProviders(allProviders)
+        try saveProviderToDB(provider)
         try saveAPIKey(normalizedAPIKey, providerID: provider.id)
         return provider
     }
@@ -441,9 +439,7 @@ final class LLMProviderSettingsStore {
             models: []
         )
 
-        var allProviders = loadProviders()
-        allProviders.append(provider)
-        try saveProviders(allProviders)
+        try saveProviderToDB(provider)
 
         let normalizedToken = bearerToken?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !normalizedToken.isEmpty {
@@ -490,11 +486,9 @@ final class LLMProviderSettingsStore {
             throw LLMProviderSettingsStoreError.emptyAPIKey
         }
 
-        var providers = loadProviders()
-        guard let index = providers.firstIndex(where: { $0.id == providerID }) else {
+        guard let existingProvider = loadProvider(id: providerID) else {
             throw LLMProviderSettingsStoreError.providerNotFound
         }
-        let existingProvider = providers[index]
         let normalizedBaseURL = try normalizeBaseURL(baseURLString, kind: existingProvider.kind)
         let normalizedModelID = normalizeModelID(modelID, kind: existingProvider.kind)
         let updatedProvider = existingProvider.copying(
@@ -506,8 +500,7 @@ final class LLMProviderSettingsStore {
             chatGPTAccountID: .some(nil),
             modelID: .some(normalizedModelID)
         )
-        providers[index] = updatedProvider
-        try saveProviders(providers)
+        try saveProviderToDB(updatedProvider)
         try saveAPIKey(normalizedAPIKey, providerID: providerID)
         if existingProvider.authMode == .oauth {
             try deleteOAuthBearerToken(providerID: providerID)
@@ -556,11 +549,9 @@ final class LLMProviderSettingsStore {
             throw LLMProviderSettingsStoreError.emptyAPIKey
         }
 
-        var providers = loadProviders()
-        guard let index = providers.firstIndex(where: { $0.id == providerID }) else {
+        guard let existingProvider = loadProvider(id: providerID) else {
             throw LLMProviderSettingsStoreError.providerNotFound
         }
-        let existingProvider = providers[index]
         let normalizedBaseURL = try normalizeBaseURL(baseURLString, kind: existingProvider.kind)
         let normalizedModelID = normalizeModelID(modelID, kind: existingProvider.kind)
         let updatedProvider = existingProvider.copying(
@@ -572,8 +563,7 @@ final class LLMProviderSettingsStore {
             chatGPTAccountID: .some(chatGPTAccountID?.trimmingCharacters(in: .whitespacesAndNewlines)),
             modelID: .some(normalizedModelID)
         )
-        providers[index] = updatedProvider
-        try saveProviders(providers)
+        try saveProviderToDB(updatedProvider)
         try saveOAuthBearerToken(normalizedToken, providerID: providerID)
         if existingProvider.authMode == .apiKey {
             try deleteAPIKey(providerID: providerID)
@@ -586,12 +576,10 @@ final class LLMProviderSettingsStore {
         providerID: String,
         models: [LLMProviderModelRecord]
     ) throws -> LLMProviderRecord {
-        var providers = loadProviders()
-        guard let index = providers.firstIndex(where: { $0.id == providerID }) else {
+        guard let existingProvider = loadProvider(id: providerID) else {
             throw LLMProviderSettingsStoreError.providerNotFound
         }
 
-        let existingProvider = providers[index]
         let customModels = existingProvider.models.filter { $0.source == .custom }
         let officialModels = models.map {
             LLMProviderModelRecord(
@@ -602,12 +590,12 @@ final class LLMProviderSettingsStore {
                 capabilities: $0.capabilities
             )
         }
+        let merged = mergeModels(customModels + officialModels)
         let updatedProvider = existingProvider.copying(
             updatedAt: Date(),
-            models: mergeModels(customModels + officialModels)
+            models: merged
         )
-        providers[index] = updatedProvider
-        try saveProviders(providers)
+        try saveProviderToDB(updatedProvider)
         return updatedProvider
     }
 
@@ -624,12 +612,10 @@ final class LLMProviderSettingsStore {
             throw LLMProviderSettingsStoreError.emptyModelID
         }
 
-        var providers = loadProviders()
-        guard let index = providers.firstIndex(where: { $0.id == providerID }) else {
+        guard let existingProvider = loadProvider(id: providerID) else {
             throw LLMProviderSettingsStoreError.providerNotFound
         }
 
-        let existingProvider = providers[index]
         let normalizedRecordID = existingRecordID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let recordID = normalizedRecordID.isEmpty ? UUID().uuidString : normalizedRecordID
         let trimmedDisplayName = displayName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -668,10 +654,94 @@ final class LLMProviderSettingsStore {
             updatedAt: Date(),
             models: mergeModels(remainingModels + [customModel])
         )
-        providers[index] = updatedProvider
-        try saveProviders(providers)
+        try saveProviderToDB(updatedProvider)
         return updatedProvider
     }
+
+    func deleteProvider(id: String) throws {
+        // FK cascade deletes llm_provider_model rows automatically
+        try dbPool.write { db in
+            try DBProvider.deleteOne(db, key: id)
+        }
+        try deleteAPIKey(providerID: id)
+        try deleteOAuthBearerToken(providerID: id)
+    }
+
+    // MARK: - Project-level Model Selection
+
+    func loadProjectModelSelection(projectID: String) -> ModelSelection? {
+        guard let row = try? dbPool.read({ db in
+            try DBProjectModelSelection.fetchOne(db, key: projectID)
+        }) else {
+            return nil
+        }
+        return ModelSelection.from(row)
+    }
+
+    func saveProjectModelSelection(_ selection: ModelSelection?, projectID: String) {
+        try? dbPool.write { db in
+            if let selection {
+                // Ensure project placeholder exists
+                let now = DatabaseTimestamp.toNanos(Date())
+                let project = DBProject(id: projectID, createdAt: now, title: "", description: "", sortOrder: 0, updatedAt: now)
+                try project.insert(db, onConflict: .ignore)
+
+                let row = DBProjectModelSelection(
+                    projectID: projectID,
+                    providerID: selection.providerID,
+                    modelRecordID: selection.modelRecordID,
+                    reasoningEffort: selection.reasoningEffort?.rawValue,
+                    thinkingEnabled: selection.thinkingEnabled,
+                    updatedAt: DatabaseTimestamp.toNanos(Date())
+                )
+                try row.save(db)
+            } else {
+                try DBProjectModelSelection.deleteOne(db, key: projectID)
+            }
+        }
+    }
+
+    // MARK: - Thread-level Model Selection
+
+    func loadThreadModelSelection(projectID: String, threadID: String) -> ModelSelection? {
+        guard let row = try? dbPool.read({ db in
+            try DBThreadModelSelection.fetchOne(db, key: ["project_id": projectID, "thread_id": threadID])
+        }) else {
+            return nil
+        }
+        return ModelSelection.from(row)
+    }
+
+    func saveThreadModelSelection(_ selection: ModelSelection?, projectID: String, threadID: String) {
+        try? dbPool.write { db in
+            if let selection {
+                let now = DatabaseTimestamp.toNanos(Date())
+                let project = DBProject(id: projectID, createdAt: now, title: "", description: "", sortOrder: 0, updatedAt: now)
+                try project.insert(db, onConflict: .ignore)
+
+                let row = DBThreadModelSelection(
+                    projectID: projectID,
+                    threadID: threadID,
+                    providerID: selection.providerID,
+                    modelRecordID: selection.modelRecordID,
+                    reasoningEffort: selection.reasoningEffort?.rawValue,
+                    thinkingEnabled: selection.thinkingEnabled,
+                    updatedAt: DatabaseTimestamp.toNanos(Date())
+                )
+                try row.save(db)
+            } else {
+                try DBThreadModelSelection.deleteOne(db, key: ["project_id": projectID, "thread_id": threadID])
+            }
+        }
+    }
+
+    func removeThreadModelSelection(projectID: String, threadID: String) {
+        _ = try? dbPool.write { db in
+            try DBThreadModelSelection.deleteOne(db, key: ["project_id": projectID, "thread_id": threadID])
+        }
+    }
+
+    // MARK: - Keychain (unchanged)
 
     func hasAPIKey(for providerID: String) -> Bool {
         (try? loadAPIKey(for: providerID))?.isEmpty == false
@@ -742,13 +812,7 @@ final class LLMProviderSettingsStore {
         }
     }
 
-    func deleteProvider(id: String) throws {
-        var providers = loadProviders()
-        providers.removeAll { $0.id == id }
-        try saveProviders(providers)
-        try deleteAPIKey(providerID: id)
-        try deleteOAuthBearerToken(providerID: id)
-    }
+    // MARK: - Private Helpers
 
     private func normalizeBaseURL(_ rawValue: String?, kind: LLMProviderRecord.Kind) throws -> String {
         let fallback = kind.defaultBaseURLString
@@ -789,11 +853,21 @@ final class LLMProviderSettingsStore {
         return merged
     }
 
-    private func saveProviders(_ providers: [LLMProviderRecord]) throws {
-        guard let data = try? encoder.encode(providers) else {
-            throw LLMProviderSettingsStoreError.encodeFailed
+    private func saveProviderToDB(_ provider: LLMProviderRecord) throws {
+        let dbProvider = DBProvider.from(provider)
+        try dbPool.write { db in
+            try dbProvider.save(db)
+
+            // Replace all models for this provider
+            try DBProviderModel
+                .filter(Column("provider_id") == provider.id)
+                .deleteAll(db)
+
+            for (index, model) in provider.models.enumerated() {
+                let dbModel = DBProviderModel.from(model, providerID: provider.id, sortOrder: index)
+                try dbModel.insert(db)
+            }
         }
-        defaults.set(data, forKey: providersKey)
     }
 
     private func apiKeyAccount(providerID: String) -> String {

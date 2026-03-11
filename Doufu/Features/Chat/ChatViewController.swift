@@ -150,7 +150,7 @@ final class ChatViewController: UIViewController {
 
     private var projectIdentifier: String { project.id }
     private var projectName: String { project.name }
-    private var projectURL: URL { project.projectURL }
+    private var projectURL: URL { project.appURL }
 
     init(project: AppProjectRecord) {
         self.project = project
@@ -175,7 +175,7 @@ final class ChatViewController: UIViewController {
         configureNavigation()
         configureLayout()
         ensureProjectMemoryDocumentIfNeeded()
-        toolPermissionMode = AppProjectStore.shared.loadToolPermissionMode(projectURL: projectURL)
+        toolPermissionMode = AppProjectStore.shared.loadToolPermissionMode(projectURL: project.projectURL)
         if isReadOnly {
             inputContainer.isHidden = true
         }
@@ -187,7 +187,7 @@ final class ChatViewController: UIViewController {
             defer { self.initialLoadTask = nil }
             await self.reloadModelSelectionContext()
             do {
-                try await self.threadSession.restoreThreadStateIfNeeded()
+                try self.threadSession.restoreThreadStateIfNeeded()
             } catch {
                 self.messageStore.appendMessage(role: .system, text: error.localizedDescription)
             }
@@ -339,6 +339,8 @@ final class ChatViewController: UIViewController {
         ## Project Overview
         - Name: \(projectName)
         - Runtime: Static html/css/js in WKWebView
+        - Directory layout: `App/` (code + git) | `AppData/` (user data)
+        - All code lives in `App/`. This file is inside `App/`.
 
         ## Notes
         - Keep this file updated with architecture and important feature notes.
@@ -503,7 +505,7 @@ final class ChatViewController: UIViewController {
 
     private func presentProjectSettings() {
         let settingsController = ProjectSettingsViewController(
-            projectURL: projectURL,
+            projectURL: project.projectURL,
             projectName: projectName
         )
         settingsController.onProjectUpdated = { [weak self] updatedProjectName in
@@ -512,7 +514,6 @@ final class ChatViewController: UIViewController {
                 id: self.project.id,
                 name: updatedProjectName,
                 projectURL: self.project.projectURL,
-                entryFileURL: self.project.entryFileURL,
                 createdAt: self.project.createdAt,
                 updatedAt: Date()
             )
@@ -572,6 +573,7 @@ final class ChatViewController: UIViewController {
         let sessionContext = ChatSessionContext(
             projectID: projectIdentifier,
             projectURL: projectURL,
+            projectRootURL: project.projectURL,
             projectName: projectName
         )
         let request = ChatTaskCoordinator.Request(

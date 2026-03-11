@@ -5352,35 +5352,6 @@
         }
       }
     },
-    "project_settings.disable_edge_swipe.title" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Disable Edge Swipe Exit"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "禁用边缘滑动退出"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "禁用邊緣滑動退出"
-          }
-        },
-        "zh-HK" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "禁用邊緣滑動退出"
-          }
-        }
-      }
-    },
     "project_settings.field.name_placeholder" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -6015,35 +5986,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "項目名稱不能為空。"
-          }
-        }
-      }
-    },
-    "project_store.error.manifest_update_failed" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Failed to update project settings. Please try again later."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "更新项目设置失败，请稍后重试。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "更新項目設置失敗，請稍後重試。"
-          }
-        },
-        "zh-HK" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "更新項目設置失敗，請稍後重試。"
           }
         }
       }
@@ -9726,64 +9668,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "初始收起面板"
-          }
-        }
-      }
-    },
-    "settings.project.disable_edge_swipe.footer" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "When enabled, swiping from the left edge of the screen will not dismiss the project page."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "开启后，从屏幕左侧边缘向右滑动不会退出项目页面。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "開啟後，從螢幕左側邊緣向右滑動不會退出專案頁面。"
-          }
-        },
-        "zh-HK" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "開啟後，從螢幕左側邊緣向右滑動不會退出項目頁面。"
-          }
-        }
-      }
-    },
-    "settings.project.disable_edge_swipe.title" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Disable Edge Swipe Exit"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "禁用边缘滑动退出"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "禁用邊緣滑動退出"
-          }
-        },
-        "zh-HK" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "禁用邊緣滑動退出"
           }
         }
       }

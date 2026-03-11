@@ -41,16 +41,14 @@ final class ThreadManagementViewController: UITableViewController {
     }
 
     private func reloadThreads() {
-        Task {
-            do {
-                let index = try await ChatDataStore.shared.loadOrCreateIndex(projectID: projectID)
-                currentThreadID = index.currentThreadID
-                threads = index.threads
-            } catch {
-                threads = []
-            }
-            tableView.reloadData()
+        do {
+            let index = try ChatDataStore.shared.loadOrCreateIndex(projectID: projectID)
+            currentThreadID = index.currentThreadID
+            threads = index.threads
+        } catch {
+            threads = []
         }
+        tableView.reloadData()
     }
 
     // MARK: - Editing mode toggle
@@ -59,10 +57,8 @@ final class ThreadManagementViewController: UITableViewController {
         if !editing && isEditing {
             // Exiting editing mode — save reorder
             let orderedIDs = threads.map(\.id)
-            Task {
-                try? await ChatDataStore.shared.reorderThreads(projectID: projectID, orderedIDs: orderedIDs)
-                onChanged?()
-            }
+            try? ChatDataStore.shared.reorderThreads(projectID: projectID, orderedIDs: orderedIDs)
+            onChanged?()
         }
         super.setEditing(editing, animated: animated)
     }
@@ -139,16 +135,14 @@ final class ThreadManagementViewController: UITableViewController {
 
     private func performDelete(at indexPath: IndexPath) {
         let thread = threads[indexPath.row]
-        Task {
-            do {
-                try await ChatDataStore.shared.deleteThread(projectID: projectID, threadID: thread.id)
-                reloadThreads()
-                onChanged?()
-            } catch {
-                let errorAlert = UIAlertController(title: nil, message: error.localizedDescription, preferredStyle: .alert)
-                errorAlert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
-                present(errorAlert, animated: true)
-            }
+        do {
+            try ChatDataStore.shared.deleteThread(projectID: projectID, threadID: thread.id)
+            reloadThreads()
+            onChanged?()
+        } catch {
+            let errorAlert = UIAlertController(title: nil, message: error.localizedDescription, preferredStyle: .alert)
+            errorAlert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
+            present(errorAlert, animated: true)
         }
     }
 
@@ -176,17 +170,15 @@ final class ThreadManagementViewController: UITableViewController {
             guard let self,
                   let newTitle = alert?.textFields?.first?.text?.trimmingCharacters(in: .whitespacesAndNewlines),
                   !newTitle.isEmpty else { return }
-            Task {
-                do {
-                    try await ChatDataStore.shared.renameThread(projectID: self.projectID, threadID: thread.id, newTitle: newTitle)
-                    self.threads[indexPath.row].title = newTitle
-                    self.tableView.reloadRows(at: [indexPath], with: .automatic)
-                    self.onChanged?()
-                } catch {
-                    let errorAlert = UIAlertController(title: nil, message: error.localizedDescription, preferredStyle: .alert)
-                    errorAlert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
-                    self.present(errorAlert, animated: true)
-                }
+            do {
+                try ChatDataStore.shared.renameThread(projectID: self.projectID, threadID: thread.id, newTitle: newTitle)
+                self.threads[indexPath.row].title = newTitle
+                self.tableView.reloadRows(at: [indexPath], with: .automatic)
+                self.onChanged?()
+            } catch {
+                let errorAlert = UIAlertController(title: nil, message: error.localizedDescription, preferredStyle: .alert)
+                errorAlert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
+                self.present(errorAlert, animated: true)
             }
         })
         present(alert, animated: true)

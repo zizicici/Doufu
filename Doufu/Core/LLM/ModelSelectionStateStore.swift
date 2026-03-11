@@ -47,7 +47,6 @@ final class ModelSelectionStateStore {
     private static let changeUserInfoKey = "change"
 
     private let providerStore: LLMProviderSettingsStore
-    private var dataServices: [String: ChatDataService] = [:]
 
     private var hasLoadedAppDefault = false
     private var appDefault: ModelSelection?
@@ -62,11 +61,13 @@ final class ModelSelectionStateStore {
     }
 
     static func projectDefaultSelection(projectID: String) async -> ModelSelection? {
-        await shared.loadProjectDefaultSelection(projectID: projectID)
+        shared.loadProjectDefaultSelection(projectID: projectID)
     }
 
     static func currentThreadSelection(projectID: String) async -> ModelSelection? {
-        await shared.loadCurrentThreadSelection(projectID: projectID)
+        // Without ChatDataStore, we can't resolve the "current" thread here.
+        // Callers should use loadThreadSelection with an explicit threadID.
+        nil
     }
 
     func addObserver(using handler: @escaping (Change) -> Void) -> NSObjectProtocol {
@@ -91,20 +92,20 @@ final class ModelSelectionStateStore {
         return appDefault
     }
 
-    func loadProjectDefaultSelection(projectID: String) async -> ModelSelection? {
+    func loadProjectDefaultSelection(projectID: String) -> ModelSelection? {
         var state = projectStates[projectID] ?? ProjectState()
         if !state.didLoadProjectDefault {
-            state.projectDefault = await dataService(for: projectID).loadProjectModelSelection()
+            state.projectDefault = providerStore.loadProjectModelSelection(projectID: projectID)
             state.didLoadProjectDefault = true
             projectStates[projectID] = state
         }
         return state.projectDefault
     }
 
-    func loadThreadSelection(projectID: String, threadID: String) async -> ModelSelection? {
+    func loadThreadSelection(projectID: String, threadID: String) -> ModelSelection? {
         var state = projectStates[projectID] ?? ProjectState()
         if !state.loadedThreadIDs.contains(threadID) {
-            let selection = await dataService(for: projectID).loadModelSelection(threadID: threadID)
+            let selection = providerStore.loadThreadModelSelection(projectID: projectID, threadID: threadID)
             state.loadedThreadIDs.insert(threadID)
             if let selection {
                 state.threadSelections[threadID] = selection
@@ -116,16 +117,12 @@ final class ModelSelectionStateStore {
         return state.threadSelections[threadID]
     }
 
-    func loadCurrentThreadSelection(projectID: String) async -> ModelSelection? {
-        await dataService(for: projectID).loadCurrentModelSelection()
-    }
-
-    func loadSnapshot(projectID: String, threadID: String?) async -> Snapshot {
+    func loadSnapshot(projectID: String, threadID: String?) -> Snapshot {
         let appDefault = loadAppDefaultSelection()
-        let projectDefault = await loadProjectDefaultSelection(projectID: projectID)
+        let projectDefault = loadProjectDefaultSelection(projectID: projectID)
         let threadSelection: ModelSelection?
         if let threadID {
-            threadSelection = await loadThreadSelection(projectID: projectID, threadID: threadID)
+            threadSelection = loadThreadSelection(projectID: projectID, threadID: threadID)
         } else {
             threadSelection = nil
         }
@@ -154,51 +151,34 @@ final class ModelSelectionStateStore {
 
     func setProjectDefaultSelection(_ selection: ModelSelection?, projectID: String) {
         let didChange = cacheProjectDefaultSelection(selection, projectID: projectID)
-        dataService(for: projectID).persistProjectModelSelection(selection)
+        providerStore.saveProjectModelSelection(selection, projectID: projectID)
         if didChange {
             postChange(.init(scope: .projectDefault(projectID: projectID)))
         }
     }
 
-    func setProjectDefaultSelectionAsync(_ selection: ModelSelection?, projectID: String) async {
+    func setProjectDefaultSelectionAsync(_ selection: ModelSelection?, projectID: String) {
         let didChange = cacheProjectDefaultSelection(selection, projectID: projectID)
         if didChange {
             postChange(.init(scope: .projectDefault(projectID: projectID)))
         }
-        await dataService(for: projectID).persistProjectModelSelectionAsync(selection)
+        providerStore.saveProjectModelSelection(selection, projectID: projectID)
     }
 
     func setThreadSelection(_ selection: ModelSelection?, projectID: String, threadID: String) {
         let didChange = cacheThreadSelection(selection, projectID: projectID, threadID: threadID)
-        if let selection {
-            dataService(for: projectID).persistModelSelection(selection, threadID: threadID)
-        } else {
-            dataService(for: projectID).removeModelSelection(threadID: threadID)
-        }
+        providerStore.saveThreadModelSelection(selection, projectID: projectID, threadID: threadID)
         if didChange {
             postChange(.init(scope: .threadSelection(projectID: projectID, threadID: threadID)))
         }
     }
 
-    func setThreadSelectionAsync(_ selection: ModelSelection?, projectID: String, threadID: String) async {
+    func setThreadSelectionAsync(_ selection: ModelSelection?, projectID: String, threadID: String) {
         let didChange = cacheThreadSelection(selection, projectID: projectID, threadID: threadID)
         if didChange {
             postChange(.init(scope: .threadSelection(projectID: projectID, threadID: threadID)))
         }
-        if let selection {
-            await dataService(for: projectID).persistModelSelectionAsync(selection, threadID: threadID)
-        } else {
-            await dataService(for: projectID).removeModelSelectionAsync(threadID: threadID)
-        }
-    }
-
-    private func dataService(for projectID: String) -> ChatDataService {
-        if let existing = dataServices[projectID] {
-            return existing
-        }
-        let service = ChatDataService(projectID: projectID)
-        dataServices[projectID] = service
-        return service
+        providerStore.saveThreadModelSelection(selection, projectID: projectID, threadID: threadID)
     }
 
     @discardableResult

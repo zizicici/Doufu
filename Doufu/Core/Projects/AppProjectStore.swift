@@ -7,14 +7,18 @@
 
 import Foundation
 import UIKit
+import GRDB
 
 struct AppProjectRecord: Equatable, Hashable {
-    let id: String
+    let id: String              // Pure UUID (no "project-" prefix)
     let name: String
-    let projectURL: URL
-    let entryFileURL: URL
+    let projectURL: URL         // Projects/{uuid}/
     let createdAt: Date
     let updatedAt: Date
+
+    var appURL: URL { projectURL.appendingPathComponent("App") }
+    var dataURL: URL { projectURL.appendingPathComponent("AppData") }
+    var entryFileURL: URL { appURL.appendingPathComponent("index.html") }
 }
 
 enum AppProjectStoreError: LocalizedError {
@@ -23,7 +27,6 @@ enum AppProjectStoreError: LocalizedError {
     case invalidProjectLocation
     case projectDeletionFailed
     case invalidProjectName
-    case manifestUpdateFailed
 
     var errorDescription: String? {
         switch self {
@@ -37,8 +40,6 @@ enum AppProjectStoreError: LocalizedError {
             return String(localized: "project_store.error.project_deletion_failed")
         case .invalidProjectName:
             return String(localized: "project_store.error.invalid_project_name")
-        case .manifestUpdateFailed:
-            return String(localized: "project_store.error.manifest_update_failed")
         }
     }
 }
@@ -47,28 +48,43 @@ final class AppProjectStore {
     static let shared = AppProjectStore()
 
     private let fileManager: FileManager
-    private let isoFormatter: ISO8601DateFormatter
+    private var dbPool: DatabasePool { DatabaseManager.shared.dbPool }
 
     init(fileManager: FileManager = .default) {
         self.fileManager = fileManager
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        isoFormatter = formatter
     }
 
     @discardableResult
     func createBlankProject(name: String? = nil) throws -> AppProjectRecord {
         let projectsRootURL = try ensureProjectsRootDirectory()
 
-        let projectID = "project-\(UUID().uuidString.lowercased())"
+        let projectID = UUID().uuidString.lowercased()
         let projectURL = projectsRootURL.appendingPathComponent(projectID, isDirectory: true)
+        let appURL = projectURL.appendingPathComponent("App", isDirectory: true)
+        let dataURL = projectURL.appendingPathComponent("AppData", isDirectory: true)
         let now = Date()
         let projectName = normalizeProjectName(name, createdAt: now)
+        let description = String(localized: "project_template.description.iterate_by_chat")
 
         do {
-            try fileManager.createDirectory(at: projectURL, withIntermediateDirectories: true)
-            try writeBlankWebsiteFiles(projectID: projectID, name: projectName, now: now, projectURL: projectURL)
-            try ProjectGitService.shared.initializeRepository(at: projectURL)
+            try fileManager.createDirectory(at: appURL, withIntermediateDirectories: true)
+            try fileManager.createDirectory(at: dataURL, withIntermediateDirectories: true)
+            try writeBlankWebsiteFiles(projectID: projectID, name: projectName, now: now, projectURL: appURL)
+            try ProjectGitService.shared.initializeRepository(at: appURL)
+
+            // Insert project record into DB
+            let nowNanos = DatabaseTimestamp.toNanos(now)
+            let dbProject = DBProject(
+                id: projectID,
+                createdAt: nowNanos,
+                title: projectName,
+                description: description,
+                sortOrder: 0,
+                updatedAt: nowNanos
+            )
+            try dbPool.write { db in
+                try dbProject.insert(db)
+            }
         } catch {
             try? fileManager.removeItem(at: projectURL)
             throw AppProjectStoreError.projectCreationFailed
@@ -78,26 +94,19 @@ final class AppProjectStore {
             id: projectID,
             name: projectName,
             projectURL: projectURL,
-            entryFileURL: projectURL.appendingPathComponent("index.html"),
             createdAt: now,
             updatedAt: now
         )
     }
 
-    func touchProjectUpdatedAt(projectURL: URL) {
-        let manifestURL = projectURL.appendingPathComponent("manifest.json")
-        guard
-            let data = try? Data(contentsOf: manifestURL),
-            var manifestObject = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
-        else {
-            return
+    func touchProjectUpdatedAt(projectID: String) {
+        let nowNanos = DatabaseTimestamp.toNanos(Date())
+        try? dbPool.write { db in
+            try db.execute(
+                sql: "UPDATE project SET updated_at = ? WHERE id = ?",
+                arguments: [nowNanos, projectID]
+            )
         }
-
-        manifestObject["updatedAt"] = isoFormatter.string(from: Date())
-        guard let updatedData = try? JSONSerialization.data(withJSONObject: manifestObject, options: [.prettyPrinted, .sortedKeys]) else {
-            return
-        }
-        try? updatedData.write(to: manifestURL, options: .atomic)
     }
 
     func deleteProject(projectURL: URL) throws {
@@ -114,25 +123,27 @@ final class AppProjectStore {
             return
         }
 
+        let projectID = projectURL.lastPathComponent
+
         do {
             try fileManager.removeItem(at: projectURL)
+            // Delete project row (cascades to permission, threads, etc.)
+            try dbPool.write { db in
+                try db.execute(sql: "DELETE FROM project WHERE id = ?", arguments: [projectID])
+            }
         } catch {
             throw AppProjectStoreError.projectDeletionFailed
         }
     }
 
     func loadProjectName(projectURL: URL) -> String {
-        let manifestURL = projectURL.appendingPathComponent("manifest.json")
-        guard
-            let data = try? Data(contentsOf: manifestURL),
-            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let rawName = object["name"] as? String
-        else {
-            return projectURL.lastPathComponent
+        let projectID = projectURL.lastPathComponent
+        guard let title = try? dbPool.read({ db in
+            try String.fetchOne(db, sql: "SELECT title FROM project WHERE id = ?", arguments: [projectID])
+        }), !title.isEmpty else {
+            return projectID
         }
-
-        let trimmedName = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmedName.isEmpty ? projectURL.lastPathComponent : trimmedName
+        return title
     }
 
     func updateProjectName(projectURL: URL, name: String) throws {
@@ -141,22 +152,13 @@ final class AppProjectStore {
             throw AppProjectStoreError.invalidProjectName
         }
 
-        let manifestURL = projectURL.appendingPathComponent("manifest.json")
-        guard
-            let data = try? Data(contentsOf: manifestURL),
-            var object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
-        else {
-            throw AppProjectStoreError.manifestUpdateFailed
-        }
-
-        object["name"] = normalizedName
-        object["updatedAt"] = isoFormatter.string(from: Date())
-
-        do {
-            let updatedData = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
-            try updatedData.write(to: manifestURL, options: .atomic)
-        } catch {
-            throw AppProjectStoreError.manifestUpdateFailed
+        let projectID = projectURL.lastPathComponent
+        let nowNanos = DatabaseTimestamp.toNanos(Date())
+        try dbPool.write { db in
+            try db.execute(
+                sql: "UPDATE project SET title = ?, updated_at = ? WHERE id = ?",
+                arguments: [normalizedName, nowNanos, projectID]
+            )
         }
     }
 
@@ -167,30 +169,6 @@ final class AppProjectStore {
     var isAutoCollapsePanelEnabled: Bool {
         get { UserDefaults.standard.object(forKey: Self.autoCollapsePanelKey) as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: Self.autoCollapsePanelKey) }
-    }
-
-    // MARK: - Project-Level Edge Swipe Dismiss
-
-    func isEdgeSwipeDismissDisabled(projectURL: URL) -> Bool {
-        let manifestURL = projectURL.appendingPathComponent("manifest.json")
-        guard
-            let data = try? Data(contentsOf: manifestURL),
-            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else { return false }
-        return (object["disableEdgeSwipeDismiss"] as? Bool) ?? false
-    }
-
-    func setEdgeSwipeDismissDisabled(_ disabled: Bool, projectURL: URL) throws {
-        let manifestURL = projectURL.appendingPathComponent("manifest.json")
-        guard
-            let data = try? Data(contentsOf: manifestURL),
-            var object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
-        else {
-            throw AppProjectStoreError.manifestUpdateFailed
-        }
-        object["disableEdgeSwipeDismiss"] = disabled
-        let updatedData = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
-        try updatedData.write(to: manifestURL, options: .atomic)
     }
 
     // MARK: - App-Level Tool Permission Mode (Default)
@@ -215,16 +193,13 @@ final class AppProjectStore {
 
     /// Returns the project-level override, or nil if not explicitly set.
     func loadProjectToolPermissionOverride(projectURL: URL) -> ToolPermissionMode? {
-        let manifestURL = projectURL.appendingPathComponent("manifest.json")
-        guard
-            let data = try? Data(contentsOf: manifestURL),
-            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let rawMode = object["toolPermissionMode"] as? String,
-            let mode = ToolPermissionMode(rawValue: rawMode)
-        else {
+        let projectID = projectURL.lastPathComponent
+        guard let row = try? dbPool.read({ db in
+            try DBPermission.filter(DBPermission.Columns.projectID == projectID).fetchOne(db)
+        }) else {
             return nil
         }
-        return mode
+        return DBPermission.modeEnum(from: row.agentToolPermission)
     }
 
     /// Returns the effective tool permission mode: project override if set, otherwise app default.
@@ -232,27 +207,25 @@ final class AppProjectStore {
         loadProjectToolPermissionOverride(projectURL: projectURL) ?? loadAppToolPermissionMode()
     }
 
-    func saveToolPermissionMode(projectURL: URL, mode: ToolPermissionMode?) throws {
-        let manifestURL = projectURL.appendingPathComponent("manifest.json")
-        guard
-            let data = try? Data(contentsOf: manifestURL),
-            var object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
-        else {
-            throw AppProjectStoreError.manifestUpdateFailed
-        }
-
-        if let mode {
-            object["toolPermissionMode"] = mode.rawValue
-        } else {
-            object.removeValue(forKey: "toolPermissionMode")
-        }
-        object["updatedAt"] = isoFormatter.string(from: Date())
-
-        do {
-            let updatedData = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
-            try updatedData.write(to: manifestURL, options: .atomic)
-        } catch {
-            throw AppProjectStoreError.manifestUpdateFailed
+    func saveToolPermissionMode(projectURL: URL, mode: ToolPermissionMode?) {
+        let projectID = projectURL.lastPathComponent
+        try? dbPool.write { db in
+            if let mode {
+                let modeInt = DBPermission.modeInt(from: mode)
+                try db.execute(
+                    sql: """
+                        INSERT INTO permission (project_id, agent_tool_permission)
+                        VALUES (?, ?)
+                        ON CONFLICT(project_id) DO UPDATE SET agent_tool_permission = excluded.agent_tool_permission
+                        """,
+                    arguments: [projectID, modeInt]
+                )
+            } else {
+                try db.execute(
+                    sql: "DELETE FROM permission WHERE project_id = ?",
+                    arguments: [projectID]
+                )
+            }
         }
     }
 
@@ -261,7 +234,7 @@ final class AppProjectStore {
             throw AppProjectStoreError.unavailableDocumentsDirectory
         }
 
-        let projectsRootURL = documentsURL.appendingPathComponent("AppProjects", isDirectory: true)
+        let projectsRootURL = documentsURL.appendingPathComponent("Projects", isDirectory: true)
         if !fileManager.fileExists(atPath: projectsRootURL.path) {
             try fileManager.createDirectory(at: projectsRootURL, withIntermediateDirectories: true)
         }
@@ -386,6 +359,8 @@ final class AppProjectStore {
         """
 
         let isIPad = UIDevice.current.userInterfaceIdiom == .pad
+        let isoFormatter = ISO8601DateFormatter()
+        isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
 
         let projectAgentsInstructions = """
         # AGENTS.md
@@ -462,17 +437,26 @@ final class AppProjectStore {
         - Use modern web design: gradients, subtle shadows, rounded corners, color accents — make the app visually appealing.
         - Keep typography clean and hierarchy clear. The `-apple-system` font stack is fine, but don't restrict yourself to mimicking system UI.
 
+        ## Project directory layout
+        ```
+        Projects/{uuid}/
+          App/         ← all code files live here (this is the working directory)
+          AppData/     ← localStorage data (persisted by host app, survives git resets)
+          preview.jpg  ← auto-generated screenshot
+        ```
+        - All file reads/writes happen inside `App/`. Never reference `AppData/` or `preview.jpg` from code.
+
         ## Doufu Runtime
-        The app serves pages via a local HTTP server. Standard web APIs are transparently enhanced:
+        The app serves pages from `App/` via a local HTTP server. Standard web APIs are transparently enhanced:
         - `fetch()`: Cross-origin requests are automatically proxied through the host app. No CORS issues — just use `fetch('https://...')` normally.
-        - `localStorage`: Persisted outside the browser via the host app. Data survives cache clears. Use it for any app data (settings, records, etc.).
+        - `localStorage`: Persisted in `AppData/localStorage.json` by the host app. Data survives cache clears and git checkpoint restores. Use it for any app data (settings, records, etc.).
         - `IndexedDB`: Fully supported and persistent. Each project has its own isolated data store. Use it for structured or large-volume data.
         No special SDK or import is needed — write standard JavaScript.
 
         ## Editing guidance
         - Change the minimum necessary files for each request.
         - Keep the app fully runnable as static `html/css/js`.
-        - Preserve `manifest.json` and `index.html` as entry structure unless requested.
+        - Preserve `index.html` as entry structure unless requested.
         """
 
         let projectMemoryDocument = """
@@ -486,16 +470,17 @@ final class AppProjectStore {
 
         ## Architecture
         - Runtime: Static web app (html/css/js) served via localhost HTTP server in WKWebView.
+        - Directory layout: `App/` (code + git) | `AppData/` (user data) | `preview.jpg`
+        - All code lives in `App/`. This file and all editable files are inside `App/`.
         - Default device target: \(isIPad ? "iPad (responsive, compact to full width)." : "iPhone portrait.")
         - Key constraints are defined in AGENTS.md.
         - fetch() is CORS-free (proxied through host app).
-        - localStorage is natively persisted (survives cache clears).
+        - localStorage is persisted in `AppData/` (survives cache clears and git resets).
 
         ## Core Files
         - index.html: App shell and semantic structure.
         - style.css: Visual system and layout behavior.
         - script.js: Interaction logic and state updates.
-        - manifest.json: Project metadata.
         - AGENTS.md: Coding/UX constraints for AI edits.
         - DOUFU.MD: Long-lived project memory and architecture notes.
 
@@ -508,21 +493,9 @@ final class AppProjectStore {
         - When introducing new features, update this file with architecture changes.
         """
 
-        let manifestObject: [String: Any] = [
-            "projectId": projectID,
-            "name": name,
-            "source": "local",
-            "prompt": String(localized: "project_template.prompt.blank_web_project"),
-            "description": String(localized: "project_template.description.iterate_by_chat"),
-            "createdAt": isoFormatter.string(from: now),
-            "updatedAt": isoFormatter.string(from: now),
-            "entryFilePath": "index.html"
-        ]
-
         let indexURL = projectURL.appendingPathComponent("index.html")
         let styleURL = projectURL.appendingPathComponent("style.css")
         let scriptURL = projectURL.appendingPathComponent("script.js")
-        let manifestURL = projectURL.appendingPathComponent("manifest.json")
         let agentsURL = projectURL.appendingPathComponent("AGENTS.md")
         let doufuURL = projectURL.appendingPathComponent("DOUFU.MD")
 
@@ -531,7 +504,5 @@ final class AppProjectStore {
         try scriptJS.write(to: scriptURL, atomically: true, encoding: .utf8)
         try projectAgentsInstructions.write(to: agentsURL, atomically: true, encoding: .utf8)
         try projectMemoryDocument.write(to: doufuURL, atomically: true, encoding: .utf8)
-        let manifestData = try JSONSerialization.data(withJSONObject: manifestObject, options: [.prettyPrinted, .sortedKeys])
-        try manifestData.write(to: manifestURL, options: .atomic)
     }
 }

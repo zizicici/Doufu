@@ -6,8 +6,9 @@
 //
 
 import Foundation
+import GRDB
 
-struct LLMTokenUsageRecord: Codable, Equatable, Hashable {
+struct LLMTokenUsageRecord: Equatable, Hashable {
     let projectIdentifier: String?
     let providerID: String
     let providerLabel: String
@@ -21,7 +22,7 @@ struct LLMTokenUsageRecord: Codable, Equatable, Hashable {
     }
 }
 
-struct LLMTokenUsageDailyRecord: Codable, Equatable, Hashable {
+struct LLMTokenUsageDailyRecord: Equatable, Hashable {
     let projectIdentifier: String?
     let dayKey: String
     let providerID: String
@@ -48,93 +49,20 @@ struct LLMTokenUsageTotals {
 final class LLMTokenUsageStore {
     static let shared = LLMTokenUsageStore()
 
-    private let defaults: UserDefaults
-    private let encoder = JSONEncoder()
-    private let decoder = JSONDecoder()
-    private let recordsKey = "llm.token_usage.records.v1"
-    private let dailyRecordsKey = "llm.token_usage.daily_records.v1"
-    private let queue = DispatchQueue(label: "com.doufu.token-usage-store", qos: .utility)
-
-    init(defaults: UserDefaults = .standard) {
-        self.defaults = defaults
+    private var dbPool: DatabasePool {
+        DatabaseManager.shared.dbPool
     }
 
-    func loadRecords(projectIdentifier: String? = nil) -> [LLMTokenUsageRecord] {
-        let rawRecords = queue.sync { loadRawRecords() }
-        let normalizedProjectIdentifier = normalizeProjectIdentifier(projectIdentifier)
-        let filteredRecords: [LLMTokenUsageRecord]
-        if let normalizedProjectIdentifier {
-            filteredRecords = rawRecords.filter {
-                normalizeProjectIdentifier($0.projectIdentifier) == normalizedProjectIdentifier
-            }
-        } else {
-            filteredRecords = rawRecords
-        }
-
-        let groupedProjectIdentifier: String? = normalizedProjectIdentifier
-        let groupedRecords = aggregateRecords(
-            filteredRecords,
-            groupedProjectIdentifier: groupedProjectIdentifier
-        )
-        return groupedRecords.sorted { lhs, rhs in
-            if lhs.updatedAt != rhs.updatedAt {
-                return lhs.updatedAt > rhs.updatedAt
-            }
-            if lhs.providerLabel != rhs.providerLabel {
-                return lhs.providerLabel.localizedCaseInsensitiveCompare(rhs.providerLabel) == .orderedAscending
-            }
-            return lhs.model.localizedCaseInsensitiveCompare(rhs.model) == .orderedAscending
-        }
-    }
-
-    func loadTotals(projectIdentifier: String? = nil) -> LLMTokenUsageTotals {
-        let records = loadRecords(projectIdentifier: projectIdentifier)
-        let input = records.reduce(Int64(0)) { $0 + $1.inputTokens }
-        let output = records.reduce(Int64(0)) { $0 + $1.outputTokens }
-        return LLMTokenUsageTotals(inputTokens: input, outputTokens: output)
-    }
-
-    func loadDailyRecords(projectIdentifier: String? = nil) -> [LLMTokenUsageDailyRecord] {
-        let rawRecords = queue.sync { loadRawDailyRecords() }
-        let normalizedProjectIdentifier = normalizeProjectIdentifier(projectIdentifier)
-        let filteredRecords: [LLMTokenUsageDailyRecord]
-        if let normalizedProjectIdentifier {
-            filteredRecords = rawRecords.filter {
-                normalizeProjectIdentifier($0.projectIdentifier) == normalizedProjectIdentifier
-            }
-        } else {
-            filteredRecords = rawRecords
-        }
-
-        let groupedProjectIdentifier: String? = normalizedProjectIdentifier
-        let groupedRecords = aggregateDailyRecords(
-            filteredRecords,
-            groupedProjectIdentifier: groupedProjectIdentifier
-        )
-        return groupedRecords.sorted { lhs, rhs in
-            if lhs.dayKey != rhs.dayKey {
-                return lhs.dayKey > rhs.dayKey
-            }
-            if lhs.updatedAt != rhs.updatedAt {
-                return lhs.updatedAt > rhs.updatedAt
-            }
-            if lhs.providerLabel != rhs.providerLabel {
-                return lhs.providerLabel.localizedCaseInsensitiveCompare(rhs.providerLabel) == .orderedAscending
-            }
-            return lhs.model.localizedCaseInsensitiveCompare(rhs.model) == .orderedAscending
-        }
-    }
+    init() {}
 
     func recordUsage(
         providerID: String,
-        providerLabel: String,
         model: String,
         inputTokens: Int?,
         outputTokens: Int?,
         projectIdentifier: String? = nil
     ) {
         let normalizedProviderID = providerID.trimmingCharacters(in: .whitespacesAndNewlines)
-        let normalizedProviderLabel = providerLabel.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedProjectIdentifier = normalizeProjectIdentifier(projectIdentifier)
 
@@ -142,279 +70,139 @@ final class LLMTokenUsageStore {
             return
         }
 
-        let normalizedInput = max(0, inputTokens ?? 0)
-        let normalizedOutput = max(0, outputTokens ?? 0)
+        let normalizedInput = Int64(max(0, inputTokens ?? 0))
+        let normalizedOutput = Int64(max(0, outputTokens ?? 0))
         guard normalizedInput > 0 || normalizedOutput > 0 else {
             return
         }
 
-        queue.sync {
-            var records = loadRawRecords()
-            let now = Date()
-            let lookupKey = usageLookupKey(
-                providerID: normalizedProviderID,
-                model: normalizedModel,
-                projectIdentifier: normalizedProjectIdentifier
-            )
-            if let index = records.firstIndex(where: {
-                usageLookupKey(
-                    providerID: $0.providerID,
-                    model: $0.model,
-                    projectIdentifier: normalizeProjectIdentifier($0.projectIdentifier)
-                ) == lookupKey
-            }) {
-                let existing = records[index]
-                records[index] = LLMTokenUsageRecord(
-                    projectIdentifier: normalizedProjectIdentifier,
-                    providerID: existing.providerID,
-                    providerLabel: normalizedProviderLabel.isEmpty ? existing.providerLabel : normalizedProviderLabel,
-                    model: existing.model,
-                    inputTokens: existing.inputTokens + Int64(normalizedInput),
-                    outputTokens: existing.outputTokens + Int64(normalizedOutput),
-                    updatedAt: now
-                )
-            } else {
-                records.append(
-                    LLMTokenUsageRecord(
-                        projectIdentifier: normalizedProjectIdentifier,
-                        providerID: normalizedProviderID,
-                        providerLabel: normalizedProviderLabel.isEmpty ? normalizedProviderID : normalizedProviderLabel,
-                        model: normalizedModel,
-                        inputTokens: Int64(normalizedInput),
-                        outputTokens: Int64(normalizedOutput),
-                        updatedAt: now
-                    )
-                )
-            }
-
-            saveRecords(records)
-            upsertDailyUsageRecord(
-                providerID: normalizedProviderID,
-                providerLabel: normalizedProviderLabel.isEmpty ? normalizedProviderID : normalizedProviderLabel,
-                model: normalizedModel,
-                inputTokens: Int64(normalizedInput),
-                outputTokens: Int64(normalizedOutput),
-                projectIdentifier: normalizedProjectIdentifier,
-                timestamp: now
-            )
-        }
-    }
-
-    private func loadRawRecords() -> [LLMTokenUsageRecord] {
-        guard let data = defaults.data(forKey: recordsKey) else {
-            return []
-        }
-        do {
-            return try decoder.decode([LLMTokenUsageRecord].self, from: data)
-        } catch {
-            #if DEBUG
-            print("[LLMTokenUsageStore] Failed to decode records: \(error)")
-            #endif
-            return []
-        }
-    }
-
-    private func aggregateRecords(
-        _ records: [LLMTokenUsageRecord],
-        groupedProjectIdentifier: String?
-    ) -> [LLMTokenUsageRecord] {
-        var grouped: [String: LLMTokenUsageRecord] = [:]
-        for record in records {
-            let key = usageLookupKey(
-                providerID: record.providerID,
-                model: record.model,
-                projectIdentifier: groupedProjectIdentifier
-            )
-            if let existing = grouped[key] {
-                let preferredUpdatedAt = max(existing.updatedAt, record.updatedAt)
-                let preferredProviderLabel: String
-                if record.updatedAt >= existing.updatedAt {
-                    preferredProviderLabel = record.providerLabel
-                } else {
-                    preferredProviderLabel = existing.providerLabel
-                }
-                grouped[key] = LLMTokenUsageRecord(
-                    projectIdentifier: groupedProjectIdentifier,
-                    providerID: existing.providerID,
-                    providerLabel: preferredProviderLabel,
-                    model: existing.model,
-                    inputTokens: existing.inputTokens + record.inputTokens,
-                    outputTokens: existing.outputTokens + record.outputTokens,
-                    updatedAt: preferredUpdatedAt
-                )
-            } else {
-                grouped[key] = LLMTokenUsageRecord(
-                    projectIdentifier: groupedProjectIdentifier,
-                    providerID: record.providerID,
-                    providerLabel: record.providerLabel,
-                    model: record.model,
-                    inputTokens: record.inputTokens,
-                    outputTokens: record.outputTokens,
-                    updatedAt: record.updatedAt
-                )
-            }
-        }
-        return Array(grouped.values)
-    }
-
-    private func loadRawDailyRecords() -> [LLMTokenUsageDailyRecord] {
-        guard let data = defaults.data(forKey: dailyRecordsKey) else {
-            return []
-        }
-        do {
-            return try decoder.decode([LLMTokenUsageDailyRecord].self, from: data)
-        } catch {
-            #if DEBUG
-            print("[LLMTokenUsageStore] Failed to decode daily records: \(error)")
-            #endif
-            return []
-        }
-    }
-
-    private func upsertDailyUsageRecord(
-        providerID: String,
-        providerLabel: String,
-        model: String,
-        inputTokens: Int64,
-        outputTokens: Int64,
-        projectIdentifier: String?,
-        timestamp: Date
-    ) {
-        var records = loadRawDailyRecords()
-        let dayKey = dayKeyString(for: timestamp)
-        let lookupKey = dailyUsageLookupKey(
-            dayKey: dayKey,
-            providerID: providerID,
-            model: model,
-            projectIdentifier: projectIdentifier
+        let row = DBTokenUsage(
+            id: nil,
+            providerID: normalizedProviderID,
+            modelRequestID: normalizedModel,
+            projectID: normalizedProjectIdentifier,
+            inputTokens: normalizedInput,
+            outputTokens: normalizedOutput,
+            createdAt: DatabaseTimestamp.toNanos(Date())
         )
-
-        if let index = records.firstIndex(where: {
-            dailyUsageLookupKey(
-                dayKey: $0.dayKey,
-                providerID: $0.providerID,
-                model: $0.model,
-                projectIdentifier: normalizeProjectIdentifier($0.projectIdentifier)
-            ) == lookupKey
-        }) {
-            let existing = records[index]
-            records[index] = LLMTokenUsageDailyRecord(
-                projectIdentifier: projectIdentifier,
-                dayKey: existing.dayKey,
-                providerID: existing.providerID,
-                providerLabel: providerLabel.isEmpty ? existing.providerLabel : providerLabel,
-                model: existing.model,
-                inputTokens: existing.inputTokens + inputTokens,
-                outputTokens: existing.outputTokens + outputTokens,
-                updatedAt: timestamp
-            )
-        } else {
-            records.append(
-                LLMTokenUsageDailyRecord(
-                    projectIdentifier: projectIdentifier,
-                    dayKey: dayKey,
-                    providerID: providerID,
-                    providerLabel: providerLabel,
-                    model: model,
-                    inputTokens: inputTokens,
-                    outputTokens: outputTokens,
-                    updatedAt: timestamp
-                )
-            )
+        try? dbPool.write { db in
+            var mutableRow = row
+            try mutableRow.insert(db)
         }
-
-        saveDailyRecords(records)
     }
 
-    private func aggregateDailyRecords(
-        _ records: [LLMTokenUsageDailyRecord],
-        groupedProjectIdentifier: String?
-    ) -> [LLMTokenUsageDailyRecord] {
-        var grouped: [String: LLMTokenUsageDailyRecord] = [:]
-        for record in records {
-            let key = dailyUsageLookupKey(
-                dayKey: record.dayKey,
-                providerID: record.providerID,
-                model: record.model,
-                projectIdentifier: groupedProjectIdentifier
-            )
-            if let existing = grouped[key] {
-                let preferredUpdatedAt = max(existing.updatedAt, record.updatedAt)
-                let preferredProviderLabel: String
-                if record.updatedAt >= existing.updatedAt {
-                    preferredProviderLabel = record.providerLabel
-                } else {
-                    preferredProviderLabel = existing.providerLabel
-                }
-                grouped[key] = LLMTokenUsageDailyRecord(
-                    projectIdentifier: groupedProjectIdentifier,
-                    dayKey: existing.dayKey,
-                    providerID: existing.providerID,
-                    providerLabel: preferredProviderLabel,
-                    model: existing.model,
-                    inputTokens: existing.inputTokens + record.inputTokens,
-                    outputTokens: existing.outputTokens + record.outputTokens,
-                    updatedAt: preferredUpdatedAt
-                )
-            } else {
-                grouped[key] = LLMTokenUsageDailyRecord(
-                    projectIdentifier: groupedProjectIdentifier,
-                    dayKey: record.dayKey,
-                    providerID: record.providerID,
-                    providerLabel: record.providerLabel,
-                    model: record.model,
-                    inputTokens: record.inputTokens,
-                    outputTokens: record.outputTokens,
-                    updatedAt: record.updatedAt
+    func loadRecords(projectIdentifier: String? = nil) -> [LLMTokenUsageRecord] {
+        let normalizedProject = normalizeProjectIdentifier(projectIdentifier)
+        guard let rows = try? dbPool.read({ db -> [LLMTokenUsageRecord] in
+            var sql = """
+                SELECT
+                    tu.provider_id,
+                    tu.model_request_id,
+                    COALESCE(p.label, tu.provider_id) AS provider_label,
+                    SUM(tu.input_tokens) AS input_tokens,
+                    SUM(tu.output_tokens) AS output_tokens,
+                    MAX(tu.created_at) AS latest_at
+                FROM token_usage tu
+                LEFT JOIN llm_provider p ON p.id = tu.provider_id
+                """
+            var arguments: StatementArguments = []
+
+            if let normalizedProject {
+                sql += " WHERE tu.project_id = ?"
+                arguments += [normalizedProject]
+            }
+
+            sql += " GROUP BY tu.provider_id, tu.model_request_id"
+            sql += " ORDER BY latest_at DESC"
+
+            let rows = try Row.fetchAll(db, sql: sql, arguments: arguments)
+            return rows.map { row in
+                LLMTokenUsageRecord(
+                    projectIdentifier: normalizedProject,
+                    providerID: row["provider_id"],
+                    providerLabel: row["provider_label"],
+                    model: row["model_request_id"],
+                    inputTokens: row["input_tokens"],
+                    outputTokens: row["output_tokens"],
+                    updatedAt: DatabaseTimestamp.fromNanos(row["latest_at"])
                 )
             }
+        }) else {
+            return []
         }
-        return Array(grouped.values)
+        return rows
     }
 
-    private func usageLookupKey(
-        providerID: String,
-        model: String,
-        projectIdentifier: String?
-    ) -> String {
-        let normalizedProject = normalizeProjectIdentifier(projectIdentifier) ?? "*"
-        return normalizedProject + "|" + providerID.lowercased() + "|" + model.lowercased()
+    func loadTotals(projectIdentifier: String? = nil) -> LLMTokenUsageTotals {
+        let normalizedProject = normalizeProjectIdentifier(projectIdentifier)
+        guard let totals = try? dbPool.read({ db -> LLMTokenUsageTotals in
+            var sql = "SELECT COALESCE(SUM(input_tokens), 0) AS input_total, COALESCE(SUM(output_tokens), 0) AS output_total FROM token_usage"
+            var arguments: StatementArguments = []
+
+            if let normalizedProject {
+                sql += " WHERE project_id = ?"
+                arguments += [normalizedProject]
+            }
+
+            let row = try Row.fetchOne(db, sql: sql, arguments: arguments)!
+            return LLMTokenUsageTotals(
+                inputTokens: row["input_total"],
+                outputTokens: row["output_total"]
+            )
+        }) else {
+            return LLMTokenUsageTotals(inputTokens: 0, outputTokens: 0)
+        }
+        return totals
     }
 
-    private func dailyUsageLookupKey(
-        dayKey: String,
-        providerID: String,
-        model: String,
-        projectIdentifier: String?
-    ) -> String {
-        let normalizedProject = normalizeProjectIdentifier(projectIdentifier) ?? "*"
-        return dayKey + "|" + normalizedProject + "|" + providerID.lowercased() + "|" + model.lowercased()
-    }
+    func loadDailyRecords(projectIdentifier: String? = nil) -> [LLMTokenUsageDailyRecord] {
+        let normalizedProject = normalizeProjectIdentifier(projectIdentifier)
+        guard let rows = try? dbPool.read({ db -> [LLMTokenUsageDailyRecord] in
+            // Use strftime on the nanosecond timestamp divided by 1e9 to get day buckets.
+            // created_at is in nanoseconds, so divide by 1000000000 to get seconds for strftime.
+            var sql = """
+                SELECT
+                    strftime('%Y-%m-%d', tu.created_at / 1000000000, 'unixepoch', 'localtime') AS day_key,
+                    tu.provider_id,
+                    tu.model_request_id,
+                    COALESCE(p.label, tu.provider_id) AS provider_label,
+                    SUM(tu.input_tokens) AS input_tokens,
+                    SUM(tu.output_tokens) AS output_tokens,
+                    MAX(tu.created_at) AS latest_at
+                FROM token_usage tu
+                LEFT JOIN llm_provider p ON p.id = tu.provider_id
+                """
+            var arguments: StatementArguments = []
 
-    private func dayKeyString(for date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = .current
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.string(from: date)
+            if let normalizedProject {
+                sql += " WHERE tu.project_id = ?"
+                arguments += [normalizedProject]
+            }
+
+            sql += " GROUP BY day_key, tu.provider_id, tu.model_request_id"
+            sql += " ORDER BY day_key DESC, latest_at DESC"
+
+            let rows = try Row.fetchAll(db, sql: sql, arguments: arguments)
+            return rows.map { row in
+                LLMTokenUsageDailyRecord(
+                    projectIdentifier: normalizedProject,
+                    dayKey: row["day_key"],
+                    providerID: row["provider_id"],
+                    providerLabel: row["provider_label"],
+                    model: row["model_request_id"],
+                    inputTokens: row["input_tokens"],
+                    outputTokens: row["output_tokens"],
+                    updatedAt: DatabaseTimestamp.fromNanos(row["latest_at"])
+                )
+            }
+        }) else {
+            return []
+        }
+        return rows
     }
 
     private func normalizeProjectIdentifier(_ value: String?) -> String? {
         let normalized = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return normalized.isEmpty ? nil : normalized
-    }
-
-    private func saveRecords(_ records: [LLMTokenUsageRecord]) {
-        guard let data = try? encoder.encode(records) else {
-            return
-        }
-        defaults.set(data, forKey: recordsKey)
-    }
-
-    private func saveDailyRecords(_ records: [LLMTokenUsageDailyRecord]) {
-        guard let data = try? encoder.encode(records) else {
-            return
-        }
-        defaults.set(data, forKey: dailyRecordsKey)
     }
 }

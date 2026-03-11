@@ -461,7 +461,7 @@ private final class ProjectFileContentViewController: UIViewController {
             try currentText.write(to: fileURL, atomically: true, encoding: .utf8)
             originalText = currentText
             isDirty = false
-            projectStore.touchProjectUpdatedAt(projectURL: rootURL)
+            projectStore.touchProjectUpdatedAt(projectID: rootURL.deletingLastPathComponent().lastPathComponent)
         } catch {
             let alert = UIAlertController(
                 title: String(localized: "file_viewer.alert.save_failed.title"),

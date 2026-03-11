@@ -109,7 +109,7 @@ final class GeminiProvider: LLMProviderAdapter {
             if let onStreamedText { await onStreamedText(finalResponseText) }
 
             tokenUsageStore.recordUsage(
-                providerID: credential.providerID, providerLabel: credential.providerLabel,
+                providerID: credential.providerID,
                 model: model,
                 inputTokens: decoded.usageMetadata?.promptTokenCount,
                 outputTokens: geminiOutputTokenCount(from: decoded.usageMetadata),
@@ -230,7 +230,7 @@ final class GeminiProvider: LLMProviderAdapter {
             ? candidates + thoughts : nil
 
         tokenUsageStore.recordUsage(
-            providerID: credential.providerID, providerLabel: credential.providerLabel,
+            providerID: credential.providerID,
             model: model,
             inputTokens: inputTokens, outputTokens: outputTokens,
             projectIdentifier: projectUsageIdentifier

@@ -6,6 +6,7 @@
 //
 
 import UIKit
+import GRDB
 
 private struct HomeProjectItem: Hashable {
     let id: String
@@ -14,6 +15,7 @@ private struct HomeProjectItem: Hashable {
     let updatedAt: Date
     let projectURL: URL
     let previewImagePath: String?
+    let sortOrder: Int
 }
 
 final class HomeViewController: UIViewController {
@@ -29,9 +31,6 @@ final class HomeViewController: UIViewController {
     private var allProjects: [HomeProjectItem] = []
     private var filteredProjects: [HomeProjectItem] = []
     private let projectStore = AppProjectStore.shared
-    private let defaults = UserDefaults.standard
-    private let customOrderKey = "home.project.custom_order.v1"
-    private var customProjectOrder: [String] = []
     private let projectTransitionDelegate = ProjectOpenTransitionDelegate()
     private var selectedCellIndexPath: IndexPath?
 
@@ -88,7 +87,6 @@ final class HomeViewController: UIViewController {
         super.viewDidLoad()
         configureNavigation()
         configureViewHierarchy()
-        loadCustomProjectOrder()
         reloadProjects()
     }
 
@@ -151,8 +149,6 @@ final class HomeViewController: UIViewController {
 
     private func reloadProjects() {
         allProjects = loadProjectsFromDisk()
-        customProjectOrder = normalizedProjectOrder(from: customProjectOrder, projects: allProjects)
-        saveCustomProjectOrder()
         updateSearchBarVisibility()
         applyFilter(using: searchController.searchBar.text)
     }
@@ -183,65 +179,46 @@ final class HomeViewController: UIViewController {
             return []
         }
 
-        let projectsRootURL = documentURL.appendingPathComponent("AppProjects", isDirectory: true)
-        guard let urls = try? fileManager.contentsOfDirectory(
-            at: projectsRootURL,
-            includingPropertiesForKeys: [.isDirectoryKey, .contentModificationDateKey],
-            options: [.skipsHiddenFiles]
-        ) else {
+        let projectsRootURL = documentURL.appendingPathComponent("Projects", isDirectory: true)
+
+        // Load project records from DB
+        let dbPool = DatabaseManager.shared.dbPool!
+        guard let dbProjects = try? dbPool.read({ db in
+            try DBProject.order(DBProject.Columns.sortOrder.asc, DBProject.Columns.updatedAt.desc).fetchAll(db)
+        }) else {
             return []
         }
 
         var projects: [HomeProjectItem] = []
-        for projectURL in urls {
-            let values = try? projectURL.resourceValues(forKeys: [.isDirectoryKey, .contentModificationDateKey])
-            guard values?.isDirectory == true else {
+        for dbProject in dbProjects {
+            let projectURL = projectsRootURL.appendingPathComponent(dbProject.id, isDirectory: true)
+            // Verify directory still exists on disk
+            var isDir: ObjCBool = false
+            guard fileManager.fileExists(atPath: projectURL.path, isDirectory: &isDir), isDir.boolValue else {
                 continue
             }
 
-            let manifestURL = projectURL.appendingPathComponent("manifest.json")
-            let manifest = loadManifest(from: manifestURL)
-            let projectId = (manifest["projectId"] as? String) ?? projectURL.lastPathComponent
-            let name = (manifest["name"] as? String) ?? projectURL.lastPathComponent
-            let summary = (manifest["prompt"] as? String)
-                ?? (manifest["description"] as? String)
-                ?? String(localized: "home.project.no_description")
-            let updatedAt = parseUpdatedAt(from: manifest) ?? values?.contentModificationDate ?? Date()
+            let name = dbProject.title.isEmpty ? dbProject.id : dbProject.title
+            let summary = dbProject.description.isEmpty
+                ? String(localized: "home.project.no_description")
+                : dbProject.description
+            let updatedAt = DatabaseTimestamp.fromNanos(dbProject.updatedAt)
             let previewImagePath = findPreviewImagePath(in: projectURL)
 
             projects.append(
                 HomeProjectItem(
-                    id: projectId,
+                    id: dbProject.id,
                     name: name,
                     summary: summary,
                     updatedAt: updatedAt,
                     projectURL: projectURL,
-                    previewImagePath: previewImagePath
+                    previewImagePath: previewImagePath,
+                    sortOrder: dbProject.sortOrder
                 )
             )
         }
 
         return projects
-    }
-
-    private func loadManifest(from url: URL) -> [String: Any] {
-        guard
-            let data = try? Data(contentsOf: url),
-            let rawObject = try? JSONSerialization.jsonObject(with: data),
-            let json = rawObject as? [String: Any]
-        else {
-            return [:]
-        }
-        return json
-    }
-
-    private func parseUpdatedAt(from manifest: [String: Any]) -> Date? {
-        guard let rawValue = manifest["updatedAt"] as? String else {
-            return nil
-        }
-
-        let formatter = ISO8601DateFormatter()
-        return formatter.date(from: rawValue)
     }
 
     private func findPreviewImagePath(in projectURL: URL) -> String? {
@@ -270,74 +247,21 @@ final class HomeViewController: UIViewController {
                 project.name.lowercased().contains(keyword) || project.summary.lowercased().contains(keyword)
             }
         }
-        filteredProjects = applyCustomOrder(to: filteredProjects)
 
         collectionView.reloadData()
         updateEmptyState(for: keyword)
     }
 
-    private func loadCustomProjectOrder() {
-        customProjectOrder = defaults.array(forKey: customOrderKey) as? [String] ?? []
-    }
-
-    private func saveCustomProjectOrder() {
-        defaults.set(customProjectOrder, forKey: customOrderKey)
-    }
-
-    private func normalizedProjectOrder(from persistedOrder: [String], projects: [HomeProjectItem]) -> [String] {
-        let existingIDs = Set(projects.map(\.id))
-        var normalizedOrder: [String] = []
-        var seen = Set<String>()
-
-        for id in persistedOrder where existingIDs.contains(id) && !seen.contains(id) {
-            normalizedOrder.append(id)
-            seen.insert(id)
-        }
-
-        let tailIDs = projects
-            .filter { !seen.contains($0.id) }
-            .sorted { lhs, rhs in
-                lhs.updatedAt > rhs.updatedAt
+    private func saveCustomProjectOrder(_ orderedIDs: [String]) {
+        let dbPool = DatabaseManager.shared.dbPool!
+        try? dbPool.write { db in
+            for (index, projectID) in orderedIDs.enumerated() {
+                try db.execute(
+                    sql: "UPDATE project SET sort_order = ? WHERE id = ?",
+                    arguments: [index, projectID]
+                )
             }
-            .map(\.id)
-
-        normalizedOrder.append(contentsOf: tailIDs)
-        return normalizedOrder
-    }
-
-    private func applyCustomOrder(to projects: [HomeProjectItem]) -> [HomeProjectItem] {
-        guard !projects.isEmpty else {
-            return []
         }
-
-        let lookup = Dictionary(uniqueKeysWithValues: projects.map { ($0.id, $0) })
-        var ordered: [HomeProjectItem] = []
-        var seen = Set<String>()
-
-        for id in customProjectOrder {
-            guard let project = lookup[id], !seen.contains(id) else {
-                continue
-            }
-            ordered.append(project)
-            seen.insert(id)
-        }
-
-        if ordered.count < projects.count {
-            let remaining = projects
-                .filter { !seen.contains($0.id) }
-                .sorted { lhs, rhs in
-                    lhs.updatedAt > rhs.updatedAt
-                }
-            ordered.append(contentsOf: remaining)
-        }
-
-        return ordered
-    }
-
-    private func updateCustomProjectOrder(_ orderedIDs: [String]) {
-        customProjectOrder = normalizedProjectOrder(from: orderedIDs, projects: allProjects)
-        saveCustomProjectOrder()
-        applyFilter(using: searchController.searchBar.text)
     }
 
     private func openProjectSettings(_ project: HomeProjectItem) {
@@ -356,14 +280,14 @@ final class HomeViewController: UIViewController {
     }
 
     private func presentProjectSortPage() {
-        let orderedProjects = applyCustomOrder(to: allProjects)
-        let items = orderedProjects.map { project in
+        let items = allProjects.map { project in
             ProjectSortViewController.Item(id: project.id, name: project.name)
         }
 
         let controller = ProjectSortViewController(items: items)
         controller.onDone = { [weak self] orderedIDs in
-            self?.updateCustomProjectOrder(orderedIDs)
+            self?.saveCustomProjectOrder(orderedIDs)
+            self?.reloadProjects()
         }
 
         let navigationController = UINavigationController(rootViewController: controller)
@@ -392,7 +316,7 @@ final class HomeViewController: UIViewController {
         do {
             try projectStore.deleteProject(projectURL: project.projectURL)
             let projectID = project.projectURL.lastPathComponent
-            Task { try? await ChatDataStore.shared.deleteProjectData(projectID: projectID) }
+            ChatDataStore.shared.deleteProjectData(projectID: projectID)
             reloadProjects()
         } catch {
             showPlaceholderAlert(title: String(localized: "home.alert.delete_failed.title"), message: error.localizedDescription)
@@ -414,7 +338,6 @@ final class HomeViewController: UIViewController {
             id: project.id,
             name: project.name,
             projectURL: project.projectURL,
-            entryFileURL: project.projectURL.appendingPathComponent("index.html"),
             createdAt: project.updatedAt,
             updatedAt: project.updatedAt
         )

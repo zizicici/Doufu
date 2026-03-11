@@ -111,7 +111,7 @@ final class OpenAIProvider: LLMProviderAdapter {
                     timeoutSeconds: timeoutSeconds, requestLabel: requestLabel
                 )
                 tokenUsageStore.recordUsage(
-                    providerID: credential.providerID, providerLabel: credential.providerLabel,
+                    providerID: credential.providerID,
                     model: model,
                     inputTokens: responseResult.usage?.inputTokens,
                     outputTokens: responseResult.usage?.outputTokens,
@@ -275,7 +275,7 @@ final class OpenAIProvider: LLMProviderAdapter {
             }
 
             tokenUsageStore.recordUsage(
-                providerID: credential.providerID, providerLabel: credential.providerLabel,
+                providerID: credential.providerID,
                 model: model,
                 inputTokens: usage?.inputTokens, outputTokens: usage?.outputTokens,
                 projectIdentifier: projectUsageIdentifier

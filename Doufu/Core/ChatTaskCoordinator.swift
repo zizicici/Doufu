@@ -67,7 +67,7 @@ final class ChatTaskCoordinator {
 
         let sessionID = request.sessionContext.projectID
         ActiveTaskManager.shared.taskDidStart(sessionID: sessionID)
-        PiPProgressManager.shared.taskDidStart(sessionID: sessionID, projectName: request.sessionContext.projectName, projectURL: request.sessionContext.projectURL)
+        PiPProgressManager.shared.taskDidStart(sessionID: sessionID, projectName: request.sessionContext.projectName, projectURL: request.sessionContext.projectRootURL)
 
         task = Task { [weak self] in
             guard let self else { return }

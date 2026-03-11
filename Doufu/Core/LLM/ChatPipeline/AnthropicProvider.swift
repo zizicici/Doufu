@@ -182,7 +182,7 @@ final class AnthropicProvider: LLMProviderAdapter {
             }
 
             self.tokenUsageStore.recordUsage(
-                providerID: credential.providerID, providerLabel: credential.providerLabel,
+                providerID: credential.providerID,
                 model: model,
                 inputTokens: inputTokens, outputTokens: outputTokens,
                 projectIdentifier: projectUsageIdentifier
@@ -416,7 +416,7 @@ final class AnthropicProvider: LLMProviderAdapter {
             }
 
             self.tokenUsageStore.recordUsage(
-                providerID: credential.providerID, providerLabel: credential.providerLabel,
+                providerID: credential.providerID,
                 model: model,
                 inputTokens: inputTokens, outputTokens: outputTokens,
                 projectIdentifier: projectUsageIdentifier

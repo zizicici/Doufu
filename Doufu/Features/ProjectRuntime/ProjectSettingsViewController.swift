@@ -21,7 +21,6 @@ final class ProjectSettingsViewController: UITableViewController {
 
     private enum ProjectRow: Int, CaseIterable {
         case name
-        case disableEdgeSwipe
     }
 
     private enum ChatRow: Int, CaseIterable {
@@ -152,18 +151,6 @@ final class ProjectSettingsViewController: UITableViewController {
                     self?.commitProjectName()
                 }
                 return cell
-
-            case .disableEdgeSwipe:
-                let cell = tableView.dequeueReusableCell(withIdentifier: "ChatSettingCell", for: indexPath)
-                let isDisabled = store.isEdgeSwipeDismissDisabled(projectURL: projectURL)
-                var configuration = UIListContentConfiguration.valueCell()
-                configuration.text = String(localized: "project_settings.disable_edge_swipe.title")
-                configuration.secondaryText = isDisabled
-                    ? String(localized: "settings.common.on")
-                    : String(localized: "settings.common.off")
-                cell.contentConfiguration = configuration
-                cell.accessoryType = .disclosureIndicator
-                return cell
             }
 
         case .chat:
@@ -222,8 +209,7 @@ final class ProjectSettingsViewController: UITableViewController {
         guard let section = Section(rawValue: indexPath.section) else { return nil }
         switch section {
         case .project:
-            guard let row = ProjectRow(rawValue: indexPath.row) else { return nil }
-            return row == .disableEdgeSwipe ? indexPath : nil
+            return nil
         case .chat:
             return indexPath
         case .checkpoints:
@@ -237,9 +223,7 @@ final class ProjectSettingsViewController: UITableViewController {
 
         switch section {
         case .project:
-            guard ProjectRow(rawValue: indexPath.row) == .disableEdgeSwipe else { break }
-            let controller = makeEdgeSwipeDismissPicker()
-            navigationController?.pushViewController(controller, animated: true)
+            break
 
         case .chat:
             guard let row = ChatRow(rawValue: indexPath.row) else { break }
@@ -320,7 +304,7 @@ final class ProjectSettingsViewController: UITableViewController {
 
     private func applyToolPermissionOverride(_ mode: ToolPermissionMode?) {
         toolPermissionOverride = mode
-        try? store.saveToolPermissionMode(projectURL: projectURL, mode: mode)
+        store.saveToolPermissionMode(projectURL: projectURL, mode: mode)
         let effective = mode ?? store.loadAppToolPermissionMode()
         onToolPermissionModeChanged?(effective)
         tableView.reloadSections(IndexSet(integer: Section.chat.rawValue), with: .none)
@@ -400,18 +384,6 @@ final class ProjectSettingsViewController: UITableViewController {
         navigationController?.pushViewController(controller, animated: true)
     }
 
-    private func makeEdgeSwipeDismissPicker() -> SettingsPickerViewController {
-        let onLabel = String(localized: "settings.common.on")
-        let offLabel = String(localized: "settings.common.off")
-        let projectURL = self.projectURL
-        return SettingsPickerViewController(
-            title: String(localized: "project_settings.disable_edge_swipe.title"),
-            options: [SettingsPickerOption(onLabel), SettingsPickerOption(offLabel)],
-            footerText: String(localized: "settings.project.disable_edge_swipe.footer"),
-            selectedIndex: { [store] in store.isEdgeSwipeDismissDisabled(projectURL: projectURL) ? 0 : 1 },
-            onSelect: { [store] index in try? store.setEdgeSwipeDismissDisabled(index == 0, projectURL: projectURL) }
-        )
-    }
 }
 
 // MARK: - Checkpoint History

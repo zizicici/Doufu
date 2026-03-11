@@ -227,7 +227,7 @@ final class ProjectChatOrchestrator {
                 }
 
                 if !allChangedPaths.isEmpty {
-                    AppProjectStore.shared.touchProjectUpdatedAt(projectURL: projectURL)
+                    AppProjectStore.shared.touchProjectUpdatedAt(projectID: projectIdentifier)
                     createCheckpointAfterAgentLoop(projectURL: projectURL, userMessage: trimmedMessage)
                 }
 
@@ -348,7 +348,7 @@ final class ProjectChatOrchestrator {
         let finalMessage = extractAndPersistDoufuUpdate(from: afterMaxMemory, projectURL: projectURL)
 
         if !allChangedPaths.isEmpty {
-            AppProjectStore.shared.touchProjectUpdatedAt(projectURL: projectURL)
+            AppProjectStore.shared.touchProjectUpdatedAt(projectID: projectIdentifier)
             createCheckpointAfterAgentLoop(projectURL: projectURL, userMessage: trimmedMessage)
         }
 

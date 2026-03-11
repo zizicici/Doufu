@@ -29,7 +29,7 @@ final class DoufuBridge: NSObject {
     /// - Parameters:
     ///   - projectURL: The project directory.
     ///   - storageDirectoryOverride: If provided, localStorage data is persisted here
-    ///     instead of the default `AppProjectData/<projectID>/` location. Useful for
+    ///     instead of the default `AppData/` location. Useful for
     ///     validation runs that should not dirty real user data.
     init(projectURL: URL, storageDirectoryOverride: URL? = nil) {
         self.projectURL = projectURL
@@ -84,9 +84,9 @@ final class DoufuBridge: NSObject {
 
     // MARK: - Storage Persistence
 
-    /// User data lives outside the project directory (which is git-managed),
-    /// in a sibling structure: `Documents/AppProjectData/<projectID>/`.
-    /// This way checkpoint restore doesn't affect user data.
+    /// User data lives in the sibling `AppData/` directory next to `App/`.
+    /// Structure: `Projects/{uuid}/AppData/localStorage.json`
+    /// This way git checkpoint restore doesn't affect user data.
     private var storageFileURL: URL {
         let dataDir = projectDataDirectory()
         return dataDir.appendingPathComponent("localStorage.json")
@@ -97,11 +97,9 @@ final class DoufuBridge: NSObject {
             try? FileManager.default.createDirectory(at: override, withIntermediateDirectories: true)
             return override
         }
-        let projectID = projectURL.lastPathComponent
-        let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-        let dataDir = documentsURL
-            .appendingPathComponent("AppProjectData", isDirectory: true)
-            .appendingPathComponent(projectID, isDirectory: true)
+        // projectURL is the App/ directory; sibling AppData/ lives next to it.
+        let dataDir = projectURL.deletingLastPathComponent()
+            .appendingPathComponent("AppData", isDirectory: true)
         try? FileManager.default.createDirectory(at: dataDir, withIntermediateDirectories: true)
         return dataDir
     }

@@ -69,7 +69,7 @@ final class ProjectWorkspaceViewController: UIViewController {
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
         // Per-project data store: IndexedDB, cookies, cache are isolated per project
         // and persist independently of git checkpoints.
-        if let storeID = UUID(uuidString: String(projectIdentifier.dropFirst("project-".count))) {
+        if let storeID = UUID(uuidString: projectIdentifier) {
             configuration.websiteDataStore = WKWebsiteDataStore(forIdentifier: storeID)
         }
         // Doufu Bridge (fetch proxy + localStorage persistence) — must be first
@@ -213,8 +213,8 @@ final class ProjectWorkspaceViewController: UIViewController {
     init(project: AppProjectRecord, isNewlyCreated: Bool) {
         self.project = project
         self.isNewlyCreated = isNewlyCreated
-        self.webServer = LocalWebServer(projectURL: project.projectURL)
-        self.doufuBridge = DoufuBridge(projectURL: project.projectURL)
+        self.webServer = LocalWebServer(projectURL: project.appURL, projectID: project.id)
+        self.doufuBridge = DoufuBridge(projectURL: project.appURL)
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -310,15 +310,11 @@ final class ProjectWorkspaceViewController: UIViewController {
 
     private func configureInteractiveDismiss() {
         let interaction = ProjectDismissInteractionController(viewController: self)
-        interaction.isGestureEnabled = !AppProjectStore.shared.isEdgeSwipeDismissDisabled(projectURL: projectURL)
+        interaction.isGestureEnabled = true
         dismissInteractionController = interaction
         if let delegate = transitioningDelegate as? ProjectOpenTransitionDelegate {
             delegate.interactionController = interaction
         }
-    }
-
-    func reloadEdgeSwipeSetting() {
-        dismissInteractionController?.isGestureEnabled = !AppProjectStore.shared.isEdgeSwipeDismissDisabled(projectURL: projectURL)
     }
 
     private func configureFloatingPanel() {
@@ -396,7 +392,8 @@ final class ProjectWorkspaceViewController: UIViewController {
     }
 
     private func loadProjectPage() {
-        let entryPath = projectURL.appendingPathComponent("index.html")
+        let appURL = project.appURL
+        let entryPath = appURL.appendingPathComponent("index.html")
         guard FileManager.default.fileExists(atPath: entryPath.path) else {
             showLoadError(String(localized: "workspace.load_error.entry_missing"))
             return
@@ -410,7 +407,7 @@ final class ProjectWorkspaceViewController: UIViewController {
             webView.load(URLRequest(url: url))
         } catch {
             // Fallback to file:// if the server fails to start.
-            webView.loadFileURL(entryPath, allowingReadAccessTo: projectURL)
+            webView.loadFileURL(entryPath, allowingReadAccessTo: appURL)
         }
     }
 
@@ -807,7 +804,7 @@ final class ProjectWorkspaceViewController: UIViewController {
         chatController.onProjectFilesUpdated = { [weak self] in
             guard let self else { return }
             self.hasProjectBeenModified = true
-            self.projectStore.touchProjectUpdatedAt(projectURL: self.projectURL)
+            self.projectStore.touchProjectUpdatedAt(projectID: self.project.id)
             self.webView.reload()
         }
 
@@ -834,7 +831,6 @@ final class ProjectWorkspaceViewController: UIViewController {
                 id: self.project.id,
                 name: updatedProjectName,
                 projectURL: self.project.projectURL,
-                entryFileURL: self.project.entryFileURL,
                 createdAt: self.project.createdAt,
                 updatedAt: Date()
             )
@@ -855,7 +851,7 @@ final class ProjectWorkspaceViewController: UIViewController {
     @objc
     private func didTapFiles() {
         scheduleAutoCollapse()
-        let controller = ProjectFileBrowserViewController(projectName: projectName, rootURL: projectURL)
+        let controller = ProjectFileBrowserViewController(projectName: projectName, rootURL: project.appURL)
         let navigationController = UINavigationController(rootViewController: controller)
         navigationController.modalPresentationStyle = .pageSheet
         if let sheet = navigationController.sheetPresentationController {
@@ -905,7 +901,7 @@ final class ProjectWorkspaceViewController: UIViewController {
         do {
             try projectStore.deleteProject(projectURL: projectURL)
             let projectID = projectURL.lastPathComponent
-            Task { try? await ChatDataStore.shared.deleteProjectData(projectID: projectID) }
+            ChatDataStore.shared.deleteProjectData(projectID: projectID)
             dismiss(animated: true)
         } catch {
             let alert = UIAlertController(
@@ -1030,7 +1026,6 @@ final class ProjectWorkspaceViewController: UIViewController {
 
 extension ProjectWorkspaceViewController: UIAdaptivePresentationControllerDelegate {
     func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
-        reloadEdgeSwipeSetting()
     }
 }
 

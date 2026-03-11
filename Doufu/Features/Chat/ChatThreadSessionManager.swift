@@ -39,50 +39,46 @@ final class ChatThreadSessionManager {
 
     // MARK: - Thread Lifecycle
 
-    func restoreThreadStateIfNeeded() async throws {
-        threadIndex = try await dataService.loadThreadIndex()
+    func restoreThreadStateIfNeeded() throws {
+        threadIndex = try dataService.loadThreadIndex()
         if let currentThreadID = threadIndex?.currentThreadID {
-            try await switchToThread(threadID: currentThreadID)
+            try switchToThread(threadID: currentThreadID)
         }
     }
 
     func handleSwitchThread(threadID: String) {
         guard !isExecutingProvider() else { return }
-        Task {
-            do {
-                try await switchToThread(threadID: threadID)
-            } catch {
-                delegate?.threadSessionDidEncounterError(error)
-            }
+        do {
+            try switchToThread(threadID: threadID)
+        } catch {
+            delegate?.threadSessionDidEncounterError(error)
         }
     }
 
     func createAndSwitchThread() {
         guard !isExecutingProvider() else { return }
-        Task {
-            do {
-                await persistCurrentState()
-                _ = try await dataService.createThread(title: nil)
-                threadIndex = try await dataService.loadThreadIndex()
-                guard let currentThreadID = threadIndex?.currentThreadID else {
-                    throw ChatProviderError.noThreadAvailable
-                }
-                try await switchToThread(threadID: currentThreadID)
-            } catch {
-                delegate?.threadSessionDidEncounterError(error)
+        do {
+            persistCurrentState()
+            _ = try dataService.createThread(title: nil)
+            threadIndex = try dataService.loadThreadIndex()
+            guard let currentThreadID = threadIndex?.currentThreadID else {
+                throw ChatProviderError.noThreadAvailable
             }
+            try switchToThread(threadID: currentThreadID)
+        } catch {
+            delegate?.threadSessionDidEncounterError(error)
         }
     }
 
-    private func switchToThread(threadID: String) async throws {
-        await persistCurrentState()
+    private func switchToThread(threadID: String) throws {
+        persistCurrentState()
 
-        let result = try await dataService.switchThread(threadID: threadID)
-        threadIndex = try await dataService.loadThreadIndex()
+        let result = try dataService.switchThread(threadID: threadID)
+        threadIndex = try dataService.loadThreadIndex()
         currentThread = result.thread
         sessionMemory = result.memory
 
-        await modelSelection.reloadModelSelectionContext(triggerModelRefresh: false)
+        modelSelection.reloadModelSelectionContext(triggerModelRefresh: false)
 
         messageStore.replaceMessages(result.messages)
         delegate?.threadSessionDidSwitchThread()
@@ -99,53 +95,49 @@ final class ChatThreadSessionManager {
 
     func touchCurrentThread() {
         guard let currentThread else { return }
-        Task {
-            do {
-                try await dataService.touchThread(threadID: currentThread.id)
-                if var index = threadIndex {
-                    if let threadIdx = index.threads.firstIndex(where: { $0.id == currentThread.id }) {
-                        index.threads[threadIdx].updatedAt = Date()
-                        threadIndex = index
-                    }
+        do {
+            try dataService.touchThread(threadID: currentThread.id)
+            if var index = threadIndex {
+                if let threadIdx = index.threads.firstIndex(where: { $0.id == currentThread.id }) {
+                    index.threads[threadIdx].updatedAt = Date()
+                    threadIndex = index
                 }
-            } catch {
-                delegate?.threadSessionDidEncounterError(error)
             }
+        } catch {
+            delegate?.threadSessionDidEncounterError(error)
         }
     }
 
     func reloadIndex() {
-        Task {
-            do {
-                let newIndex = try await dataService.loadThreadIndex()
-                threadIndex = newIndex
+        do {
+            let newIndex = try dataService.loadThreadIndex()
+            threadIndex = newIndex
 
-                // If the previous current thread was deleted, clear it so that
-                // switchToThread → persistCurrentState does not write orphan data.
-                if let oldThread = currentThread,
-                   !newIndex.threads.contains(where: { $0.id == oldThread.id }) {
-                    currentThread = nil
-                }
-
-                let currentThreadID = newIndex.currentThreadID
-                if currentThreadID != currentThread?.id {
-                    try await switchToThread(threadID: currentThreadID)
-                } else {
-                    currentThread = newIndex.threads.first(where: { $0.id == currentThreadID })
-                }
-            } catch {
-                delegate?.threadSessionDidEncounterError(error)
+            // If the previous current thread was deleted, clear it so that
+            // switchToThread → persistCurrentState does not write orphan data.
+            if let oldThread = currentThread,
+               !newIndex.threads.contains(where: { $0.id == oldThread.id }) {
+                currentThread = nil
             }
+
+            let currentThreadID = newIndex.currentThreadID
+            if currentThreadID != currentThread?.id {
+                try switchToThread(threadID: currentThreadID)
+            } else {
+                currentThread = newIndex.threads.first(where: { $0.id == currentThreadID })
+            }
+        } catch {
+            delegate?.threadSessionDidEncounterError(error)
         }
     }
 
     // MARK: - Private
 
-    private func persistCurrentState() async {
+    private func persistCurrentState() {
         guard let currentThread else { return }
-        await dataService.persistMessagesAsync(messageStore.messages, threadID: currentThread.id)
-        await modelSelection.persistCurrentModelSelectionAsync()
-        await dataService.persistSessionMemoryAsync(sessionMemory, threadID: currentThread.id)
+        dataService.persistMessages(messageStore.messages, threadID: currentThread.id)
+        modelSelection.persistCurrentModelSelection()
+        dataService.persistSessionMemory(sessionMemory, threadID: currentThread.id)
     }
 
     private func persistSessionMemory() {

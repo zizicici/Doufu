@@ -95,9 +95,9 @@ final class ChatModelSelectionManager {
         applyThreadOverride(nil, persist: true)
     }
 
-    func reloadModelSelectionContext(triggerModelRefresh: Bool = true) async {
+    func reloadModelSelectionContext(triggerModelRefresh: Bool = true) {
         let threadID = currentThreadIDProvider()
-        var snapshot = await modelSelectionStore.loadSnapshot(projectID: projectID, threadID: threadID)
+        var snapshot = modelSelectionStore.loadSnapshot(projectID: projectID, threadID: threadID)
 
         if let threadID {
             let loadedThreadOverride = snapshot.threadSelection
