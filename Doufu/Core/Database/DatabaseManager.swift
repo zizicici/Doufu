@@ -16,7 +16,11 @@ final class DatabaseManager {
     func setup() throws {
         let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
         let dbURL = documentsURL.appendingPathComponent("doufu.sqlite")
-        dbPool = try DatabasePool(path: dbURL.path)
+        var configuration = Configuration()
+        configuration.prepareDatabase { db in
+            try db.execute(sql: "PRAGMA foreign_keys = ON")
+        }
+        dbPool = try DatabasePool(path: dbURL.path, configuration: configuration)
 
         var migrator = DatabaseMigrator()
         registerMigrations(&migrator)
@@ -27,10 +31,22 @@ final class DatabaseManager {
         migrator.registerMigration("v1_initial_schema") { db in
             try db.execute(sql: "PRAGMA foreign_keys = ON")
 
-            // project (placeholder for FK targets)
+            // project
             try db.create(table: "project") { t in
                 t.primaryKey("id", .text).notNull()
                 t.column("created_at", .integer).notNull()
+                t.column("title", .text).notNull().defaults(to: "")
+                t.column("description", .text).notNull().defaults(to: "")
+                t.column("sort_order", .integer).notNull().defaults(to: 0)
+                t.column("updated_at", .integer).notNull().defaults(to: 0)
+            }
+
+            // permission
+            try db.create(table: "permission") { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("project_id", .text).notNull().unique()
+                    .references("project", onDelete: .cascade)
+                t.column("agent_tool_permission", .integer).notNull().defaults(to: 0)
             }
 
             // llm_provider
@@ -66,6 +82,7 @@ final class DatabaseManager {
                 t.column("provider_id", .text).notNull()
                 t.column("model_request_id", .text).notNull()
                 t.column("project_id", .text)
+                    .references("project", onDelete: .cascade)
                 t.column("input_tokens", .integer).notNull()
                 t.column("output_tokens", .integer).notNull()
                 t.column("created_at", .integer).notNull()
@@ -84,43 +101,26 @@ final class DatabaseManager {
                 t.primaryKey("id", .text).notNull()
                 t.column("provider_id", .text).notNull()
                 t.column("model_record_id", .text).notNull()
-                t.column("reasoning_effort", .text)
-                t.column("thinking_enabled", .boolean)
                 t.column("extra", .text)
                 t.column("updated_at", .integer).notNull()
             }
 
             // project_model_selection
             try db.create(table: "project_model_selection") { t in
-                t.primaryKey("project_id", .text).notNull()
-                t.column("provider_id", .text).notNull()
-                t.column("model_record_id", .text).notNull()
-                t.column("reasoning_effort", .text)
-                t.column("thinking_enabled", .boolean)
-                t.column("updated_at", .integer).notNull()
-            }
-
-            // thread_model_selection
-            try db.create(table: "thread_model_selection") { t in
                 t.column("project_id", .text).notNull()
-                t.column("thread_id", .text).notNull()
+                    .references("project", onDelete: .cascade)
                 t.column("provider_id", .text).notNull()
                 t.column("model_record_id", .text).notNull()
-                t.column("reasoning_effort", .text)
-                t.column("thinking_enabled", .boolean)
+                t.column("extra", .text)
                 t.column("updated_at", .integer).notNull()
-                t.primaryKey(["project_id", "thread_id"])
+                t.primaryKey(["project_id"])
             }
-        }
 
-        DatabaseLegacyMigration.register(&migrator)
-
-        migrator.registerMigration("v2_chat_tables") { db in
             // thread
             try db.create(table: "thread") { t in
                 t.primaryKey("id", .text).notNull()
                 t.column("project_id", .text).notNull()
-                    .references("project")
+                    .references("project", onDelete: .cascade)
                 t.column("title", .text).notNull()
                 t.column("is_current", .boolean).notNull().defaults(to: false)
                 t.column("sort_order", .integer).notNull().defaults(to: 0)
@@ -174,26 +174,19 @@ final class DatabaseManager {
                 t.column("changed_files", .text)
                 t.column("todo_items", .text)
             }
-        }
 
-        migrator.registerMigration("v3_project_and_permission") { db in
-            // Extend project table
-            try db.alter(table: "project") { t in
-                t.add(column: "title", .text).notNull().defaults(to: "")
-                t.add(column: "description", .text).notNull().defaults(to: "")
-                t.add(column: "sort_order", .integer).notNull().defaults(to: 0)
-                t.add(column: "updated_at", .integer).notNull().defaults(to: 0)
-            }
-
-            // Permission table
-            try db.create(table: "permission") { t in
-                t.autoIncrementedPrimaryKey("id")
-                t.column("project_id", .text).notNull().unique()
+            // thread_model_selection
+            try db.create(table: "thread_model_selection") { t in
+                t.column("project_id", .text).notNull()
                     .references("project", onDelete: .cascade)
-                t.column("agent_tool_permission", .integer).notNull().defaults(to: 0)
+                t.column("thread_id", .text).notNull()
+                    .references("thread", column: "id", onDelete: .cascade)
+                t.column("provider_id", .text).notNull()
+                t.column("model_record_id", .text).notNull()
+                t.column("extra", .text)
+                t.column("updated_at", .integer).notNull()
+                t.primaryKey(["project_id", "thread_id"])
             }
         }
-
-        DatabaseLegacyMigration.registerV3(&migrator)
     }
 }

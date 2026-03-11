@@ -15,22 +15,22 @@ final class ProjectGitService {
 
     // MARK: - Repository Lifecycle
 
-    /// Initialize a git repository in a project directory. Called when a project is created.
+    /// Initialize a git repository in a repository root directory. Called when a project is created.
     /// If the repo already exists, this is a no-op.
-    func initializeRepository(at projectURL: URL) throws {
-        let gitDir = projectURL.appendingPathComponent(".git")
+    func initializeRepository(at repositoryURL: URL) throws {
+        let gitDir = repositoryURL.appendingPathComponent(".git")
         guard !FileManager.default.fileExists(atPath: gitDir.path) else { return }
 
-        let repo = try Repository(at: projectURL)
+        let repo = try Repository(at: repositoryURL)
         try configureDefaults(repo: repo)
-        try addAll(repo: repo, projectURL: projectURL)
+        try addAll(repo: repo, repositoryURL: repositoryURL)
         try repo.commit(message: "Project created")
     }
 
     /// Ensure a project has a git repo. If not, initialize and create initial commit.
     /// Safe to call repeatedly.
-    func ensureRepository(at projectURL: URL) throws {
-        try initializeRepository(at: projectURL)
+    func ensureRepository(at repositoryURL: URL) throws {
+        try initializeRepository(at: repositoryURL)
     }
 
     // MARK: - Pre-Agent Auto-Save
@@ -38,9 +38,9 @@ final class ProjectGitService {
     /// Quietly commit any uncommitted changes (e.g. user manual edits) before
     /// an agent loop starts.  This is NOT a checkpoint — it simply preserves
     /// the working-tree state so that an undo can restore to it.
-    func autoSaveIfDirty(projectURL: URL) throws {
-        let repo = try openRepository(at: projectURL)
-        try addAll(repo: repo, projectURL: projectURL)
+    func autoSaveIfDirty(repositoryURL: URL) throws {
+        let repo = try openRepository(at: repositoryURL)
+        try addAll(repo: repo, repositoryURL: repositoryURL)
         guard hasChangesToCommit(repo: repo) else { return }
         try repo.commit(message: "[doufu-autosave]")
     }
@@ -51,10 +51,10 @@ final class ProjectGitService {
     /// Should only be called when the agent actually changed files.
     /// The commit message records the user's original request.
     @discardableResult
-    func createCheckpoint(projectURL: URL, userMessage: String) throws -> String? {
-        let repo = try openRepository(at: projectURL)
+    func createCheckpoint(repositoryURL: URL, userMessage: String) throws -> String? {
+        let repo = try openRepository(at: repositoryURL)
 
-        try addAll(repo: repo, projectURL: projectURL)
+        try addAll(repo: repo, repositoryURL: repositoryURL)
 
         // Only commit if there are staged changes
         guard hasChangesToCommit(repo: repo) else { return nil }
@@ -71,8 +71,8 @@ final class ProjectGitService {
     /// (i.e. the checkpoint's parent commit).  This discards all changes
     /// the agent made in that run.
     /// Returns true if undo was performed, false if no checkpoint found.
-    func undo(projectURL: URL) throws -> Bool {
-        let repo = try openRepository(at: projectURL)
+    func undo(repositoryURL: URL) throws -> Bool {
+        let repo = try openRepository(at: repositoryURL)
 
         guard let checkpointCommit = try findLatestCheckpointCommit(repo: repo) else {
             return false
@@ -88,8 +88,8 @@ final class ProjectGitService {
     }
 
     /// Check whether there is a checkpoint available to undo to.
-    func hasCheckpoint(projectURL: URL) -> Bool {
-        guard let repo = try? openRepository(at: projectURL) else { return false }
+    func hasCheckpoint(repositoryURL: URL) -> Bool {
+        guard let repo = try? openRepository(at: repositoryURL) else { return false }
         return (try? findLatestCheckpointCommit(repo: repo)) != nil
     }
 
@@ -104,8 +104,8 @@ final class ProjectGitService {
 
     /// List recent checkpoint commits across all branches,
     /// deduplicated and sorted by date (newest first).
-    func listCheckpoints(projectURL: URL, limit: Int = 50) throws -> [CheckpointRecord] {
-        let repo = try openRepository(at: projectURL)
+    func listCheckpoints(repositoryURL: URL, limit: Int = 50) throws -> [CheckpointRecord] {
+        let repo = try openRepository(at: repositoryURL)
         let branches = try repo.branch.list(.local)
 
         var seen = Set<String>()
@@ -145,11 +145,11 @@ final class ProjectGitService {
     /// Auto-commits any uncommitted changes first, then creates a new branch
     /// from the target commit and switches to it. The old branch is preserved
     /// so no history is ever lost.
-    func restore(projectURL: URL, checkpointID: String) throws {
-        let repo = try openRepository(at: projectURL)
+    func restore(repositoryURL: URL, checkpointID: String) throws {
+        let repo = try openRepository(at: repositoryURL)
 
         // 1. Auto-commit any dirty changes on the current branch.
-        try addAll(repo: repo, projectURL: projectURL)
+        try addAll(repo: repo, repositoryURL: repositoryURL)
         if hasChangesToCommit(repo: repo) {
             try repo.commit(message: "\(checkpointPrefix) Auto-save before restore")
         }
@@ -165,8 +165,8 @@ final class ProjectGitService {
 
     /// Returns the commit ID of the most recent checkpoint reachable from HEAD.
     /// This tells the user which checkpoint they are currently "on".
-    func currentCheckpointID(projectURL: URL) -> String? {
-        guard let repo = try? openRepository(at: projectURL) else { return nil }
+    func currentCheckpointID(repositoryURL: URL) -> String? {
+        guard let repo = try? openRepository(at: repositoryURL) else { return nil }
         guard let commits = try? repo.log() else { return nil }
         for commit in commits {
             let message = commit.message.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -183,19 +183,19 @@ final class ProjectGitService {
     // MARK: - Diff
 
     /// Get a list of files changed since the last checkpoint.
-    func changedFilesSinceCheckpoint(projectURL: URL) throws -> [String] {
-        let repo = try openRepository(at: projectURL)
+    func changedFilesSinceCheckpoint(repositoryURL: URL) throws -> [String] {
+        let repo = try openRepository(at: repositoryURL)
         let entries = try repo.status()
         return entries.compactMap { entryPath(for: $0) }
     }
 
     /// Generate a unified diff of a single file: working tree vs HEAD.
     /// Returns nil if the file is unchanged or not tracked.
-    func diffFileAgainstHEAD(projectURL: URL, relativePath: String) throws -> String? {
-        let repo = try openRepository(at: projectURL)
+    func diffFileAgainstHEAD(repositoryURL: URL, relativePath: String) throws -> String? {
+        let repo = try openRepository(at: repositoryURL)
 
         // Read the current working tree version
-        let fileURL = projectURL.appendingPathComponent(relativePath)
+        let fileURL = repositoryURL.appendingPathComponent(relativePath)
         guard FileManager.default.fileExists(atPath: fileURL.path),
               let currentContent = try? String(contentsOf: fileURL, encoding: .utf8)
         else {
@@ -338,8 +338,8 @@ final class ProjectGitService {
     // MARK: - File-Level Revert
 
     /// Open a repository for revert operations (exposed for AgentTools).
-    func openRepositoryForRevert(at projectURL: URL) throws -> Repository {
-        try openRepository(at: projectURL)
+    func openRepositoryForRevert(at repositoryURL: URL) throws -> Repository {
+        try openRepository(at: repositoryURL)
     }
 
     /// Read a file's content from the HEAD commit.
@@ -382,9 +382,9 @@ final class ProjectGitService {
 
     // MARK: - Private
 
-    private func openRepository(at projectURL: URL) throws -> Repository {
+    private func openRepository(at repositoryURL: URL) throws -> Repository {
         do {
-            return try Repository.open(at: projectURL)
+            return try Repository.open(at: repositoryURL)
         } catch {
             throw GitServiceError.repositoryNotFound
         }
@@ -395,9 +395,9 @@ final class ProjectGitService {
         try repo.config.set("user.email", to: "doufu@local")
     }
 
-    private func addAll(repo: Repository, projectURL: URL) throws {
+    private func addAll(repo: Repository, repositoryURL: URL) throws {
         // Ensure .gitignore exists
-        let gitignoreURL = projectURL.appendingPathComponent(".gitignore")
+        let gitignoreURL = repositoryURL.appendingPathComponent(".gitignore")
         if !FileManager.default.fileExists(atPath: gitignoreURL.path) {
             try defaultGitignore.write(to: gitignoreURL, atomically: true, encoding: .utf8)
         }

@@ -21,6 +21,15 @@ struct AppProjectRecord: Equatable, Hashable {
     var entryFileURL: URL { appURL.appendingPathComponent("index.html") }
 }
 
+struct AppProjectMetadataSnapshot: Equatable {
+    let id: String
+    let name: String
+    let description: String
+    let createdAt: Date
+    let updatedAt: Date
+    let toolPermissionOverride: ToolPermissionMode?
+}
+
 enum AppProjectStoreError: LocalizedError {
     case unavailableDocumentsDirectory
     case projectCreationFailed
@@ -119,17 +128,31 @@ final class AppProjectStore {
             throw AppProjectStoreError.invalidProjectLocation
         }
 
-        guard fileManager.fileExists(atPath: targetPath) else {
-            return
-        }
-
         let projectID = projectURL.lastPathComponent
+        let deletionStagingURL = makeDeletionStagingURL(for: projectID)
+        let hasProjectDirectory = fileManager.fileExists(atPath: targetPath)
 
         do {
-            try fileManager.removeItem(at: projectURL)
-            // Delete project row (cascades to permission, threads, etc.)
             try dbPool.write { db in
-                try db.execute(sql: "DELETE FROM project WHERE id = ?", arguments: [projectID])
+                if hasProjectDirectory {
+                    let stagingParentURL = deletionStagingURL.deletingLastPathComponent()
+                    try fileManager.createDirectory(at: stagingParentURL, withIntermediateDirectories: true)
+                    try fileManager.moveItem(at: projectURL, to: deletionStagingURL)
+                }
+
+                do {
+                    try deleteProjectDatabaseState(projectID: projectID, in: db)
+                } catch {
+                    if hasProjectDirectory,
+                       !fileManager.fileExists(atPath: targetPath),
+                       fileManager.fileExists(atPath: deletionStagingURL.path) {
+                        try? fileManager.moveItem(at: deletionStagingURL, to: projectURL)
+                    }
+                    throw error
+                }
+            }
+            if fileManager.fileExists(atPath: deletionStagingURL.path) {
+                try? fileManager.removeItem(at: deletionStagingURL)
             }
         } catch {
             throw AppProjectStoreError.projectDeletionFailed
@@ -146,6 +169,28 @@ final class AppProjectStore {
         return title
     }
 
+    func loadProjectDescription(projectURL: URL) -> String {
+        loadProjectMetadata(projectURL: projectURL)?.description ?? ""
+    }
+
+    func loadProjectMetadata(projectURL: URL) -> AppProjectMetadataSnapshot? {
+        let projectID = projectURL.lastPathComponent
+        guard let project = try? dbPool.read({ db in
+            try DBProject.fetchOne(db, key: projectID)
+        }) else {
+            return nil
+        }
+
+        return AppProjectMetadataSnapshot(
+            id: project.id,
+            name: project.title.isEmpty ? project.id : project.title,
+            description: project.description,
+            createdAt: DatabaseTimestamp.fromNanos(project.createdAt),
+            updatedAt: DatabaseTimestamp.fromNanos(project.updatedAt),
+            toolPermissionOverride: loadProjectToolPermissionOverride(projectURL: projectURL)
+        )
+    }
+
     func updateProjectName(projectURL: URL, name: String) throws {
         let normalizedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedName.isEmpty else {
@@ -158,6 +203,18 @@ final class AppProjectStore {
             try db.execute(
                 sql: "UPDATE project SET title = ?, updated_at = ? WHERE id = ?",
                 arguments: [normalizedName, nowNanos, projectID]
+            )
+        }
+    }
+
+    func updateProjectDescription(projectURL: URL, description: String) throws {
+        let normalizedDescription = description.trimmingCharacters(in: .whitespacesAndNewlines)
+        let projectID = projectURL.lastPathComponent
+        let nowNanos = DatabaseTimestamp.toNanos(Date())
+        try dbPool.write { db in
+            try db.execute(
+                sql: "UPDATE project SET description = ?, updated_at = ? WHERE id = ?",
+                arguments: [normalizedDescription, nowNanos, projectID]
             )
         }
     }
@@ -209,6 +266,7 @@ final class AppProjectStore {
 
     func saveToolPermissionMode(projectURL: URL, mode: ToolPermissionMode?) {
         let projectID = projectURL.lastPathComponent
+        let nowNanos = DatabaseTimestamp.toNanos(Date())
         try? dbPool.write { db in
             if let mode {
                 let modeInt = DBPermission.modeInt(from: mode)
@@ -226,6 +284,10 @@ final class AppProjectStore {
                     arguments: [projectID]
                 )
             }
+            try db.execute(
+                sql: "UPDATE project SET updated_at = ? WHERE id = ?",
+                arguments: [nowNanos, projectID]
+            )
         }
     }
 
@@ -251,6 +313,34 @@ final class AppProjectStore {
         formatter.locale = Locale(identifier: "zh_CN")
         formatter.dateFormat = "MMdd-HHmm"
         return String(format: String(localized: "project_store.default_project_name_format"), formatter.string(from: createdAt))
+    }
+
+    private func makeDeletionStagingURL(for projectID: String) -> URL {
+        fileManager.temporaryDirectory
+            .appendingPathComponent("doufu_project_delete", isDirectory: true)
+            .appendingPathComponent("\(projectID)-\(UUID().uuidString.lowercased())", isDirectory: true)
+    }
+
+    private func deleteProjectDatabaseState(projectID: String, in db: Database) throws {
+        let threadIDs = try String.fetchAll(
+            db,
+            sql: "SELECT id FROM thread WHERE project_id = ?",
+            arguments: [projectID]
+        )
+
+        for threadID in threadIDs {
+            try db.execute(sql: "DELETE FROM session_memory WHERE thread_id = ?", arguments: [threadID])
+            try db.execute(sql: "DELETE FROM message WHERE thread_id = ?", arguments: [threadID])
+            try db.execute(sql: "DELETE FROM assistant WHERE thread_id = ?", arguments: [threadID])
+            try db.execute(sql: "DELETE FROM thread_model_selection WHERE thread_id = ?", arguments: [threadID])
+        }
+
+        try db.execute(sql: "DELETE FROM thread WHERE project_id = ?", arguments: [projectID])
+        try db.execute(sql: "DELETE FROM thread_model_selection WHERE project_id = ?", arguments: [projectID])
+        try db.execute(sql: "DELETE FROM project_model_selection WHERE project_id = ?", arguments: [projectID])
+        try db.execute(sql: "DELETE FROM permission WHERE project_id = ?", arguments: [projectID])
+        try db.execute(sql: "DELETE FROM token_usage WHERE project_id = ?", arguments: [projectID])
+        try db.execute(sql: "DELETE FROM project WHERE id = ?", arguments: [projectID])
     }
 
     private func writeBlankWebsiteFiles(

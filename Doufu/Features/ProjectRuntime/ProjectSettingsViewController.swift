@@ -21,6 +21,7 @@ final class ProjectSettingsViewController: UITableViewController {
 
     private enum ProjectRow: Int, CaseIterable {
         case name
+        case description
     }
 
     private enum ChatRow: Int, CaseIterable {
@@ -33,12 +34,14 @@ final class ProjectSettingsViewController: UITableViewController {
     }
 
     private let projectURL: URL
+    private let repositoryURL: URL
     private let projectID: String
     private let store = AppProjectStore.shared
     private let gitService = ProjectGitService.shared
     private let modelSelectionStore = ModelSelectionStateStore.shared
 
     private var projectNameText: String
+    private var projectDescriptionText: String
     /// nil means "use app default"
     private var toolPermissionOverride: ToolPermissionMode?
     private var projectModelSelection: ModelSelection?
@@ -46,8 +49,10 @@ final class ProjectSettingsViewController: UITableViewController {
 
     init(projectURL: URL, projectName: String) {
         self.projectURL = projectURL
+        repositoryURL = projectURL.appendingPathComponent("App", isDirectory: true)
         self.projectID = projectURL.lastPathComponent
         projectNameText = projectName
+        projectDescriptionText = AppProjectStore.shared.loadProjectDescription(projectURL: projectURL)
         toolPermissionOverride = AppProjectStore.shared.loadProjectToolPermissionOverride(projectURL: projectURL)
         super.init(style: .insetGrouped)
     }
@@ -71,15 +76,14 @@ final class ProjectSettingsViewController: UITableViewController {
         tableView.register(SettingsCenteredButtonCell.self, forCellReuseIdentifier: SettingsCenteredButtonCell.reuseIdentifier)
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "CheckpointCell")
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "ChatSettingCell")
+        tableView.register(UITableViewCell.self, forCellReuseIdentifier: "ProjectSettingCell")
 
         modelSelectionObserver = modelSelectionStore.addObserver { [weak self] change in
             self?.handleModelSelectionChange(change)
         }
 
-        Task {
-            projectModelSelection = await modelSelectionStore.loadProjectDefaultSelection(projectID: projectID)
-            tableView.reloadSections(IndexSet(integer: Section.chat.rawValue), with: .none)
-        }
+        projectModelSelection = modelSelectionStore.loadProjectDefaultSelection(projectID: projectID)
+        tableView.reloadSections(IndexSet(integer: Section.chat.rawValue), with: .none)
     }
 
     override func numberOfSections(in tableView: UITableView) -> Int {
@@ -151,6 +155,19 @@ final class ProjectSettingsViewController: UITableViewController {
                     self?.commitProjectName()
                 }
                 return cell
+            case .description:
+                let cell = tableView.dequeueReusableCell(withIdentifier: "ProjectSettingCell", for: indexPath)
+                var configuration = UIListContentConfiguration.subtitleCell()
+                configuration.text = String(
+                    localized: "project_settings.field.description_title",
+                    defaultValue: "Description"
+                )
+                configuration.secondaryText = projectDescriptionPreviewText()
+                configuration.secondaryTextProperties.color = .secondaryLabel
+                configuration.secondaryTextProperties.numberOfLines = 3
+                cell.contentConfiguration = configuration
+                cell.accessoryType = .disclosureIndicator
+                return cell
             }
 
         case .chat:
@@ -209,7 +226,8 @@ final class ProjectSettingsViewController: UITableViewController {
         guard let section = Section(rawValue: indexPath.section) else { return nil }
         switch section {
         case .project:
-            return nil
+            guard let row = ProjectRow(rawValue: indexPath.row) else { return nil }
+            return row == .description ? indexPath : nil
         case .chat:
             return indexPath
         case .checkpoints:
@@ -223,7 +241,13 @@ final class ProjectSettingsViewController: UITableViewController {
 
         switch section {
         case .project:
-            break
+            guard let row = ProjectRow(rawValue: indexPath.row) else { break }
+            switch row {
+            case .name:
+                break
+            case .description:
+                presentProjectDescriptionEditor()
+            }
 
         case .chat:
             guard let row = ChatRow(rawValue: indexPath.row) else { break }
@@ -253,6 +277,33 @@ final class ProjectSettingsViewController: UITableViewController {
         }
         try? store.updateProjectName(projectURL: projectURL, name: name)
         onProjectUpdated?(name)
+    }
+
+    private func projectDescriptionPreviewText() -> String {
+        let trimmed = projectDescriptionText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return String(
+                localized: "project_settings.field.description_empty",
+                defaultValue: "No description"
+            )
+        }
+        return trimmed.replacingOccurrences(of: "\n", with: " ")
+    }
+
+    private func presentProjectDescriptionEditor() {
+        let controller = ProjectDescriptionEditorViewController(
+            projectURL: projectURL,
+            initialDescription: projectDescriptionText
+        )
+        controller.onDescriptionSaved = { [weak self] savedDescription in
+            guard let self else { return }
+            self.projectDescriptionText = savedDescription
+            self.tableView.reloadRows(
+                at: [IndexPath(row: ProjectRow.description.rawValue, section: Section.project.rawValue)],
+                with: .none
+            )
+        }
+        navigationController?.pushViewController(controller, animated: true)
     }
 
     // MARK: - Tool Permission Picker
@@ -342,12 +393,10 @@ final class ProjectSettingsViewController: UITableViewController {
         controller.onSelectionChanged = { [weak self] selection in
             guard let self else { return }
             self.projectModelSelection = selection
-            Task {
-                await self.modelSelectionStore.setProjectDefaultSelectionAsync(
-                    selection,
-                    projectID: self.projectID
-                )
-            }
+            self.modelSelectionStore.setProjectDefaultSelectionAsync(
+                selection,
+                projectID: self.projectID
+            )
             self.tableView.reloadSections(IndexSet(integer: Section.chat.rawValue), with: .none)
         }
         navigationController?.pushViewController(controller, animated: true)
@@ -363,21 +412,20 @@ final class ProjectSettingsViewController: UITableViewController {
             return
         }
 
-        Task { [weak self] in
-            guard let self else { return }
-            self.projectModelSelection = await self.modelSelectionStore.loadProjectDefaultSelection(projectID: self.projectID)
-            self.tableView.reloadSections(IndexSet(integer: Section.chat.rawValue), with: .none)
-        }
+        projectModelSelection = modelSelectionStore.loadProjectDefaultSelection(projectID: projectID)
+        tableView.reloadSections(IndexSet(integer: Section.chat.rawValue), with: .none)
     }
 
     // MARK: - Actions
 
     private func openCheckpointsPage() {
-        let controller = ProjectCheckpointsViewController(projectURL: projectURL)
+        let controller = ProjectCheckpointsViewController(repositoryURL: repositoryURL)
         controller.onCheckpointRestored = { [weak self] in
             guard let self else { return }
+            self.store.touchProjectUpdatedAt(projectID: self.projectID)
             let latestProjectName = self.store.loadProjectName(projectURL: self.projectURL)
             self.projectNameText = latestProjectName
+            self.projectDescriptionText = self.store.loadProjectDescription(projectURL: self.projectURL)
             self.onProjectUpdated?(latestProjectName)
             self.tableView.reloadData()
         }
@@ -386,13 +434,124 @@ final class ProjectSettingsViewController: UITableViewController {
 
 }
 
+// MARK: - Project Description Editor
+
+private final class ProjectDescriptionEditorViewController: UIViewController, UITextViewDelegate {
+
+    var onDescriptionSaved: ((String) -> Void)?
+
+    private let projectURL: URL
+    private let store = AppProjectStore.shared
+    private let initialDescription: String
+
+    private lazy var textView: UITextView = {
+        let view = UITextView()
+        view.translatesAutoresizingMaskIntoConstraints = false
+        view.backgroundColor = .secondarySystemGroupedBackground
+        view.layer.cornerRadius = 14
+        view.layer.cornerCurve = .continuous
+        view.font = .systemFont(ofSize: 16)
+        view.textContainerInset = UIEdgeInsets(top: 14, left: 12, bottom: 14, right: 12)
+        view.delegate = self
+        return view
+    }()
+
+    private lazy var saveButton = UIBarButtonItem(
+        title: String(localized: "common.action.save"),
+        style: Self.saveButtonStyle,
+        target: self,
+        action: #selector(didTapSave)
+    )
+
+    private static var saveButtonStyle: UIBarButtonItem.Style {
+        if #available(iOS 26.0, *) {
+            return .prominent
+        }
+        return .plain
+    }
+
+    init(projectURL: URL, initialDescription: String) {
+        self.projectURL = projectURL
+        self.initialDescription = initialDescription
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        title = String(
+            localized: "project_settings.description_editor.title",
+            defaultValue: "Project Description"
+        )
+        view.backgroundColor = .systemGroupedBackground
+        navigationItem.rightBarButtonItem = saveButton
+        view.addSubview(textView)
+        NSLayoutConstraint.activate([
+            textView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 16),
+            textView.leadingAnchor.constraint(equalTo: view.layoutMarginsGuide.leadingAnchor),
+            textView.trailingAnchor.constraint(equalTo: view.layoutMarginsGuide.trailingAnchor),
+            textView.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor, constant: -16)
+        ])
+        textView.text = initialDescription
+        updateSaveButtonState()
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        textView.becomeFirstResponder()
+    }
+
+    func textViewDidChange(_ textView: UITextView) {
+        updateSaveButtonState()
+    }
+
+    @objc
+    private func didTapSave() {
+        let description = textView.text ?? ""
+        let normalizedDescription = description.trimmingCharacters(in: .whitespacesAndNewlines)
+        let initialNormalizedDescription = initialDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard normalizedDescription != initialNormalizedDescription else {
+            navigationController?.popViewController(animated: true)
+            return
+        }
+
+        do {
+            try store.updateProjectDescription(projectURL: projectURL, description: description)
+            onDescriptionSaved?(normalizedDescription)
+            navigationController?.popViewController(animated: true)
+        } catch {
+            let alert = UIAlertController(
+                title: String(
+                    localized: "project_settings.description_editor.save_failed.title",
+                    defaultValue: "Failed to Save Description"
+                ),
+                message: error.localizedDescription,
+                preferredStyle: .alert
+            )
+            alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
+            present(alert, animated: true)
+        }
+    }
+
+    private func updateSaveButtonState() {
+        let normalizedDescription = (textView.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let initialNormalizedDescription = initialDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+        saveButton.isEnabled = normalizedDescription != initialNormalizedDescription
+    }
+}
+
 // MARK: - Checkpoint History
 
 private final class ProjectCheckpointsViewController: UITableViewController {
 
     var onCheckpointRestored: (() -> Void)?
 
-    private let projectURL: URL
+    private let repositoryURL: URL
     private let gitService = ProjectGitService.shared
     private var checkpoints: [ProjectGitService.CheckpointRecord] = []
     private var currentCheckpointID: String?
@@ -404,8 +563,8 @@ private final class ProjectCheckpointsViewController: UITableViewController {
         return formatter
     }()
 
-    init(projectURL: URL) {
-        self.projectURL = projectURL
+    init(repositoryURL: URL) {
+        self.repositoryURL = repositoryURL
         super.init(style: .insetGrouped)
     }
 
@@ -480,14 +639,14 @@ private final class ProjectCheckpointsViewController: UITableViewController {
     }
 
     private func reloadCheckpoints() {
-        checkpoints = (try? gitService.listCheckpoints(projectURL: projectURL)) ?? []
-        currentCheckpointID = gitService.currentCheckpointID(projectURL: projectURL)
+        checkpoints = (try? gitService.listCheckpoints(repositoryURL: repositoryURL)) ?? []
+        currentCheckpointID = gitService.currentCheckpointID(repositoryURL: repositoryURL)
         tableView.reloadData()
     }
 
     private func restoreCheckpoint(_ checkpoint: ProjectGitService.CheckpointRecord) {
         do {
-            try gitService.restore(projectURL: projectURL, checkpointID: checkpoint.id)
+            try gitService.restore(repositoryURL: repositoryURL, checkpointID: checkpoint.id)
             onCheckpointRestored?()
             reloadCheckpoints()
 

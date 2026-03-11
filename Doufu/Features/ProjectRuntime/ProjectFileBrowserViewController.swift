@@ -37,6 +37,46 @@ import TreeSitterSwiftRunestone
 @MainActor
 final class ProjectFileBrowserViewController: UITableViewController {
 
+    private enum ExportKind {
+        case code
+        case projectBackup
+    }
+
+    private struct ExportPayload {
+        let zipURL: URL
+        let cleanupURLs: [URL]
+    }
+
+    private struct ProjectBackupMetadata: Codable {
+        struct ProjectInfo: Codable {
+            let id: String
+            let name: String
+            let description: String
+            let createdAt: Date
+            let updatedAt: Date
+            let toolPermissionOverride: String?
+        }
+
+        let backupVersion: Int
+        let exportedAt: Date
+        let project: ProjectInfo
+        let projectModelSelection: ModelSelection?
+    }
+
+    private enum ExportError: LocalizedError {
+        case missingProjectRoot
+
+        var errorDescription: String? {
+            switch self {
+            case .missingProjectRoot:
+                return String(
+                    localized: "file_browser.export.error.missing_project_root",
+                    defaultValue: "This project backup is only available from a project workspace."
+                )
+            }
+        }
+    }
+
     private struct Item {
         let name: String
         let url: URL
@@ -46,6 +86,7 @@ final class ProjectFileBrowserViewController: UITableViewController {
 
     private let projectName: String
     private let rootURL: URL
+    private let projectRootURL: URL?
     private let directoryURL: URL
     private var items: [Item] = []
     private let fileManager: FileManager
@@ -53,11 +94,13 @@ final class ProjectFileBrowserViewController: UITableViewController {
     init(
         projectName: String,
         rootURL: URL,
+        projectRootURL: URL? = nil,
         directoryURL: URL? = nil,
         fileManager: FileManager = .default
     ) {
         self.projectName = projectName
         self.rootURL = rootURL
+        self.projectRootURL = projectRootURL
         self.directoryURL = directoryURL ?? rootURL
         self.fileManager = fileManager
         super.init(style: .insetGrouped)
@@ -208,6 +251,7 @@ final class ProjectFileBrowserViewController: UITableViewController {
             let controller = ProjectFileBrowserViewController(
                 projectName: projectName,
                 rootURL: rootURL,
+                projectRootURL: projectRootURL,
                 directoryURL: item.url,
                 fileManager: fileManager
             )
@@ -222,15 +266,55 @@ final class ProjectFileBrowserViewController: UITableViewController {
     // MARK: - Share
 
     @objc private func didTapShare() {
-        let zipName = projectName.isEmpty ? "project" : projectName
-        let tempDir = FileManager.default.temporaryDirectory
-        let zipURL = tempDir.appendingPathComponent("\(zipName).zip")
+        let alert = UIAlertController(
+            title: String(
+                localized: "file_browser.export.title",
+                defaultValue: "Export Project"
+            ),
+            message: nil,
+            preferredStyle: .actionSheet
+        )
+        alert.addAction(UIAlertAction(
+            title: String(
+                localized: "file_browser.export.code",
+                defaultValue: "Export Code"
+            ),
+            style: .default
+        ) { [weak self] _ in
+            self?.export(.code)
+        })
+        if canExportProjectBackup {
+            alert.addAction(UIAlertAction(
+                title: String(
+                    localized: "file_browser.export.project_backup",
+                    defaultValue: "Export Project Backup"
+                ),
+                style: .default
+            ) { [weak self] _ in
+                self?.export(.projectBackup)
+            })
+        }
+        alert.addAction(UIAlertAction(title: String(localized: "common.action.cancel"), style: .cancel))
+        alert.popoverPresentationController?.barButtonItem = navigationItem.rightBarButtonItem
+        present(alert, animated: true)
+    }
 
-        // Remove any previous zip at the same path.
-        try? fileManager.removeItem(at: zipURL)
+    private var canExportProjectBackup: Bool {
+        guard let projectRootURL else { return false }
+        return projectRootURL.standardizedFileURL != rootURL.standardizedFileURL
+    }
 
+    private func export(_ kind: ExportKind) {
         do {
-            try zipDirectory(at: rootURL, to: zipURL)
+            let payload = try makeExportPayload(for: kind)
+            let activity = UIActivityViewController(activityItems: [payload.zipURL], applicationActivities: nil)
+            activity.popoverPresentationController?.barButtonItem = navigationItem.rightBarButtonItem
+            activity.completionWithItemsHandler = { _, _, _, _ in
+                for url in payload.cleanupURLs {
+                    try? FileManager.default.removeItem(at: url)
+                }
+            }
+            present(activity, animated: true)
         } catch {
             let alert = UIAlertController(
                 title: String(localized: "file_browser.alert.zip_failed.title"),
@@ -239,15 +323,107 @@ final class ProjectFileBrowserViewController: UITableViewController {
             )
             alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
             present(alert, animated: true)
-            return
+        }
+    }
+
+    private func makeExportPayload(for kind: ExportKind) throws -> ExportPayload {
+        switch kind {
+        case .code:
+            let zipURL = archiveURL(suffix: "code")
+            try? fileManager.removeItem(at: zipURL)
+            try zipDirectory(at: rootURL, to: zipURL)
+            return ExportPayload(zipURL: zipURL, cleanupURLs: [zipURL])
+        case .projectBackup:
+            return try makeProjectBackupPayload()
+        }
+    }
+
+    private func makeProjectBackupPayload() throws -> ExportPayload {
+        guard let projectRootURL else {
+            throw ExportError.missingProjectRoot
         }
 
-        let activity = UIActivityViewController(activityItems: [zipURL], applicationActivities: nil)
-        activity.popoverPresentationController?.barButtonItem = navigationItem.rightBarButtonItem
-        activity.completionWithItemsHandler = { _, _, _, _ in
-            try? FileManager.default.removeItem(at: zipURL)
+        let stagingRootURL = fileManager.temporaryDirectory
+            .appendingPathComponent("doufu_project_export_\(UUID().uuidString.lowercased())", isDirectory: true)
+        let exportFolderURL = stagingRootURL
+            .appendingPathComponent("\(safeArchiveBaseName())-project-backup", isDirectory: true)
+        try fileManager.createDirectory(at: exportFolderURL, withIntermediateDirectories: true)
+
+        try copyItemIfPresent(
+            at: projectRootURL.appendingPathComponent("App", isDirectory: true),
+            to: exportFolderURL.appendingPathComponent("App", isDirectory: true)
+        )
+        try copyItemIfPresent(
+            at: projectRootURL.appendingPathComponent("AppData", isDirectory: true),
+            to: exportFolderURL.appendingPathComponent("AppData", isDirectory: true)
+        )
+        for fileName in ["preview.jpg", "preview.jpeg", "preview.png", "thumbnail.png", "snapshot.png"] {
+            try copyItemIfPresent(
+                at: projectRootURL.appendingPathComponent(fileName),
+                to: exportFolderURL.appendingPathComponent(fileName)
+            )
         }
-        present(activity, animated: true)
+
+        let metadata = makeProjectBackupMetadata(projectRootURL: projectRootURL)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        let metadataData = try encoder.encode(metadata)
+        try metadataData.write(
+            to: exportFolderURL.appendingPathComponent("ProjectMetadata.json"),
+            options: .atomic
+        )
+
+        let zipURL = archiveURL(suffix: "project-backup")
+        try? fileManager.removeItem(at: zipURL)
+        try zipDirectory(at: exportFolderURL, to: zipURL)
+        return ExportPayload(zipURL: zipURL, cleanupURLs: [zipURL, stagingRootURL])
+    }
+
+    private func makeProjectBackupMetadata(projectRootURL: URL) -> ProjectBackupMetadata {
+        let projectID = projectRootURL.lastPathComponent
+        let metadataSnapshot = AppProjectStore.shared.loadProjectMetadata(projectURL: projectRootURL)
+        let projectInfo = ProjectBackupMetadata.ProjectInfo(
+            id: metadataSnapshot?.id ?? projectID,
+            name: metadataSnapshot?.name ?? projectName,
+            description: metadataSnapshot?.description ?? "",
+            createdAt: metadataSnapshot?.createdAt ?? Date(),
+            updatedAt: metadataSnapshot?.updatedAt ?? Date(),
+            toolPermissionOverride: metadataSnapshot?.toolPermissionOverride?.rawValue
+        )
+        let modelSelection = LLMProviderSettingsStore.shared.loadProjectModelSelection(projectID: projectID)
+        return ProjectBackupMetadata(
+            backupVersion: 1,
+            exportedAt: Date(),
+            project: projectInfo,
+            projectModelSelection: modelSelection
+        )
+    }
+
+    private func copyItemIfPresent(at sourceURL: URL, to destinationURL: URL) throws {
+        guard fileManager.fileExists(atPath: sourceURL.path) else {
+            return
+        }
+        let parentURL = destinationURL.deletingLastPathComponent()
+        try fileManager.createDirectory(at: parentURL, withIntermediateDirectories: true)
+        try fileManager.copyItem(at: sourceURL, to: destinationURL)
+    }
+
+    private func archiveURL(suffix: String) -> URL {
+        fileManager.temporaryDirectory
+            .appendingPathComponent("\(safeArchiveBaseName())-\(suffix).zip")
+    }
+
+    private func safeArchiveBaseName() -> String {
+        let rawBaseName = projectName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallback = rawBaseName.isEmpty ? "project" : rawBaseName
+        let invalidCharacters = CharacterSet(charactersIn: "/\\:?%*|\"<>")
+        let sanitized = fallback
+            .components(separatedBy: invalidCharacters)
+            .joined(separator: "-")
+            .replacingOccurrences(of: "\\s+", with: "-", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet(charactersIn: ".-"))
+        return sanitized.isEmpty ? "project" : sanitized
     }
 
     private func zipDirectory(at sourceURL: URL, to destinationURL: URL) throws {
@@ -296,11 +472,18 @@ private final class ProjectFileContentViewController: UIViewController {
     private lazy var saveBarButtonItem: UIBarButtonItem = {
         UIBarButtonItem(
             title: String(localized: "common.action.save"),
-            style: .done,
+            style: Self.saveButtonStyle,
             target: self,
             action: #selector(didTapSave)
         )
     }()
+
+    private static var saveButtonStyle: UIBarButtonItem.Style {
+        if #available(iOS 26.0, *) {
+            return .prominent
+        }
+        return .plain
+    }
 
 #if canImport(Runestone)
     private lazy var editorView: TextView = {

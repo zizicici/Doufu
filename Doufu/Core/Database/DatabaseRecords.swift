@@ -13,6 +13,26 @@ struct DBProviderExtra: Codable {
     var modelID: String?
 }
 
+struct DBModelSelectionExtra: Codable {
+    var reasoningEffort: String?
+    var thinkingEnabled: Bool?
+
+    static func decode(from json: String?) -> DBModelSelectionExtra? {
+        guard let json, let data = json.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(DBModelSelectionExtra.self, from: data)
+    }
+
+    static func jsonString(from selection: ModelSelection) -> String? {
+        let extra = DBModelSelectionExtra(
+            reasoningEffort: selection.reasoningEffort?.rawValue,
+            thinkingEnabled: selection.thinkingEnabled
+        )
+        guard extra.reasoningEffort != nil || extra.thinkingEnabled != nil else { return nil }
+        guard let data = try? JSONEncoder().encode(extra) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+}
+
 // MARK: - Model Capabilities JSON
 
 struct DBModelCapabilities: Codable {
@@ -187,8 +207,6 @@ struct DBAppModelSelection: Codable, FetchableRecord, PersistableRecord {
     var id: String
     var providerID: String
     var modelRecordID: String
-    var reasoningEffort: String?
-    var thinkingEnabled: Bool?
     var extra: String?
     var updatedAt: Int64
 
@@ -196,8 +214,6 @@ struct DBAppModelSelection: Codable, FetchableRecord, PersistableRecord {
         case id
         case providerID = "provider_id"
         case modelRecordID = "model_record_id"
-        case reasoningEffort = "reasoning_effort"
-        case thinkingEnabled = "thinking_enabled"
         case extra
         case updatedAt = "updated_at"
     }
@@ -209,16 +225,14 @@ struct DBProjectModelSelection: Codable, FetchableRecord, PersistableRecord {
     var projectID: String
     var providerID: String
     var modelRecordID: String
-    var reasoningEffort: String?
-    var thinkingEnabled: Bool?
+    var extra: String?
     var updatedAt: Int64
 
     enum CodingKeys: String, CodingKey {
         case projectID = "project_id"
         case providerID = "provider_id"
         case modelRecordID = "model_record_id"
-        case reasoningEffort = "reasoning_effort"
-        case thinkingEnabled = "thinking_enabled"
+        case extra
         case updatedAt = "updated_at"
     }
 }
@@ -230,8 +244,7 @@ struct DBThreadModelSelection: Codable, FetchableRecord, PersistableRecord {
     var threadID: String
     var providerID: String
     var modelRecordID: String
-    var reasoningEffort: String?
-    var thinkingEnabled: Bool?
+    var extra: String?
     var updatedAt: Int64
 
     enum CodingKeys: String, CodingKey {
@@ -239,8 +252,7 @@ struct DBThreadModelSelection: Codable, FetchableRecord, PersistableRecord {
         case threadID = "thread_id"
         case providerID = "provider_id"
         case modelRecordID = "model_record_id"
-        case reasoningEffort = "reasoning_effort"
-        case thinkingEnabled = "thinking_enabled"
+        case extra
         case updatedAt = "updated_at"
     }
 }
@@ -403,29 +415,32 @@ extension DBProviderModel {
 
 extension ModelSelection {
     static func from(_ db: DBAppModelSelection) -> ModelSelection {
-        ModelSelection(
+        let extra = DBModelSelectionExtra.decode(from: db.extra)
+        return ModelSelection(
             providerID: db.providerID,
             modelRecordID: db.modelRecordID,
-            reasoningEffort: db.reasoningEffort.flatMap(ProjectChatService.ReasoningEffort.init(rawValue:)),
-            thinkingEnabled: db.thinkingEnabled
+            reasoningEffort: extra?.reasoningEffort.flatMap(ProjectChatService.ReasoningEffort.init(rawValue:)),
+            thinkingEnabled: extra?.thinkingEnabled
         )
     }
 
     static func from(_ db: DBProjectModelSelection) -> ModelSelection {
-        ModelSelection(
+        let extra = DBModelSelectionExtra.decode(from: db.extra)
+        return ModelSelection(
             providerID: db.providerID,
             modelRecordID: db.modelRecordID,
-            reasoningEffort: db.reasoningEffort.flatMap(ProjectChatService.ReasoningEffort.init(rawValue:)),
-            thinkingEnabled: db.thinkingEnabled
+            reasoningEffort: extra?.reasoningEffort.flatMap(ProjectChatService.ReasoningEffort.init(rawValue:)),
+            thinkingEnabled: extra?.thinkingEnabled
         )
     }
 
     static func from(_ db: DBThreadModelSelection) -> ModelSelection {
-        ModelSelection(
+        let extra = DBModelSelectionExtra.decode(from: db.extra)
+        return ModelSelection(
             providerID: db.providerID,
             modelRecordID: db.modelRecordID,
-            reasoningEffort: db.reasoningEffort.flatMap(ProjectChatService.ReasoningEffort.init(rawValue:)),
-            thinkingEnabled: db.thinkingEnabled
+            reasoningEffort: extra?.reasoningEffort.flatMap(ProjectChatService.ReasoningEffort.init(rawValue:)),
+            thinkingEnabled: extra?.thinkingEnabled
         )
     }
 }

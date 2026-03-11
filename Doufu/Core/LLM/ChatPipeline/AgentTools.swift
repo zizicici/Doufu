@@ -101,7 +101,7 @@ protocol ToolConfirmationHandler: AnyObject {
 }
 
 final class AgentToolProvider {
-    private let projectURL: URL
+    private let workspaceURL: URL
     private let configuration: ProjectChatConfiguration
     weak var confirmationHandler: ToolConfirmationHandler?
     var permissionMode: ToolPermissionMode = .standard
@@ -112,8 +112,8 @@ final class AgentToolProvider {
     /// Tools the user has already approved in this session (for `.confirmOnce` tier).
     private var approvedOnceTools: Set<String> = []
 
-    init(projectURL: URL, configuration: ProjectChatConfiguration = .default) {
-        self.projectURL = projectURL
+    init(workspaceURL: URL, configuration: ProjectChatConfiguration = .default) {
+        self.workspaceURL = workspaceURL
         self.configuration = configuration
     }
 
@@ -986,7 +986,7 @@ final class AgentToolProvider {
         let normalizedPath = normalizeRelativePath(path)
 
         do {
-            let repo = try ProjectGitService.shared.openRepositoryForRevert(at: projectURL)
+            let repo = try ProjectGitService.shared.openRepositoryForRevert(at: workspaceURL)
 
             // Get the file content from HEAD (the checkpoint commit)
             guard let headContent = try ProjectGitService.shared.fileContentAtHEAD(
@@ -1026,7 +1026,7 @@ final class AgentToolProvider {
         let normalizedPath = normalizeRelativePath(path)
         do {
             guard let diff = try ProjectGitService.shared.diffFileAgainstHEAD(
-                projectURL: projectURL,
+                repositoryURL: workspaceURL,
                 relativePath: normalizedPath
             ) else {
                 return ToolExecutionResult(
@@ -1049,7 +1049,7 @@ final class AgentToolProvider {
 
     private func executeChangedFiles() -> ToolExecutionResult {
         do {
-            let paths = try ProjectGitService.shared.changedFilesSinceCheckpoint(projectURL: projectURL)
+            let paths = try ProjectGitService.shared.changedFilesSinceCheckpoint(repositoryURL: workspaceURL)
             if paths.isEmpty {
                 return ToolExecutionResult(
                     output: "No files have been changed since the start of this session.",
@@ -1080,7 +1080,7 @@ final class AgentToolProvider {
 
         let targetURL: URL
         if path.isEmpty {
-            targetURL = projectURL
+            targetURL = workspaceURL
         } else {
             guard let resolved = resolveSafePath(path) else {
                 return ToolExecutionResult(output: "Invalid path: \(path)", isError: true, changedPaths: [])
@@ -1150,7 +1150,7 @@ final class AgentToolProvider {
             }
             searchRoot = resolved
         } else {
-            searchRoot = projectURL
+            searchRoot = workspaceURL
         }
 
         let includeRegex = includePattern.flatMap { buildIncludeRegex($0) }
@@ -1176,7 +1176,7 @@ final class AgentToolProvider {
             let values = try? fileURL.resourceValues(forKeys: [.isDirectoryKey])
             if values?.isDirectory == true { continue }
 
-            let relativePath = normalizedRelativePath(fileURL: fileURL, rootURL: projectURL)
+            let relativePath = normalizedRelativePath(fileURL: fileURL, rootURL: workspaceURL)
             guard isTextFile(relativePath) else { continue }
 
             // Apply include filter if specified
@@ -1264,7 +1264,7 @@ final class AgentToolProvider {
             }
             searchRoot = resolved
         } else {
-            searchRoot = projectURL
+            searchRoot = workspaceURL
         }
 
         guard let enumerator = FileManager.default.enumerator(
@@ -1288,7 +1288,7 @@ final class AgentToolProvider {
             let values = try? fileURL.resourceValues(forKeys: [.isDirectoryKey])
             if values?.isDirectory == true { continue }
 
-            let relativePath = normalizedRelativePath(fileURL: fileURL, rootURL: projectURL)
+            let relativePath = normalizedRelativePath(fileURL: fileURL, rootURL: workspaceURL)
             guard isTextFile(relativePath) else { continue }
 
             // Apply include filter if specified
@@ -1361,7 +1361,7 @@ final class AgentToolProvider {
             }
             searchRoot = resolved
         } else {
-            searchRoot = projectURL
+            searchRoot = workspaceURL
         }
 
         guard let enumerator = FileManager.default.enumerator(
@@ -1383,7 +1383,7 @@ final class AgentToolProvider {
             let values = try? fileURL.resourceValues(forKeys: [.isDirectoryKey])
             if values?.isDirectory == true { continue }
 
-            let relativePath = ProjectPathResolver.normalizedRelativePath(fileURL: fileURL, rootURL: projectURL)
+            let relativePath = ProjectPathResolver.normalizedRelativePath(fileURL: fileURL, rootURL: workspaceURL)
             let range = NSRange(relativePath.startIndex..., in: relativePath)
             if globRegex.firstMatch(in: relativePath, range: range) != nil {
                 matches.append(relativePath)
@@ -1557,7 +1557,7 @@ final class AgentToolProvider {
         } else {
             result = await validator.validate(
                 entryFileURL: resolved,
-                allowingReadAccessTo: projectURL
+                allowingReadAccessTo: workspaceURL
             )
         }
 
@@ -1577,7 +1577,7 @@ final class AgentToolProvider {
     // MARK: - Path Helpers (delegates to ProjectPathResolver)
 
     private func resolveSafePath(_ path: String) -> URL? {
-        ProjectPathResolver.resolveSafePath(path, in: projectURL)
+        ProjectPathResolver.resolveSafePath(path, in: workspaceURL)
     }
 
     private func normalizeRelativePath(_ path: String) -> String {

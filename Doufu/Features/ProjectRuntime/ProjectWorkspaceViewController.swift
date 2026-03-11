@@ -851,7 +851,11 @@ final class ProjectWorkspaceViewController: UIViewController {
     @objc
     private func didTapFiles() {
         scheduleAutoCollapse()
-        let controller = ProjectFileBrowserViewController(projectName: projectName, rootURL: project.appURL)
+        let controller = ProjectFileBrowserViewController(
+            projectName: projectName,
+            rootURL: project.appURL,
+            projectRootURL: project.projectURL
+        )
         let navigationController = UINavigationController(rootViewController: controller)
         navigationController.modalPresentationStyle = .pageSheet
         if let sheet = navigationController.sheetPresentationController {
@@ -900,8 +904,6 @@ final class ProjectWorkspaceViewController: UIViewController {
     private func discardProjectAndExit() {
         do {
             try projectStore.deleteProject(projectURL: projectURL)
-            let projectID = projectURL.lastPathComponent
-            ChatDataStore.shared.deleteProjectData(projectID: projectID)
             dismiss(animated: true)
         } catch {
             let alert = UIAlertController(

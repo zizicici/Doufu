@@ -153,6 +153,7 @@ final class ModelSelectionStateStore {
         let didChange = cacheProjectDefaultSelection(selection, projectID: projectID)
         providerStore.saveProjectModelSelection(selection, projectID: projectID)
         if didChange {
+            AppProjectStore.shared.touchProjectUpdatedAt(projectID: projectID)
             postChange(.init(scope: .projectDefault(projectID: projectID)))
         }
     }
@@ -160,6 +161,7 @@ final class ModelSelectionStateStore {
     func setProjectDefaultSelectionAsync(_ selection: ModelSelection?, projectID: String) {
         let didChange = cacheProjectDefaultSelection(selection, projectID: projectID)
         if didChange {
+            AppProjectStore.shared.touchProjectUpdatedAt(projectID: projectID)
             postChange(.init(scope: .projectDefault(projectID: projectID)))
         }
         providerStore.saveProjectModelSelection(selection, projectID: projectID)

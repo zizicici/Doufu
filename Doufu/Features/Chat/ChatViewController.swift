@@ -150,7 +150,7 @@ final class ChatViewController: UIViewController {
 
     private var projectIdentifier: String { project.id }
     private var projectName: String { project.name }
-    private var projectURL: URL { project.appURL }
+    private var workspaceURL: URL { project.appURL }
 
     init(project: AppProjectRecord) {
         self.project = project
@@ -329,7 +329,7 @@ final class ChatViewController: UIViewController {
     // MARK: - Project Setup
 
     private func ensureProjectMemoryDocumentIfNeeded() {
-        let memoryURL = projectURL.appendingPathComponent("DOUFU.MD")
+        let memoryURL = workspaceURL.appendingPathComponent("DOUFU.MD")
         guard !FileManager.default.fileExists(atPath: memoryURL.path) else {
             return
         }
@@ -493,7 +493,11 @@ final class ChatViewController: UIViewController {
     }
 
     private func presentProjectFiles() {
-        let controller = ProjectFileBrowserViewController(projectName: projectName, rootURL: projectURL)
+        let controller = ProjectFileBrowserViewController(
+            projectName: projectName,
+            rootURL: workspaceURL,
+            projectRootURL: project.projectURL
+        )
         let navigationController = UINavigationController(rootViewController: controller)
         navigationController.modalPresentationStyle = .pageSheet
         if let sheet = navigationController.sheetPresentationController {
@@ -572,7 +576,7 @@ final class ChatViewController: UIViewController {
 
         let sessionContext = ChatSessionContext(
             projectID: projectIdentifier,
-            projectURL: projectURL,
+            workspaceURL: workspaceURL,
             projectRootURL: project.projectURL,
             projectName: projectName
         )

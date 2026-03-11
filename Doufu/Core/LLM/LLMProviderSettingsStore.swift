@@ -271,9 +271,7 @@ final class LLMProviderSettingsStore {
             id: "default",
             providerID: selection.providerID,
             modelRecordID: selection.modelRecordID,
-            reasoningEffort: selection.reasoningEffort?.rawValue,
-            thinkingEnabled: selection.thinkingEnabled,
-            extra: nil,
+            extra: DBModelSelectionExtra.jsonString(from: selection),
             updatedAt: DatabaseTimestamp.toNanos(Date())
         )
         try? dbPool.write { db in
@@ -690,8 +688,7 @@ final class LLMProviderSettingsStore {
                     projectID: projectID,
                     providerID: selection.providerID,
                     modelRecordID: selection.modelRecordID,
-                    reasoningEffort: selection.reasoningEffort?.rawValue,
-                    thinkingEnabled: selection.thinkingEnabled,
+                    extra: DBModelSelectionExtra.jsonString(from: selection),
                     updatedAt: DatabaseTimestamp.toNanos(Date())
                 )
                 try row.save(db)
@@ -724,8 +721,7 @@ final class LLMProviderSettingsStore {
                     threadID: threadID,
                     providerID: selection.providerID,
                     modelRecordID: selection.modelRecordID,
-                    reasoningEffort: selection.reasoningEffort?.rawValue,
-                    thinkingEnabled: selection.thinkingEnabled,
+                    extra: DBModelSelectionExtra.jsonString(from: selection),
                     updatedAt: DatabaseTimestamp.toNanos(Date())
                 )
                 try row.save(db)

@@ -69,7 +69,7 @@ final class ProjectChatOrchestrator {
         onProgress: (@MainActor (ToolProgressEvent) -> Void)? = nil
     ) async throws -> ProjectChatService.ResultPayload {
         let projectIdentifier = sessionContext.projectID
-        let projectURL = sessionContext.projectURL
+        let workspaceURL = sessionContext.workspaceURL
         let trimmedMessage = userMessage.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedMessage.isEmpty else {
             throw ProjectChatService.ServiceError.invalidResponse
@@ -78,7 +78,7 @@ final class ProjectChatOrchestrator {
         let normalizedHistory = memoryManager.normalizedHistoryTurns(history, excludingLatestUserMessage: trimmedMessage)
         let requestMemory = memoryManager.buildRequestMemory(base: memory, latestUserMessage: trimmedMessage)
         let usageAccumulator = UsageAccumulator()
-        let toolProvider = AgentToolProvider(projectURL: projectURL, configuration: configuration)
+        let toolProvider = AgentToolProvider(workspaceURL: workspaceURL, configuration: configuration)
         toolProvider.confirmationHandler = confirmationHandler
         toolProvider.permissionMode = permissionMode
         toolProvider.codeValidator = await CodeValidator()
@@ -87,11 +87,11 @@ final class ProjectChatOrchestrator {
 
         // Auto-save any uncommitted changes (e.g. user manual edits)
         // before the agent starts, so they are preserved for undo.
-        autoSaveBeforeAgentLoop(projectURL: projectURL)
+        autoSaveBeforeAgentLoop(workspaceURL: workspaceURL)
 
         // Read AGENTS.md and DOUFU.MD if present
-        let agentsMarkdown = readAgentsMarkdown(projectURL: projectURL)
-        let doufuMarkdown = readDoufuMarkdown(projectURL: projectURL)
+        let agentsMarkdown = readAgentsMarkdown(workspaceURL: workspaceURL)
+        let doufuMarkdown = readDoufuMarkdown(workspaceURL: workspaceURL)
 
         // Build system prompt
         let systemPrompt = promptBuilder.agentSystemPrompt(
@@ -219,7 +219,7 @@ final class ProjectChatOrchestrator {
 
                 let rawFinalMessage = accumulatedText.isEmpty ? String(localized: "orchestrator.done") : accumulatedText
                 let (modelMemoryUpdate, afterMemory) = extractMemoryUpdate(from: rawFinalMessage)
-                let cleanedFinalMessage = extractAndPersistDoufuUpdate(from: afterMemory, projectURL: projectURL)
+                let cleanedFinalMessage = extractAndPersistDoufuUpdate(from: afterMemory, workspaceURL: workspaceURL)
                 let finalMessage = cleanedFinalMessage.isEmpty ? String(localized: "orchestrator.done") : cleanedFinalMessage
 
                 if let onStreamedText, cleanedFinalMessage != rawFinalMessage {
@@ -228,7 +228,7 @@ final class ProjectChatOrchestrator {
 
                 if !allChangedPaths.isEmpty {
                     AppProjectStore.shared.touchProjectUpdatedAt(projectID: projectIdentifier)
-                    createCheckpointAfterAgentLoop(projectURL: projectURL, userMessage: trimmedMessage)
+                    createCheckpointAfterAgentLoop(workspaceURL: workspaceURL, userMessage: trimmedMessage)
                 }
 
                 let updatedMemory = memoryManager.buildRolledMemory(
@@ -345,11 +345,11 @@ final class ProjectChatOrchestrator {
             ? String(localized: "orchestrator.max_iterations_reached")
             : accumulatedText + "\n\n" + String(localized: "orchestrator.max_iterations_suffix")
         let (maxModelMemoryUpdate, afterMaxMemory) = extractMemoryUpdate(from: rawMaxMessage)
-        let finalMessage = extractAndPersistDoufuUpdate(from: afterMaxMemory, projectURL: projectURL)
+        let finalMessage = extractAndPersistDoufuUpdate(from: afterMaxMemory, workspaceURL: workspaceURL)
 
         if !allChangedPaths.isEmpty {
             AppProjectStore.shared.touchProjectUpdatedAt(projectID: projectIdentifier)
-            createCheckpointAfterAgentLoop(projectURL: projectURL, userMessage: trimmedMessage)
+            createCheckpointAfterAgentLoop(workspaceURL: workspaceURL, userMessage: trimmedMessage)
         }
 
         let updatedMemory = memoryManager.buildRolledMemory(
@@ -418,8 +418,8 @@ final class ProjectChatOrchestrator {
         }
     }
 
-    private func readAgentsMarkdown(projectURL: URL) -> String? {
-        let agentsURL = projectURL.appendingPathComponent("AGENTS.md")
+    private func readAgentsMarkdown(workspaceURL: URL) -> String? {
+        let agentsURL = workspaceURL.appendingPathComponent("AGENTS.md")
         guard FileManager.default.fileExists(atPath: agentsURL.path),
               let content = try? String(contentsOf: agentsURL, encoding: .utf8),
               !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -429,8 +429,8 @@ final class ProjectChatOrchestrator {
         return content
     }
 
-    private func readDoufuMarkdown(projectURL: URL) -> String? {
-        let doufuURL = projectURL.appendingPathComponent("DOUFU.MD")
+    private func readDoufuMarkdown(workspaceURL: URL) -> String? {
+        let doufuURL = workspaceURL.appendingPathComponent("DOUFU.MD")
         guard FileManager.default.fileExists(atPath: doufuURL.path),
               let content = try? String(contentsOf: doufuURL, encoding: .utf8),
               !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -440,18 +440,18 @@ final class ProjectChatOrchestrator {
         return content
     }
 
-    private func autoSaveBeforeAgentLoop(projectURL: URL) {
+    private func autoSaveBeforeAgentLoop(workspaceURL: URL) {
         do {
-            try gitService.ensureRepository(at: projectURL)
-            try gitService.autoSaveIfDirty(projectURL: projectURL)
+            try gitService.ensureRepository(at: workspaceURL)
+            try gitService.autoSaveIfDirty(repositoryURL: workspaceURL)
         } catch {
             LLMProviderHelpers.debugLog("[Doufu Agent] git auto-save failed: \(error.localizedDescription)")
         }
     }
 
-    private func createCheckpointAfterAgentLoop(projectURL: URL, userMessage: String) {
+    private func createCheckpointAfterAgentLoop(workspaceURL: URL, userMessage: String) {
         do {
-            try gitService.createCheckpoint(projectURL: projectURL, userMessage: userMessage)
+            try gitService.createCheckpoint(repositoryURL: workspaceURL, userMessage: userMessage)
         } catch {
             LLMProviderHelpers.debugLog("[Doufu Agent] git checkpoint failed: \(error.localizedDescription)")
         }
@@ -748,7 +748,7 @@ final class ProjectChatOrchestrator {
     /// Parse a `<doufu-update>` block from the model's response text, persist
     /// new lines to DOUFU.MD, and return the text with the block removed.
     @discardableResult
-    private func extractAndPersistDoufuUpdate(from text: String, projectURL: URL) -> String {
+    private func extractAndPersistDoufuUpdate(from text: String, workspaceURL: URL) -> String {
         let openTag = "<doufu-update>"
         let closeTag = "</doufu-update>"
 
@@ -776,7 +776,7 @@ final class ProjectChatOrchestrator {
         guard !newLines.isEmpty else { return cleaned }
 
         // Read existing DOUFU.MD content for deduplication
-        let doufuURL = projectURL.appendingPathComponent("DOUFU.MD")
+        let doufuURL = workspaceURL.appendingPathComponent("DOUFU.MD")
         let existingContent = (try? String(contentsOf: doufuURL, encoding: .utf8)) ?? ""
         let existingLines = Set(
             existingContent
