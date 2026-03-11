@@ -679,10 +679,10 @@ final class LLMProviderSettingsStore {
     func saveProjectModelSelection(_ selection: ModelSelection?, projectID: String) {
         try? dbPool.write { db in
             if let selection {
-                // Ensure project placeholder exists
-                let now = DatabaseTimestamp.toNanos(Date())
-                let project = DBProject(id: projectID, createdAt: now, title: "", description: "", sortOrder: 0, updatedAt: now)
-                try project.insert(db, onConflict: .ignore)
+                guard try projectExists(projectID: projectID, in: db) else {
+                    assertionFailure("Attempted to save a project model selection for a missing project: \(projectID)")
+                    return
+                }
 
                 let row = DBProjectModelSelection(
                     projectID: projectID,
@@ -712,9 +712,14 @@ final class LLMProviderSettingsStore {
     func saveThreadModelSelection(_ selection: ModelSelection?, projectID: String, threadID: String) {
         try? dbPool.write { db in
             if let selection {
-                let now = DatabaseTimestamp.toNanos(Date())
-                let project = DBProject(id: projectID, createdAt: now, title: "", description: "", sortOrder: 0, updatedAt: now)
-                try project.insert(db, onConflict: .ignore)
+                guard try projectExists(projectID: projectID, in: db) else {
+                    assertionFailure("Attempted to save a thread model selection for a missing project: \(projectID)")
+                    return
+                }
+                guard try threadExists(threadID: threadID, in: db) else {
+                    assertionFailure("Attempted to save a thread model selection for a missing thread: \(threadID)")
+                    return
+                }
 
                 let row = DBThreadModelSelection(
                     projectID: projectID,
@@ -960,5 +965,13 @@ final class LLMProviderSettingsStore {
         guard status == errSecSuccess || status == errSecItemNotFound else {
             throw LLMProviderSettingsStoreError.keychainFailed(status: status)
         }
+    }
+
+    private func projectExists(projectID: String, in db: Database) throws -> Bool {
+        try DBProject.fetchOne(db, key: projectID) != nil
+    }
+
+    private func threadExists(threadID: String, in db: Database) throws -> Bool {
+        try DBChatThread.fetchOne(db, key: threadID) != nil
     }
 }

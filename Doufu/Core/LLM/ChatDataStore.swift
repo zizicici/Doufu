@@ -10,6 +10,17 @@ import GRDB
 /// `DatabasePool` is thread-safe, so no actor isolation needed.
 final class ChatDataStore {
 
+    enum Error: LocalizedError {
+        case missingProject(projectID: String)
+
+        var errorDescription: String? {
+            switch self {
+            case .missingProject(let projectID):
+                return "Project not found: \(projectID)"
+            }
+        }
+    }
+
     static let shared = ChatDataStore()
 
     private var dbPool: DatabasePool { DatabaseManager.shared.dbPool }
@@ -47,9 +58,9 @@ final class ChatDataStore {
         )
 
         try dbPool.write { db in
-            // Ensure project exists
-            let dbProject = DBProject(id: projectID, createdAt: DatabaseTimestamp.toNanos(now), title: "", description: "", sortOrder: 0, updatedAt: DatabaseTimestamp.toNanos(now))
-            try dbProject.insert(db, onConflict: .ignore)
+            guard try projectExists(projectID: projectID, in: db) else {
+                throw Error.missingProject(projectID: projectID)
+            }
 
             let dbThread = DBChatThread.from(thread, projectID: projectID, isCurrent: true, sortOrder: 0)
             try dbThread.insert(db)
@@ -314,5 +325,9 @@ final class ChatDataStore {
     private func normalizedThreadTitle(_ rawTitle: String?, fallback: String) -> String {
         let normalized = rawTitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return normalized.isEmpty ? fallback : normalized
+    }
+
+    private func projectExists(projectID: String, in db: Database) throws -> Bool {
+        try DBProject.fetchOne(db, key: projectID) != nil
     }
 }

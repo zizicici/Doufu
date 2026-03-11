@@ -12,6 +12,7 @@ private struct HomeProjectItem: Hashable {
     let id: String
     let name: String
     let summary: String
+    let createdAt: Date
     let updatedAt: Date
     let projectURL: URL
     let previewImagePath: String?
@@ -182,7 +183,10 @@ final class HomeViewController: UIViewController {
         let projectsRootURL = documentURL.appendingPathComponent("Projects", isDirectory: true)
 
         // Load project records from DB
-        let dbPool = DatabaseManager.shared.dbPool!
+        guard let dbPool = DatabaseManager.shared.dbPool else {
+            assertionFailure("Database is unavailable before Home projects load")
+            return []
+        }
         guard let dbProjects = try? dbPool.read({ db in
             try DBProject.order(DBProject.Columns.sortOrder.asc, DBProject.Columns.updatedAt.desc).fetchAll(db)
         }) else {
@@ -202,6 +206,7 @@ final class HomeViewController: UIViewController {
             let summary = dbProject.description.isEmpty
                 ? String(localized: "home.project.no_description")
                 : dbProject.description
+            let createdAt = DatabaseTimestamp.fromNanos(dbProject.createdAt)
             let updatedAt = DatabaseTimestamp.fromNanos(dbProject.updatedAt)
             let previewImagePath = findPreviewImagePath(in: projectURL)
 
@@ -210,6 +215,7 @@ final class HomeViewController: UIViewController {
                     id: dbProject.id,
                     name: name,
                     summary: summary,
+                    createdAt: createdAt,
                     updatedAt: updatedAt,
                     projectURL: projectURL,
                     previewImagePath: previewImagePath,
@@ -253,7 +259,10 @@ final class HomeViewController: UIViewController {
     }
 
     private func saveCustomProjectOrder(_ orderedIDs: [String]) {
-        let dbPool = DatabaseManager.shared.dbPool!
+        guard let dbPool = DatabaseManager.shared.dbPool else {
+            assertionFailure("Database is unavailable before saving project order")
+            return
+        }
         try? dbPool.write { db in
             for (index, projectID) in orderedIDs.enumerated() {
                 try db.execute(
@@ -336,7 +345,7 @@ final class HomeViewController: UIViewController {
             id: project.id,
             name: project.name,
             projectURL: project.projectURL,
-            createdAt: project.updatedAt,
+            createdAt: project.createdAt,
             updatedAt: project.updatedAt
         )
         openProject(record, isNewlyCreated: false, cellIndexPath: indexPath)

@@ -82,7 +82,7 @@ final class DatabaseManager {
                 t.column("provider_id", .text).notNull()
                 t.column("model_request_id", .text).notNull()
                 t.column("project_id", .text)
-                    .references("project", onDelete: .cascade)
+                    .references("project", onDelete: .setNull)
                 t.column("input_tokens", .integer).notNull()
                 t.column("output_tokens", .integer).notNull()
                 t.column("created_at", .integer).notNull()

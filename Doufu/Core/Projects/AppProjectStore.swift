@@ -133,23 +133,23 @@ final class AppProjectStore {
         let hasProjectDirectory = fileManager.fileExists(atPath: targetPath)
 
         do {
-            try dbPool.write { db in
-                if hasProjectDirectory {
-                    let stagingParentURL = deletionStagingURL.deletingLastPathComponent()
-                    try fileManager.createDirectory(at: stagingParentURL, withIntermediateDirectories: true)
-                    try fileManager.moveItem(at: projectURL, to: deletionStagingURL)
-                }
+            if hasProjectDirectory {
+                let stagingParentURL = deletionStagingURL.deletingLastPathComponent()
+                try fileManager.createDirectory(at: stagingParentURL, withIntermediateDirectories: true)
+                try fileManager.moveItem(at: projectURL, to: deletionStagingURL)
+            }
 
-                do {
+            do {
+                try dbPool.write { db in
                     try deleteProjectDatabaseState(projectID: projectID, in: db)
-                } catch {
-                    if hasProjectDirectory,
-                       !fileManager.fileExists(atPath: targetPath),
-                       fileManager.fileExists(atPath: deletionStagingURL.path) {
-                        try? fileManager.moveItem(at: deletionStagingURL, to: projectURL)
-                    }
-                    throw error
                 }
+            } catch {
+                if hasProjectDirectory,
+                   !fileManager.fileExists(atPath: targetPath),
+                   fileManager.fileExists(atPath: deletionStagingURL.path) {
+                    try? fileManager.moveItem(at: deletionStagingURL, to: projectURL)
+                }
+                throw error
             }
             if fileManager.fileExists(atPath: deletionStagingURL.path) {
                 try? fileManager.removeItem(at: deletionStagingURL)
@@ -310,7 +310,7 @@ final class AppProjectStore {
         }
 
         let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.locale = Locale.current
         formatter.dateFormat = "MMdd-HHmm"
         return String(format: String(localized: "project_store.default_project_name_format"), formatter.string(from: createdAt))
     }
@@ -322,24 +322,6 @@ final class AppProjectStore {
     }
 
     private func deleteProjectDatabaseState(projectID: String, in db: Database) throws {
-        let threadIDs = try String.fetchAll(
-            db,
-            sql: "SELECT id FROM thread WHERE project_id = ?",
-            arguments: [projectID]
-        )
-
-        for threadID in threadIDs {
-            try db.execute(sql: "DELETE FROM session_memory WHERE thread_id = ?", arguments: [threadID])
-            try db.execute(sql: "DELETE FROM message WHERE thread_id = ?", arguments: [threadID])
-            try db.execute(sql: "DELETE FROM assistant WHERE thread_id = ?", arguments: [threadID])
-            try db.execute(sql: "DELETE FROM thread_model_selection WHERE thread_id = ?", arguments: [threadID])
-        }
-
-        try db.execute(sql: "DELETE FROM thread WHERE project_id = ?", arguments: [projectID])
-        try db.execute(sql: "DELETE FROM thread_model_selection WHERE project_id = ?", arguments: [projectID])
-        try db.execute(sql: "DELETE FROM project_model_selection WHERE project_id = ?", arguments: [projectID])
-        try db.execute(sql: "DELETE FROM permission WHERE project_id = ?", arguments: [projectID])
-        try db.execute(sql: "DELETE FROM token_usage WHERE project_id = ?", arguments: [projectID])
         try db.execute(sql: "DELETE FROM project WHERE id = ?", arguments: [projectID])
     }
 
