@@ -53,6 +53,7 @@ final class ChatMessageStore {
     private var pendingProgressText: String?
     private var progressDebounceTask: Task<Void, Never>?
     private var streamRefreshTask: Task<Void, Never>?
+    private var thinkingIndicatorTask: Task<Void, Never>?
 
     init() {}
 
@@ -65,6 +66,7 @@ final class ChatMessageStore {
         lastProgressPhaseText = nil
         // flowState should already be .idle here; enforce it.
         flowState = .idle
+        scheduleThinkingIndicator()
     }
 
     // MARK: - Incoming Events (State Machine Inputs)
@@ -73,6 +75,7 @@ final class ChatMessageStore {
     /// If a tool message is live, updates its summary (the cell display text).
     /// Otherwise transitions to `.progress`.
     func receiveProgressEvent(_ event: ToolProgressEvent) {
+        cancelThinkingIndicator()
         // If a tool message is currently live, route the event to update its summary.
         if case let .tool(index) = flowState {
             let text = Self.formatProgressEvent(event)
@@ -105,6 +108,7 @@ final class ChatMessageStore {
     /// Receive the latest accumulated text from the LLM streaming response.
     /// The value is the full response text so far (not a delta).
     func receiveStreamedText(_ accumulatedText: String) {
+        cancelThinkingIndicator()
         let trimmed = accumulatedText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
@@ -252,6 +256,7 @@ final class ChatMessageStore {
     /// `summary` holds the description shown in the cell; `content` is empty
     /// until the tool completes and fills in the detailed result.
     func insertLiveToolMessage(_ description: String) {
+        cancelThinkingIndicator()
         cancelPendingWorkItems()
         let now = Date()
         finalizeActiveFlowCell(finishedAt: now)
@@ -278,6 +283,7 @@ final class ChatMessageStore {
             delegate?.messageStoreDidUpdateCell(at: index, message: messages[index])
             delegate?.messageStoreDidRequestBatchUpdate()
             mutationDelegate?.messageStoreDidMutateMessages()
+            scheduleThinkingIndicator()
         } else {
             appendMessage(
                 role: .tool,
@@ -286,6 +292,9 @@ final class ChatMessageStore {
                 finishedAt: now,
                 summary: entry.description
             )
+            // Parallel batch: delay so rapid consecutive results don't each
+            // spawn a thinking cell. Only the last one in the batch fires.
+            scheduleThinkingIndicator()
         }
     }
 
@@ -424,6 +433,27 @@ final class ChatMessageStore {
         progressDebounceTask = nil
         streamRefreshTask?.cancel()
         streamRefreshTask = nil
+        thinkingIndicatorTask?.cancel()
+        thinkingIndicatorTask = nil
+    }
+
+    /// Schedules a "Thinking" progress indicator after a short delay.
+    /// Cancelled automatically when any real event arrives.
+    private func scheduleThinkingIndicator() {
+        thinkingIndicatorTask?.cancel()
+        thinkingIndicatorTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
+            guard !Task.isCancelled, let self else { return }
+            self.thinkingIndicatorTask = nil
+            guard self.flowState == .idle else { return }
+            let thinkingText = String(localized: "orchestrator.thinking")
+            self.transitionToProgress(text: thinkingText)
+        }
+    }
+
+    private func cancelThinkingIndicator() {
+        thinkingIndicatorTask?.cancel()
+        thinkingIndicatorTask = nil
     }
 
     /// Coalesces rapid streaming updates into a single cell refresh (100ms window).
