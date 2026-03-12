@@ -32,6 +32,7 @@ final class HomeViewController: UIViewController {
 
     private var allProjects: [HomeProjectItem] = []
     private var filteredProjects: [HomeProjectItem] = []
+    private var isSearchActive = false
     private let projectActivityStore = ProjectActivityStore.shared
     private let projectChangeCenter = ProjectChangeCenter.shared
     private let coordinator = ProjectLifecycleCoordinator.shared
@@ -302,6 +303,8 @@ final class HomeViewController: UIViewController {
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
 
+        isSearchActive = !keyword.isEmpty
+
         if keyword.isEmpty {
             filteredProjects = allProjects
         } else {
@@ -461,7 +464,7 @@ extension HomeViewController: UISearchResultsUpdating {
 
 extension HomeViewController: UICollectionViewDataSource {
     func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
-        filteredProjects.count + 1 // +1 for add button
+        isSearchActive ? filteredProjects.count : filteredProjects.count + 1
     }
 
     func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
