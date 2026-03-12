@@ -255,7 +255,14 @@ final class GeminiProvider: LLMProviderAdapter {
             await onStreamedText(textContent)
         }
 
-        let stopReason: AgentStopReason = toolCalls.isEmpty ? .endTurn : .toolUse
+        let stopReason: AgentStopReason
+        if !toolCalls.isEmpty {
+            stopReason = .toolUse
+        } else if firstCandidate.finishReason == "MAX_TOKENS" {
+            stopReason = .maxTokens
+        } else {
+            stopReason = .endTurn
+        }
         return AgentLLMResponse(textContent: textContent, toolCalls: toolCalls, usage: usage, stopReason: stopReason, thinkingContent: nil)
     }
 

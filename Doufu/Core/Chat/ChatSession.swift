@@ -530,14 +530,22 @@ extension ChatSession: ChatTaskCoordinatorDelegate {
         }
     }
 
-    func coordinatorDidCancel() {
+    func coordinatorDidCancel(changedPaths: [String]) {
         needsImmediatePersistence = true
         messageStore.handleCancellation()
+
+        if !changedPaths.isEmpty {
+            ProjectChangeCenter.shared.notifyFilesChanged(projectID: projectID)
+        }
     }
 
-    func coordinatorDidFailWithError(_ error: Error) {
+    func coordinatorDidFailWithError(_ error: Error, changedPaths: [String]) {
         needsImmediatePersistence = true
         messageStore.handleError(error)
+
+        if !changedPaths.isEmpty {
+            ProjectChangeCenter.shared.notifyFilesChanged(projectID: projectID)
+        }
     }
 
     func coordinatorDidFinishExecution() {

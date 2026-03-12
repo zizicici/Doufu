@@ -136,7 +136,12 @@ final class WebToolProvider {
 
     // MARK: - Web Fetch
 
-    func webFetch(urlString: String, raw: Bool = false) async -> Result<String, WebToolError> {
+    struct WebFetchResult {
+        let content: String
+        let statusCode: Int
+    }
+
+    func webFetch(urlString: String, raw: Bool = false) async -> Result<WebFetchResult, WebToolError> {
         let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             return .failure(WebToolError(message: "Missing required parameter: url"))
@@ -173,6 +178,8 @@ final class WebToolProvider {
             return .failure(WebToolError(message: "Request failed: \(error.localizedDescription)"))
         }
 
+        let actualStatusCode = (response as? HTTPURLResponse)?.statusCode ?? 200
+
         let truncatedData = data.prefix(configuration.webFetchMaxBytes * 2)
         guard let rawText = String(data: truncatedData, encoding: .utf8)
                 ?? String(data: truncatedData, encoding: .ascii) else {
@@ -199,9 +206,12 @@ final class WebToolProvider {
         // Truncate to byte limit
         if trimmedResult.utf8.count > configuration.webFetchMaxBytes {
             let truncated = truncateToUTF8ByteCount(trimmedResult, maxBytes: configuration.webFetchMaxBytes)
-            return .success(truncated + "\n\n[Content truncated at \(configuration.webFetchMaxBytes) bytes]")
+            return .success(WebFetchResult(
+                content: truncated + "\n\n[Content truncated at \(configuration.webFetchMaxBytes) bytes]",
+                statusCode: actualStatusCode
+            ))
         }
-        return .success(trimmedResult)
+        return .success(WebFetchResult(content: trimmedResult, statusCode: actualStatusCode))
     }
 
     // MARK: - DuckDuckGo HTML Parser

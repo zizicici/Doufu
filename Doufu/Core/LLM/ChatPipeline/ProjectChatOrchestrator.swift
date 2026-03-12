@@ -7,6 +7,21 @@
 
 import Foundation
 
+/// Partial state accumulated by the agent loop before it was interrupted.
+/// Attached to errors so that downstream handlers can still process
+/// file changes that occurred before the interruption.
+struct PartialAgentResult {
+    let changedPaths: [String]
+    let accumulatedText: String
+    let toolActivityLog: [String]
+}
+
+/// Wrapper error that carries partial agent state alongside the original error.
+struct AgentInterruptedError: Error {
+    let underlyingError: Error
+    let partialResult: PartialAgentResult
+}
+
 final class ProjectChatOrchestrator {
     private actor UsageAccumulator {
         private(set) var inputTokens: Int64 = 0
@@ -93,6 +108,8 @@ final class ProjectChatOrchestrator {
         toolProvider.validationServerBaseURL = validationServerBaseURL
         toolProvider.validationBridge = validationBridge
 
+        var state = AgentLoopState(conversation: [])
+
         do {
         autoSaveBeforeAgentLoop(workspaceURL: workspaceURL)
 
@@ -103,7 +120,7 @@ final class ProjectChatOrchestrator {
             requestMemory: requestMemory
         )
 
-        var state = AgentLoopState(conversation: conversation)
+        state = AgentLoopState(conversation: conversation)
 
         if let onProgress {
             await onProgress(.text(String(localized: "orchestrator.thinking")))
@@ -230,6 +247,20 @@ final class ProjectChatOrchestrator {
                 credential: credential,
                 projectIdentifier: projectIdentifier
             )
+
+            // If any files were changed before the error/cancellation,
+            // create a checkpoint and wrap the error so downstream
+            // handlers can still reflect the changes in the UI.
+            if !state.allChangedPaths.isEmpty {
+                createCheckpointAfterAgentLoop(workspaceURL: workspaceURL, userMessage: trimmedMessage)
+                let partial = PartialAgentResult(
+                    changedPaths: state.allChangedPaths,
+                    accumulatedText: state.accumulatedText,
+                    toolActivityLog: state.toolActivityLog
+                )
+                throw AgentInterruptedError(underlyingError: error, partialResult: partial)
+            }
+
             throw error
         }
     }
@@ -305,56 +336,108 @@ final class ProjectChatOrchestrator {
         onProgress: (@MainActor (ToolProgressEvent) -> Void)?
     ) async throws {
         let readOnlyTools: Set<String> = ["read_file", "list_directory", "search_files", "grep_files", "glob_files", "diff_file", "changed_files"]
-        let (parallelCalls, sequentialCalls) = partitionToolCalls(toolCalls, readOnly: readOnlyTools)
+        let maxBudget = configuration.maxAgentIterations * configuration.maxToolCallsPerIteration
 
-        if !parallelCalls.isEmpty {
-            let parallelResults = await executeToolCallsInParallel(
-                parallelCalls,
-                toolProvider: toolProvider,
-                totalToolCalls: &state.totalToolCalls,
-                maxTotalToolCalls: configuration.maxAgentIterations * configuration.maxToolCallsPerIteration,
-                onProgress: onProgress,
-                toolActivityLog: &state.toolActivityLog
-            )
-            for (toolCall, result) in parallelResults {
+        // Process tool calls in order, parallelizing consecutive read-only groups
+        // while preserving the model's intended execution sequence.
+        var i = 0
+        while i < toolCalls.count {
+            try Task.checkCancellation()
+
+            if state.totalToolCalls >= maxBudget {
+                // Budget exhausted — emit synthetic error results for remaining calls
+                // so that every tool_call has a matching toolResult.
+                for remaining in toolCalls[i...] {
+                    state.conversation.append(.toolResult(
+                        callID: remaining.id, name: remaining.name,
+                        content: "Tool call skipped: maximum tool call budget exceeded.",
+                        isError: true
+                    ))
+                }
+                LLMProviderHelpers.debugLog("[Doufu Agent] exceeded maximum total tool calls, skipped \(toolCalls.count - i) calls")
+                break
+            }
+
+            // Collect a consecutive run of read-only calls starting at i
+            var readGroupEnd = i
+            while readGroupEnd < toolCalls.count && readOnlyTools.contains(toolCalls[readGroupEnd].name) {
+                readGroupEnd += 1
+            }
+
+            if readGroupEnd > i {
+                // We have a consecutive read-only group — execute in parallel
+                let group = Array(toolCalls[i..<readGroupEnd])
+                let parallelResults = await executeToolCallsInParallel(
+                    group,
+                    toolProvider: toolProvider,
+                    totalToolCalls: &state.totalToolCalls,
+                    maxTotalToolCalls: maxBudget,
+                    onProgress: onProgress,
+                    toolActivityLog: &state.toolActivityLog
+                )
+                let executedCount = parallelResults.count
+                for (toolCall, result) in parallelResults {
+                    if let onProgress, let event = result.completionEvent {
+                        await onProgress(event)
+                    }
+                    collectToolResult(result, into: &state)
+                    let truncatedOutput = truncateToolResult(result.output)
+                    state.conversation.append(.toolResult(
+                        callID: toolCall.id, name: toolCall.name,
+                        content: truncatedOutput, isError: result.isError
+                    ))
+                }
+                // Emit synthetic results for calls that were truncated by budget
+                if executedCount < group.count {
+                    for skipped in group[executedCount...] {
+                        state.conversation.append(.toolResult(
+                            callID: skipped.id, name: skipped.name,
+                            content: "Tool call skipped: maximum tool call budget exceeded.",
+                            isError: true
+                        ))
+                    }
+                }
+                i = readGroupEnd
+            } else {
+                // Non-read-only call — execute sequentially
+                let toolCall = toolCalls[i]
+
+                state.totalToolCalls += 1
+                if state.totalToolCalls > maxBudget {
+                    // Over budget — emit synthetic result for this and remaining calls
+                    for remaining in toolCalls[i...] {
+                        state.conversation.append(.toolResult(
+                            callID: remaining.id, name: remaining.name,
+                            content: "Tool call skipped: maximum tool call budget exceeded.",
+                            isError: true
+                        ))
+                    }
+                    LLMProviderHelpers.debugLog("[Doufu Agent] exceeded maximum total tool calls, skipped \(toolCalls.count - i) calls")
+                    break
+                }
+
+                let toolDescription = describeToolCall(toolCall)
+                state.toolActivityLog.append(toolDescription)
+
+                let result = await toolProvider.execute(toolCall: toolCall, onProgress: onProgress)
+                try Task.checkCancellation()
+
+                if let onProgress {
+                    if let event = result.completionEvent {
+                        await onProgress(event)
+                    } else {
+                        await onProgress(.text(toolDescription))
+                    }
+                }
+
                 collectToolResult(result, into: &state)
                 let truncatedOutput = truncateToolResult(result.output)
                 state.conversation.append(.toolResult(
                     callID: toolCall.id, name: toolCall.name,
                     content: truncatedOutput, isError: result.isError
                 ))
+                i += 1
             }
-        }
-
-        for toolCall in sequentialCalls {
-            try Task.checkCancellation()
-
-            state.totalToolCalls += 1
-            if state.totalToolCalls > configuration.maxAgentIterations * configuration.maxToolCallsPerIteration {
-                LLMProviderHelpers.debugLog("[Doufu Agent] exceeded maximum total tool calls, stopping")
-                break
-            }
-
-            let toolDescription = describeToolCall(toolCall)
-            state.toolActivityLog.append(toolDescription)
-
-            let result = await toolProvider.execute(toolCall: toolCall, onProgress: onProgress)
-            try Task.checkCancellation()
-
-            if let onProgress {
-                if let event = result.completionEvent {
-                    await onProgress(event)
-                } else {
-                    await onProgress(.text(toolDescription))
-                }
-            }
-
-            collectToolResult(result, into: &state)
-            let truncatedOutput = truncateToolResult(result.output)
-            state.conversation.append(.toolResult(
-                callID: toolCall.id, name: toolCall.name,
-                content: truncatedOutput, isError: result.isError
-            ))
         }
     }
 
@@ -715,24 +798,6 @@ final class ProjectChatOrchestrator {
         return i
     }
 
-    /// Partition tool calls into read-only (safe to parallelize) and mutating (must run sequentially).
-    /// Preserves original ordering within each group.
-    private func partitionToolCalls(
-        _ calls: [AgentToolCall],
-        readOnly: Set<String>
-    ) -> (parallel: [AgentToolCall], sequential: [AgentToolCall]) {
-        var parallel: [AgentToolCall] = []
-        var sequential: [AgentToolCall] = []
-        for call in calls {
-            if readOnly.contains(call.name) {
-                parallel.append(call)
-            } else {
-                sequential.append(call)
-            }
-        }
-        return (parallel, sequential)
-    }
-
     /// Execute read-only tool calls concurrently and return results in the original call order.
     private func executeToolCallsInParallel(
         _ calls: [AgentToolCall],
@@ -742,19 +807,31 @@ final class ProjectChatOrchestrator {
         onProgress: (@MainActor (ToolProgressEvent) -> Void)?,
         toolActivityLog: inout [String]
     ) async -> [(AgentToolCall, AgentToolProvider.ToolExecutionResult)] {
+        // Enforce tool call budget: only execute as many calls as the remaining budget allows.
+        let remaining = max(0, maxTotalToolCalls - totalToolCalls)
+        let effectiveCalls: [AgentToolCall]
+        if calls.count > remaining {
+            LLMProviderHelpers.debugLog("[Doufu Agent] parallel tool calls truncated from \(calls.count) to \(remaining) (budget exhausted)")
+            effectiveCalls = Array(calls.prefix(remaining))
+        } else {
+            effectiveCalls = calls
+        }
+
+        guard !effectiveCalls.isEmpty else { return [] }
+
         // Log activity for all calls first
-        for call in calls {
+        for call in effectiveCalls {
             totalToolCalls += 1
             let description = describeToolCall(call)
             toolActivityLog.append(description)
         }
 
         if let onProgress {
-            if calls.count == 1 {
-                await onProgress(.text(describeToolCall(calls[0])))
+            if effectiveCalls.count == 1 {
+                await onProgress(.text(describeToolCall(effectiveCalls[0])))
             } else {
-                let descriptions = calls.map { describeToolCall($0) }
-                await onProgress(.parallelBatch(count: calls.count, descriptions: descriptions))
+                let descriptions = effectiveCalls.map { describeToolCall($0) }
+                await onProgress(.parallelBatch(count: effectiveCalls.count, descriptions: descriptions))
             }
         }
 
@@ -763,7 +840,7 @@ final class ProjectChatOrchestrator {
             of: (Int, AgentToolCall, AgentToolProvider.ToolExecutionResult).self,
             returning: [(AgentToolCall, AgentToolProvider.ToolExecutionResult)].self
         ) { group in
-            for (index, call) in calls.enumerated() {
+            for (index, call) in effectiveCalls.enumerated() {
                 group.addTask {
                     let result = await toolProvider.execute(toolCall: call)
                     return (index, call, result)

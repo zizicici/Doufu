@@ -22,8 +22,8 @@ protocol ChatTaskCoordinatorDelegate: AnyObject {
     func coordinatorDidReceiveStreamedText(_ accumulatedText: String)
     func coordinatorDidReceiveProgressEvent(_ event: ToolProgressEvent)
     func coordinatorDidCompleteWithResult(_ result: ChatTaskResult)
-    func coordinatorDidCancel()
-    func coordinatorDidFailWithError(_ error: Error)
+    func coordinatorDidCancel(changedPaths: [String])
+    func coordinatorDidFailWithError(_ error: Error, changedPaths: [String])
     /// Called once after every execution finishes (success, cancel, or failure).
     func coordinatorDidFinishExecution()
 }
@@ -126,7 +126,22 @@ final class ChatTaskCoordinator {
                 ProjectActivityStore.shared.taskDidCancel(projectID: sessionID)
                 if !self.didNotifiedCancel {
                     self.didNotifiedCancel = true
-                    self.delegate?.coordinatorDidCancel()
+                    self.delegate?.coordinatorDidCancel(changedPaths: [])
+                }
+            } catch let interrupted as AgentInterruptedError {
+                let partialPaths = interrupted.partialResult.changedPaths
+                ActiveTaskManager.shared.taskDidEnd(sessionID: sessionID)
+                if interrupted.underlyingError is CancellationError || self.didCancelCurrentRequest {
+                    PiPProgressManager.shared.taskDidCancel(sessionID: sessionID)
+                    ProjectActivityStore.shared.taskDidCancel(projectID: sessionID)
+                    if !self.didNotifiedCancel {
+                        self.didNotifiedCancel = true
+                        self.delegate?.coordinatorDidCancel(changedPaths: partialPaths)
+                    }
+                } else {
+                    PiPProgressManager.shared.taskDidFail(sessionID: sessionID, message: interrupted.underlyingError.localizedDescription)
+                    ProjectActivityStore.shared.taskDidFail(projectID: sessionID)
+                    self.delegate?.coordinatorDidFailWithError(interrupted.underlyingError, changedPaths: partialPaths)
                 }
             } catch {
                 ActiveTaskManager.shared.taskDidEnd(sessionID: sessionID)
@@ -135,12 +150,12 @@ final class ChatTaskCoordinator {
                     ProjectActivityStore.shared.taskDidCancel(projectID: sessionID)
                     if !self.didNotifiedCancel {
                         self.didNotifiedCancel = true
-                        self.delegate?.coordinatorDidCancel()
+                        self.delegate?.coordinatorDidCancel(changedPaths: [])
                     }
                 } else {
                     PiPProgressManager.shared.taskDidFail(sessionID: sessionID, message: error.localizedDescription)
                     ProjectActivityStore.shared.taskDidFail(projectID: sessionID)
-                    self.delegate?.coordinatorDidFailWithError(error)
+                    self.delegate?.coordinatorDidFailWithError(error, changedPaths: [])
                 }
             }
         }

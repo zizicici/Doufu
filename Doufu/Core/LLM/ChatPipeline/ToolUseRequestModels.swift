@@ -321,6 +321,7 @@ struct GeminiToolUseResponse: Decodable {
         }
 
         let content: Content?
+        let finishReason: String?
     }
 
     struct UsageMetadata: Decodable {

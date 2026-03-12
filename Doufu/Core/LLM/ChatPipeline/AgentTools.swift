@@ -142,9 +142,9 @@ final class AgentToolProvider {
         case "read_file", "list_directory", "search_files", "grep_files", "glob_files", "validate_code",
              "diff_file", "changed_files":
             return .autoAllow
-        case "write_file", "edit_file", "move_file", "revert_file":
+        case "write_file", "edit_file", "revert_file":
             return .confirmOnce
-        case "delete_file", "web_search", "web_fetch":
+        case "delete_file", "move_file", "web_search", "web_fetch":
             return .alwaysConfirm
         default:
             return .alwaysConfirm
@@ -171,14 +171,14 @@ final class AgentToolProvider {
             return true
         case .confirmOnce:
             if approvedOnceTools.contains(toolName) { return true }
-            guard let handler = confirmationHandler else { return true }
+            guard let handler = confirmationHandler else { return false }
             let approved = await handler.confirmToolAction(
                 toolName: toolName, tier: tier, description: description
             )
             if approved { approvedOnceTools.insert(toolName) }
             return approved
         case .alwaysConfirm:
-            guard let handler = confirmationHandler else { return true }
+            guard let handler = confirmationHandler else { return false }
             return await handler.confirmToolAction(
                 toolName: toolName, tier: tier, description: description
             )
@@ -409,10 +409,10 @@ final class AgentToolProvider {
                     ]),
                     "include": .object([
                         "type": .string("string"),
-                        "description": .string("Optional glob pattern to filter files, e.g. '*.js', '*.{html,css}'. Only files matching this pattern will be searched.")
+                        "description": .string("Optional glob pattern to filter by file name (not path), e.g. '*.js', '*.{html,css}'. Only files whose name matches will be searched.")
                     ])
                 ]),
-                "required": .array([.string("query"), .string("path"), .string("include")]),
+                "required": .array([.string("query")]),
                 "additionalProperties": .bool(false)
             ])
         )
@@ -435,14 +435,14 @@ final class AgentToolProvider {
                     ]),
                     "include": .object([
                         "type": .string("string"),
-                        "description": .string("Optional glob pattern to filter files, e.g. '*.js', '*.{html,css}'. Only files matching this pattern will be searched.")
+                        "description": .string("Optional glob pattern to filter by file name (not path), e.g. '*.js', '*.{html,css}'. Only files whose name matches will be searched.")
                     ]),
                     "case_sensitive": .object([
                         "type": .string("boolean"),
                         "description": .string("Whether the search is case-sensitive. Defaults to false.")
                     ])
                 ]),
-                "required": .array([.string("pattern"), .string("path"), .string("include"), .string("case_sensitive")]),
+                "required": .array([.string("pattern")]),
                 "additionalProperties": .bool(false)
             ])
         )
@@ -464,7 +464,7 @@ final class AgentToolProvider {
                         "description": .string("Optional directory to search in, relative to project root. Defaults to project root.")
                     ])
                 ]),
-                "required": .array([.string("pattern"), .string("path")]),
+                "required": .array([.string("pattern")]),
                 "additionalProperties": .bool(false)
             ])
         )
@@ -504,7 +504,7 @@ final class AgentToolProvider {
                         "description": .string("When true, return the original HTML instead of extracted text. Defaults to false.")
                     ])
                 ]),
-                "required": .array([.string("url"), .string("raw")]),
+                "required": .array([.string("url")]),
                 "additionalProperties": .bool(false)
             ])
         )
@@ -620,7 +620,7 @@ final class AgentToolProvider {
         case "move_file":
             return await executeMoveFile(args: args)
         case "revert_file":
-            return executeRevertFile(args: args)
+            return await executeRevertFile(args: args)
         case "diff_file":
             return executeDiffFile(args: args)
         case "changed_files":
@@ -992,7 +992,7 @@ final class AgentToolProvider {
 
     // MARK: - Revert File
 
-    private func executeRevertFile(args: [String: Any]) -> ToolExecutionResult {
+    private func executeRevertFile(args: [String: Any]) async -> ToolExecutionResult {
         guard let path = args["path"] as? String else {
             return ToolExecutionResult(output: "Missing required parameter: path", isError: true, changedPaths: [])
         }
@@ -1003,25 +1003,39 @@ final class AgentToolProvider {
 
         let normalizedPath = normalizeRelativePath(path)
 
+        let description = String(format: String(localized: "tool.confirm.revert_file"), normalizedPath)
+        let approved = await checkPermission(toolName: "revert_file", description: description)
+        if !approved {
+            return ToolExecutionResult(output: "User denied reverting \(normalizedPath)", isError: true, changedPaths: [])
+        }
+
         do {
             let repo = try ProjectGitService.shared.openRepositoryForRevert(at: workspaceURL)
 
             // Get the file content from HEAD (the checkpoint commit)
-            guard let headContent = try ProjectGitService.shared.fileContentAtHEAD(
+            let headContent = try ProjectGitService.shared.fileContentAtHEAD(
                 repo: repo,
                 relativePath: normalizedPath
-            ) else {
+            )
+
+            if let headContent {
+                // File exists in checkpoint — restore its content
+                try headContent.write(to: resolved, atomically: true, encoding: .utf8)
+            } else if FileManager.default.fileExists(atPath: resolved.path) {
+                // File doesn't exist in checkpoint but exists on disk — delete it
+                try FileManager.default.removeItem(at: resolved)
+            } else {
                 return ToolExecutionResult(
-                    output: "File \(normalizedPath) not found in the last checkpoint. It may be a new file created during this session.",
+                    output: "File \(normalizedPath) not found in the last checkpoint and does not exist on disk.",
                     isError: true,
                     changedPaths: []
                 )
             }
 
-            try headContent.write(to: resolved, atomically: true, encoding: .utf8)
-
             return ToolExecutionResult(
-                output: "Successfully reverted \(normalizedPath) to its checkpoint state.",
+                output: headContent != nil
+                    ? "Successfully reverted \(normalizedPath) to its checkpoint state."
+                    : "Successfully deleted \(normalizedPath) (file did not exist at checkpoint).",
                 isError: false,
                 changedPaths: [normalizedPath],
                 metadata: .fileReverted(path: normalizedPath)
@@ -1041,6 +1055,12 @@ final class AgentToolProvider {
         guard let path = args["path"] as? String else {
             return ToolExecutionResult(output: "Missing required parameter: path", isError: true, changedPaths: [])
         }
+
+        // Validate path stays within workspace sandbox
+        guard resolveSafePath(path) != nil else {
+            return ToolExecutionResult(output: "Invalid path: \(path)", isError: true, changedPaths: [])
+        }
+
         let normalizedPath = normalizeRelativePath(path)
         do {
             guard let diff = try ProjectGitService.shared.diffFileAgainstHEAD(
@@ -1183,13 +1203,14 @@ final class AgentToolProvider {
 
         let loweredQuery = query.lowercased()
         var results: [String] = []
+        var matchedFileCount = 0
         var filesSearched = 0
-        let maxResults = 50
+        let maxMatchedFiles = 50
         let maxFilesToSearch = 500
 
         for case let fileURL as URL in enumerator {
             guard filesSearched < maxFilesToSearch else { break }
-            guard results.count < maxResults else { break }
+            guard matchedFileCount < maxMatchedFiles else { break }
 
             let values = try? fileURL.resourceValues(forKeys: [.isDirectoryKey])
             if values?.isDirectory == true { continue }
@@ -1223,6 +1244,7 @@ final class AgentToolProvider {
             }
 
             if !fileMatches.isEmpty {
+                matchedFileCount += 1
                 results.append(relativePath)
                 for match in fileMatches {
                     results.append("  L\(match.lineNumber): \(match.text)")
@@ -1294,14 +1316,15 @@ final class AgentToolProvider {
         }
 
         var results: [String] = []
+        var matchedFileCount = 0
         var filesSearched = 0
-        let maxResults = 80
+        let maxMatchedFiles = 80
         let maxFilesToSearch = 500
         let maxMatchesPerFile = 8
 
         for case let fileURL as URL in enumerator {
             guard filesSearched < maxFilesToSearch else { break }
-            guard results.count < maxResults else { break }
+            guard matchedFileCount < maxMatchedFiles else { break }
 
             let values = try? fileURL.resourceValues(forKeys: [.isDirectoryKey])
             if values?.isDirectory == true { continue }
@@ -1336,6 +1359,7 @@ final class AgentToolProvider {
             }
 
             if !fileMatches.isEmpty {
+                matchedFileCount += 1
                 results.append(relativePath)
                 for match in fileMatches {
                     results.append("  L\(match.lineNumber): \(match.text)")
@@ -1434,45 +1458,64 @@ final class AgentToolProvider {
     }
 
     private func globPatternToRegex(_ pattern: String) -> NSRegularExpression {
-        var regex = "^"
-        var i = pattern.startIndex
-
-        while i < pattern.endIndex {
-            let ch = pattern[i]
-            switch ch {
-            case "*":
-                let next = pattern.index(after: i)
-                if next < pattern.endIndex && pattern[next] == "*" {
-                    // ** — match any path (including separators)
-                    let afterStars = pattern.index(after: next)
-                    if afterStars < pattern.endIndex && pattern[afterStars] == "/" {
-                        regex += "(.+/)?"
-                        i = pattern.index(after: afterStars)
-                        continue
-                    } else {
-                        regex += ".*"
-                        i = pattern.index(after: next)
-                        continue
-                    }
-                } else {
-                    // * — match anything except /
-                    regex += "[^/]*"
-                }
-            case "?":
-                regex += "[^/]"
-            case ".":
-                regex += "\\."
-            case "(", ")", "+", "^", "$", "|", "{", "}", "[", "]":
-                regex += "\\\(ch)"
-            default:
-                regex += String(ch)
+        // Expand brace groups: "**/*.{html,css}" → ["**/*.html", "**/*.css"]
+        var alternatives: [String] = []
+        if let braceOpen = pattern.range(of: "{"),
+           let braceClose = pattern.range(of: "}", range: braceOpen.upperBound..<pattern.endIndex) {
+            let prefix = String(pattern[pattern.startIndex..<braceOpen.lowerBound])
+            let suffix = String(pattern[braceClose.upperBound..<pattern.endIndex])
+            let inner = String(pattern[braceOpen.upperBound..<braceClose.lowerBound])
+            for part in inner.components(separatedBy: ",") {
+                alternatives.append(prefix + part.trimmingCharacters(in: .whitespaces) + suffix)
             }
-            i = pattern.index(after: i)
+        } else {
+            alternatives = [pattern]
         }
 
-        regex += "$"
+        let regexParts = alternatives.map { alt -> String in
+            var regex = "^"
+            var i = alt.startIndex
 
-        return (try? NSRegularExpression(pattern: regex, options: [.caseInsensitive])) ??
+            while i < alt.endIndex {
+                let ch = alt[i]
+                switch ch {
+                case "*":
+                    let next = alt.index(after: i)
+                    if next < alt.endIndex && alt[next] == "*" {
+                        // ** — match any path (including separators)
+                        let afterStars = alt.index(after: next)
+                        if afterStars < alt.endIndex && alt[afterStars] == "/" {
+                            regex += "(.+/)?"
+                            i = alt.index(after: afterStars)
+                            continue
+                        } else {
+                            regex += ".*"
+                            i = alt.index(after: next)
+                            continue
+                        }
+                    } else {
+                        // * — match anything except /
+                        regex += "[^/]*"
+                    }
+                case "?":
+                    regex += "[^/]"
+                case ".":
+                    regex += "\\."
+                case "(", ")", "+", "^", "$", "|", "[", "]":
+                    regex += "\\\(ch)"
+                default:
+                    regex += String(ch)
+                }
+                i = alt.index(after: i)
+            }
+
+            regex += "$"
+            return regex
+        }
+
+        let combined = regexParts.count == 1 ? regexParts[0] : "(\(regexParts.joined(separator: "|")))"
+
+        return (try? NSRegularExpression(pattern: combined, options: [.caseInsensitive])) ??
             // Fallback: match nothing
             (try! NSRegularExpression(pattern: "^$", options: []))
     }
@@ -1483,6 +1526,12 @@ final class AgentToolProvider {
         guard let query = args["query"] as? String,
               !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return ToolExecutionResult(output: "Missing required parameter: query", isError: true, changedPaths: [])
+        }
+
+        let description = String(format: String(localized: "tool.confirm.web_search"), query)
+        let approved = await checkPermission(toolName: "web_search", description: description)
+        if !approved {
+            return ToolExecutionResult(output: "User denied web search for \"\(query)\"", isError: true, changedPaths: [])
         }
 
         let result = await webToolProvider.webSearch(query: query)
@@ -1523,15 +1572,21 @@ final class AgentToolProvider {
             return ToolExecutionResult(output: "Missing required parameter: url", isError: true, changedPaths: [])
         }
 
+        let description = String(format: String(localized: "tool.confirm.web_fetch"), urlString)
+        let approved = await checkPermission(toolName: "web_fetch", description: description)
+        if !approved {
+            return ToolExecutionResult(output: "User denied fetching \(urlString)", isError: true, changedPaths: [])
+        }
+
         let raw = args["raw"] as? Bool ?? false
         let result = await webToolProvider.webFetch(urlString: urlString, raw: raw)
         switch result {
-        case let .success(content):
+        case let .success(fetchResult):
             return ToolExecutionResult(
-                output: "Content from \(urlString):\n\n\(content)",
+                output: "Content from \(urlString):\n\n\(fetchResult.content)",
                 isError: false,
                 changedPaths: [],
-                metadata: .webResult(url: urlString, statusCode: 200)
+                metadata: .webResult(url: urlString, statusCode: fetchResult.statusCode)
             )
         case let .failure(error):
             return ToolExecutionResult(output: "Web fetch failed: \(error.message)", isError: true, changedPaths: [])
@@ -1716,7 +1771,6 @@ final class AgentToolProvider {
         let normalizeIndent: (String) -> String = { text in
             text.split(separator: "\n", omittingEmptySubsequences: false).map { line in
                 let stripped = line.drop(while: { $0 == " " || $0 == "\t" })
-                let indentLevel = line.count - stripped.count
                 // Normalize: every 1+ whitespace chars at start → that many single spaces
                 // But collapse tab = 4 spaces equivalent
                 let tabExpanded = line.prefix(while: { $0 == " " || $0 == "\t" })

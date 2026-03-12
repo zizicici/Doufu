@@ -35,13 +35,13 @@ final class PromptBuilder {
 
         ## Tool Selection Strategy
         - **Explore**: `list_directory` to see project structure; `glob_files` to find files by name or extension (e.g. `**/*.css`). Use `glob_files`'s `path` parameter to limit search to a subdirectory.
-        - **Search**: `search_files` for simple text search; `grep_files` for regex patterns. Both support a `path` parameter (limit to a subdirectory) and an `include` parameter (e.g. `*.js`, `*.{html,css}`) to filter by file type.
+        - **Search**: `search_files` for simple text search; `grep_files` for regex patterns. Both support an optional `path` parameter (limit to a subdirectory) and an optional `include` parameter (e.g. `*.js`, `*.{html,css}`) to filter by file name.
         - **Read**: `read_file` to see current file content before editing. Call multiple reads in one response when you need several files.
         - **Edit**: `edit_file` for surgical changes. Edits apply sequentially — earlier edits modify the file content before later ones run, so if edit #1 changes a function signature, edit #2's `old_text` should match the *post-edit-#1* content. Provide enough surrounding lines in `old_text` to ensure a unique match; exact whitespace is not required (the tool normalizes indentation and whitespace automatically). If a match is ambiguous, include more context.
         - **Write**: `write_file` for new files or complete rewrites only.
-        - **Revert**: `revert_file` to undo your changes to a single file if something went wrong.
+        - **Revert**: `revert_file` to undo your changes to a single file — restores original content, or deletes the file if it was created during this session.
         - **Review**: `diff_file` to see a unified diff of your changes to a file since the session started; `changed_files` to list all files you have modified in this session.
-        - **Web**: `web_search` to find documentation or examples; `web_fetch` to read a specific page (set `raw: true` to get the original HTML when you need to parse page structure).
+        - **Web**: `web_search` to find documentation or examples; `web_fetch` to read a specific page (optionally set `raw: true` to get the original HTML when you need to parse page structure).
         - **Validate**: `validate_code` to check HTML/JS files for errors by loading them in a hidden browser. Validate once after completing a group of related changes — not after every single edit. If errors are found, fix them and validate again.
 
         ## Doufu Runtime Environment

@@ -257,6 +257,19 @@ final class LocalWebServer: @unchecked Sendable {
             return
         }
 
+        // Only allow http/https — block file://, ftp://, and other schemes
+        // to prevent local file system access via the proxy endpoint.
+        guard let scheme = targetURL.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else {
+            completion(buildResponse(
+                statusCode: 403,
+                statusText: "Forbidden",
+                body: Data("Proxy only supports http and https URLs".utf8),
+                contentType: "text/plain"
+            ))
+            return
+        }
+
         let shouldCache = parseQueryParam(named: "cache", from: request.query) == "1"
 
         // If caching is enabled, try returning from disk cache first
@@ -348,9 +361,9 @@ final class LocalWebServer: @unchecked Sendable {
         var path = request.path.removingPercentEncoding ?? request.path
         if path == "/" { path = "/index.html" }
 
-        // Prevent directory traversal
-        let resolved = projectURL.appendingPathComponent(path).standardizedFileURL
-        let projectPath = projectURL.standardizedFileURL.path
+        // Prevent directory traversal and symlink escape
+        let resolved = projectURL.appendingPathComponent(path).standardizedFileURL.resolvingSymlinksInPath()
+        let projectPath = projectURL.standardizedFileURL.resolvingSymlinksInPath().path
         let resolvedPath = resolved.path
         let prefix = projectPath.hasSuffix("/") ? projectPath : projectPath + "/"
 
