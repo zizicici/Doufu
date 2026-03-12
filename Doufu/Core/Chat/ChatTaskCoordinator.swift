@@ -66,6 +66,7 @@ final class ChatTaskCoordinator {
         didNotifiedCancel = false
 
         let sessionID = request.sessionContext.projectID
+        ProjectActivityStore.shared.taskDidStart(projectID: sessionID)
         ActiveTaskManager.shared.taskDidStart(sessionID: sessionID)
         PiPProgressManager.shared.taskDidStart(sessionID: sessionID, projectName: request.sessionContext.projectName, projectURL: request.sessionContext.projectRootURL)
 
@@ -114,10 +115,15 @@ final class ChatTaskCoordinator {
 
                 ActiveTaskManager.shared.taskDidEnd(sessionID: sessionID)
                 PiPProgressManager.shared.taskDidComplete(sessionID: sessionID)
+                ProjectActivityStore.shared.taskDidComplete(
+                    projectID: sessionID,
+                    hasNewVersion: !result.changedPaths.isEmpty
+                )
                 self.delegate?.coordinatorDidCompleteWithResult(chatResult)
             } catch is CancellationError {
                 ActiveTaskManager.shared.taskDidEnd(sessionID: sessionID)
                 PiPProgressManager.shared.taskDidCancel(sessionID: sessionID)
+                ProjectActivityStore.shared.taskDidCancel(projectID: sessionID)
                 if !self.didNotifiedCancel {
                     self.didNotifiedCancel = true
                     self.delegate?.coordinatorDidCancel()
@@ -126,12 +132,14 @@ final class ChatTaskCoordinator {
                 ActiveTaskManager.shared.taskDidEnd(sessionID: sessionID)
                 if self.didCancelCurrentRequest {
                     PiPProgressManager.shared.taskDidCancel(sessionID: sessionID)
+                    ProjectActivityStore.shared.taskDidCancel(projectID: sessionID)
                     if !self.didNotifiedCancel {
                         self.didNotifiedCancel = true
                         self.delegate?.coordinatorDidCancel()
                     }
                 } else {
                     PiPProgressManager.shared.taskDidFail(sessionID: sessionID, message: error.localizedDescription)
+                    ProjectActivityStore.shared.taskDidFail(projectID: sessionID)
                     self.delegate?.coordinatorDidFailWithError(error)
                 }
             }

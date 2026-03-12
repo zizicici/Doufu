@@ -286,10 +286,6 @@ final class ProjectGitService {
     private func longestCommonSubsequence(_ a: [String], _ b: [String]) -> [String] {
         let m = a.count, n = b.count
         guard m > 0, n > 0 else { return [] }
-        // Space-optimised: only keep two rows
-        var prev = [Int](repeating: 0, count: n + 1)
-        var curr = [Int](repeating: 0, count: n + 1)
-        // First pass: compute lengths
         var dp = [[Int]](repeating: [Int](repeating: 0, count: n + 1), count: m + 1)
         for i in 1...m {
             for j in 1...n {

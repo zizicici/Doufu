@@ -64,7 +64,7 @@ final class AppProjectStore {
     }
 
     @discardableResult
-    func createBlankProject(name: String? = nil) throws -> AppProjectRecord {
+    func createBlankProject(name: String? = nil) async throws -> AppProjectRecord {
         let projectsRootURL = try ensureProjectsRootDirectory()
 
         let projectID = UUID().uuidString.lowercased()
@@ -75,37 +75,42 @@ final class AppProjectStore {
         let projectName = normalizeProjectName(name, createdAt: now)
         let description = String(localized: "project_template.description.iterate_by_chat")
 
-        do {
-            try fileManager.createDirectory(at: appURL, withIntermediateDirectories: true)
-            try fileManager.createDirectory(at: dataURL, withIntermediateDirectories: true)
-            try writeBlankWebsiteFiles(projectID: projectID, name: projectName, now: now, projectURL: appURL)
-            try ProjectGitService.shared.initializeRepository(at: appURL)
+        let fm = fileManager
+        let record = try await Task.detached(priority: .userInitiated) {
+            do {
+                try fm.createDirectory(at: appURL, withIntermediateDirectories: true)
+                try fm.createDirectory(at: dataURL, withIntermediateDirectories: true)
+                try self.writeBlankWebsiteFiles(projectID: projectID, name: projectName, now: now, projectURL: appURL)
+                try ProjectGitService.shared.initializeRepository(at: appURL)
 
-            // Insert project record into DB
-            let nowNanos = DatabaseTimestamp.toNanos(now)
-            let dbProject = DBProject(
-                id: projectID,
-                createdAt: nowNanos,
-                title: projectName,
-                description: description,
-                sortOrder: 0,
-                updatedAt: nowNanos
-            )
-            try dbPool.write { db in
-                try dbProject.insert(db)
+                // Insert project record into DB
+                let nowNanos = DatabaseTimestamp.toNanos(now)
+                let dbProject = DBProject(
+                    id: projectID,
+                    createdAt: nowNanos,
+                    title: projectName,
+                    description: description,
+                    sortOrder: 0,
+                    updatedAt: nowNanos
+                )
+                try self.dbPool.write { db in
+                    try dbProject.insert(db)
+                }
+            } catch {
+                try? fm.removeItem(at: projectURL)
+                throw AppProjectStoreError.projectCreationFailed
             }
-        } catch {
-            try? fileManager.removeItem(at: projectURL)
-            throw AppProjectStoreError.projectCreationFailed
-        }
 
-        return AppProjectRecord(
-            id: projectID,
-            name: projectName,
-            projectURL: projectURL,
-            createdAt: now,
-            updatedAt: now
-        )
+            return AppProjectRecord(
+                id: projectID,
+                name: projectName,
+                projectURL: projectURL,
+                createdAt: now,
+                updatedAt: now
+            )
+        }.value
+
+        return record
     }
 
     func touchProjectUpdatedAt(projectID: String) {

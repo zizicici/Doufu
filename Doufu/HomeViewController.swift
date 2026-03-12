@@ -17,6 +17,7 @@ private struct HomeProjectItem: Hashable {
     let projectURL: URL
     let previewImagePath: String?
     let sortOrder: Int
+    let activityState: ProjectActivityStore.State
 }
 
 final class HomeViewController: UIViewController {
@@ -31,10 +32,11 @@ final class HomeViewController: UIViewController {
 
     private var allProjects: [HomeProjectItem] = []
     private var filteredProjects: [HomeProjectItem] = []
-    private let projectStore = AppProjectStore.shared
+    private let projectActivityStore = ProjectActivityStore.shared
     private let coordinator = ProjectLifecycleCoordinator.shared
     private let projectTransitionDelegate = ProjectOpenTransitionDelegate()
     private var selectedCellIndexPath: IndexPath?
+    private var projectActivityObserver: NSObjectProtocol?
 
     private lazy var collectionView: UICollectionView = {
         let layout = UICollectionViewFlowLayout()
@@ -89,7 +91,16 @@ final class HomeViewController: UIViewController {
         super.viewDidLoad()
         configureNavigation()
         configureViewHierarchy()
+        projectActivityObserver = projectActivityStore.addObserver { [weak self] _ in
+            self?.reloadProjects()
+        }
         reloadProjects()
+    }
+
+    deinit {
+        if let projectActivityObserver {
+            NotificationCenter.default.removeObserver(projectActivityObserver)
+        }
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -134,12 +145,14 @@ final class HomeViewController: UIViewController {
     }
 
     private func didTapAddButton() {
-        do {
-            let project = try coordinator.createProject()
-            reloadProjects()
-            openProject(project, isNewlyCreated: true, cellIndexPath: nil)
-        } catch {
-            showPlaceholderAlert(title: String(localized: "home.alert.create_failed.title"), message: error.localizedDescription)
+        Task {
+            do {
+                let project = try await coordinator.createProject()
+                reloadProjects()
+                openProject(project, isNewlyCreated: true, cellIndexPath: nil)
+            } catch {
+                showPlaceholderAlert(title: String(localized: "home.alert.create_failed.title"), message: error.localizedDescription)
+            }
         }
     }
 
@@ -220,7 +233,8 @@ final class HomeViewController: UIViewController {
                     updatedAt: updatedAt,
                     projectURL: projectURL,
                     previewImagePath: previewImagePath,
-                    sortOrder: dbProject.sortOrder
+                    sortOrder: dbProject.sortOrder,
+                    activityState: projectActivityStore.state(for: dbProject.id)
                 )
             )
         }
@@ -355,6 +369,8 @@ final class HomeViewController: UIViewController {
     }
 
     private func openProject(_ project: AppProjectRecord, isNewlyCreated: Bool, cellIndexPath: IndexPath? = nil) {
+        projectActivityStore.markProjectViewed(projectID: project.id)
+
         // Compute origin frame from the tapped cell
         if let indexPath = cellIndexPath,
            let cell = collectionView.cellForItem(at: indexPath) {
@@ -544,6 +560,18 @@ private final class ProjectCardCell: UICollectionViewCell {
         return imageView
     }()
 
+    private let activityBadgeLabel: InsetLabel = {
+        let label = InsetLabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.font = .systemFont(ofSize: 10, weight: .bold)
+        label.textAlignment = .center
+        label.layer.cornerRadius = 9
+        label.layer.cornerCurve = .continuous
+        label.clipsToBounds = true
+        label.isHidden = true
+        return label
+    }()
+
     private let titleLabel: UILabel = {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
@@ -568,6 +596,8 @@ private final class ProjectCardCell: UICollectionViewCell {
         super.prepareForReuse()
         previewImageView.image = nil
         placeholderIconView.isHidden = false
+        activityBadgeLabel.isHidden = true
+        activityBadgeLabel.text = nil
     }
 
     func configure(project: HomeProjectItem) {
@@ -579,6 +609,21 @@ private final class ProjectCardCell: UICollectionViewCell {
         } else {
             previewImageView.image = nil
             placeholderIconView.isHidden = false
+        }
+
+        switch project.activityState {
+        case .idle:
+            activityBadgeLabel.isHidden = true
+        case .building:
+            activityBadgeLabel.text = String(localized: "home.project.activity.building")
+            activityBadgeLabel.backgroundColor = UIColor.systemOrange.withAlphaComponent(0.96)
+            activityBadgeLabel.textColor = .white
+            activityBadgeLabel.isHidden = false
+        case .newVersionAvailable:
+            activityBadgeLabel.text = String(localized: "home.project.activity.new_version")
+            activityBadgeLabel.backgroundColor = UIColor.systemGreen.withAlphaComponent(0.96)
+            activityBadgeLabel.textColor = .white
+            activityBadgeLabel.isHidden = false
         }
     }
 
@@ -597,6 +642,7 @@ private final class ProjectCardCell: UICollectionViewCell {
         previewShadowView.addSubview(previewContainer)
         previewContainer.addSubview(previewImageView)
         previewContainer.addSubview(placeholderIconView)
+        previewContainer.addSubview(activityBadgeLabel)
         contentView.addSubview(titleLabel)
     }
 
@@ -625,11 +671,30 @@ private final class ProjectCardCell: UICollectionViewCell {
             placeholderIconView.widthAnchor.constraint(equalToConstant: 24),
             placeholderIconView.heightAnchor.constraint(equalToConstant: 24),
 
+            activityBadgeLabel.topAnchor.constraint(equalTo: previewContainer.topAnchor, constant: 8),
+            activityBadgeLabel.trailingAnchor.constraint(equalTo: previewContainer.trailingAnchor, constant: -8),
+
             titleLabel.topAnchor.constraint(equalTo: previewShadowView.bottomAnchor, constant: 8),
             titleLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 8),
             titleLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -8),
             titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -8)
         ])
+    }
+}
+
+private final class InsetLabel: UILabel {
+    var contentInsets = UIEdgeInsets(top: 4, left: 8, bottom: 4, right: 8)
+
+    override var intrinsicContentSize: CGSize {
+        let baseSize = super.intrinsicContentSize
+        return CGSize(
+            width: baseSize.width + contentInsets.left + contentInsets.right,
+            height: baseSize.height + contentInsets.top + contentInsets.bottom
+        )
+    }
+
+    override func drawText(in rect: CGRect) {
+        super.drawText(in: rect.inset(by: contentInsets))
     }
 }
 

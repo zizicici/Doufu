@@ -8,7 +8,7 @@
 import UIKit
 import WebKit
 
-class WK2WebView: WKWebView {
+class ProjectWebView: WKWebView {
     /// Called before every reload so the caller can refresh injected user scripts.
     var onBeforeReload: (() -> Void)?
 
@@ -43,6 +43,7 @@ final class ProjectWorkspaceViewController: UIViewController {
     private(set) var project: AppProjectRecord
     private let isNewlyCreated: Bool
     private let projectStore = AppProjectStore.shared
+    private let projectActivityStore = ProjectActivityStore.shared
     private let coordinator = ProjectLifecycleCoordinator.shared
     var onDismissed: (() -> Void)?
     private var hasProjectBeenModified = false
@@ -87,7 +88,7 @@ final class ProjectWorkspaceViewController: UIViewController {
         )
         configuration.userContentController.addUserScript(script)
         configuration.userContentController.add(jsErrorMessageProxy, name: jsErrorHandlerName)
-        let view = WK2WebView(frame: .zero, configuration: configuration)
+        let view = ProjectWebView(frame: .zero, configuration: configuration)
         view.translatesAutoresizingMaskIntoConstraints = false
         view.navigationDelegate = self
         view.backgroundColor = .systemBackground
@@ -243,6 +244,7 @@ final class ProjectWorkspaceViewController: UIViewController {
         installWebLoadingCover()
         configureFloatingPanel()
         configureInteractiveDismiss()
+        projectActivityStore.markProjectViewed(projectID: project.id)
         AppProjectStore.shared.ensureProjectMemoryDocument(at: project.appURL, projectName: projectName)
         loadProjectPage()
     }
@@ -495,13 +497,8 @@ final class ProjectWorkspaceViewController: UIViewController {
     }
 
     private func updateCollapsedHandleAppearance(for side: PanelSide) {
-        if side == .left {
-            collapsedHandleIndicator.backgroundColor = UIColor.tertiaryLabel
-            collapsedHandleIndicator.transform = .identity
-        } else {
-            collapsedHandleIndicator.backgroundColor = UIColor.tertiaryLabel
-            collapsedHandleIndicator.transform = .identity
-        }
+        collapsedHandleIndicator.backgroundColor = UIColor.tertiaryLabel
+        collapsedHandleIndicator.transform = .identity
     }
 
     private func expandPanel(
@@ -846,6 +843,7 @@ final class ProjectWorkspaceViewController: UIViewController {
         session.onProjectFilesUpdated = { [weak self] in
             guard let self else { return }
             self.hasProjectBeenModified = true
+            self.projectActivityStore.markProjectViewed(projectID: self.project.id)
             self.projectStore.touchProjectUpdatedAt(projectID: self.project.id)
             self.webView.reload()
         }
@@ -864,6 +862,7 @@ final class ProjectWorkspaceViewController: UIViewController {
             sheet.detents = [.medium(), .large()]
             sheet.prefersGrabberVisible = true
         }
+        navigationController.presentationController?.delegate = self
         chatNavigationController = navigationController
         present(navigationController, animated: true)
     }
@@ -1083,6 +1082,9 @@ final class ProjectWorkspaceViewController: UIViewController {
 
 extension ProjectWorkspaceViewController: UIAdaptivePresentationControllerDelegate {
     func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
+        if presentationController.presentedViewController === chatNavigationController {
+            chatNavigationController = nil
+        }
     }
 }
 

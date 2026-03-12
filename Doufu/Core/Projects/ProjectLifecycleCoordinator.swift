@@ -36,8 +36,8 @@ final class ProjectLifecycleCoordinator {
     // MARK: - Create
 
     @discardableResult
-    func createProject(name: String? = nil) throws -> AppProjectRecord {
-        try projectStore.createBlankProject(name: name)
+    func createProject(name: String? = nil) async throws -> AppProjectRecord {
+        try await projectStore.createBlankProject(name: name)
     }
 
     // MARK: - Delete
@@ -70,6 +70,7 @@ final class ProjectLifecycleCoordinator {
         // Success: clean up the session.
         sessionManager.existingSession(projectID: projectID)?.onProjectFilesUpdated = nil
         sessionManager.endSession(projectID: projectID)
+        ProjectActivityStore.shared.clear(projectID: projectID)
     }
 
     // MARK: - Close

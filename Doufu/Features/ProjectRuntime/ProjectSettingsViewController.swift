@@ -568,7 +568,7 @@ private final class ProjectCheckpointsViewController: UITableViewController {
 
     private lazy var dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.locale = Locale.autoupdatingCurrent
         formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
         return formatter
     }()
