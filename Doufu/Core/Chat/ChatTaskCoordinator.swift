@@ -19,7 +19,7 @@ struct ChatTaskResult {
 /// All methods are called on the main actor.
 @MainActor
 protocol ChatTaskCoordinatorDelegate: AnyObject {
-    func coordinatorDidReceiveStreamedText(_ chunk: String)
+    func coordinatorDidReceiveStreamedText(_ accumulatedText: String)
     func coordinatorDidReceiveProgressEvent(_ event: ToolProgressEvent)
     func coordinatorDidCompleteWithResult(_ result: ChatTaskResult)
     func coordinatorDidCancel()
@@ -69,8 +69,10 @@ final class ChatTaskCoordinator {
         ActiveTaskManager.shared.taskDidStart(sessionID: sessionID)
         PiPProgressManager.shared.taskDidStart(sessionID: sessionID, projectName: request.sessionContext.projectName, projectURL: request.sessionContext.projectRootURL)
 
-        task = Task { [weak self] in
-            guard let self else { return }
+        // Strong self capture: the coordinator must stay alive until the
+        // Task completes so that ActiveTaskManager/PiPProgressManager always
+        // receive their balancing taskDidEnd call.
+        task = Task {
             defer {
                 self.task = nil
                 self.didCancelCurrentRequest = false
@@ -91,8 +93,8 @@ final class ChatTaskCoordinator {
                     permissionMode: request.permissionMode,
                     validationServerBaseURL: request.validationServerBaseURL,
                     validationBridge: request.validationBridge,
-                    onStreamedText: { [weak self] chunk in
-                        self?.delegate?.coordinatorDidReceiveStreamedText(chunk)
+                    onStreamedText: { [weak self] text in
+                        self?.delegate?.coordinatorDidReceiveStreamedText(text)
                     },
                     onProgress: { [weak self] event in
                         guard let self else { return }

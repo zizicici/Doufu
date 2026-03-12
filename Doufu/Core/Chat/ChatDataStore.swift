@@ -59,35 +59,24 @@ final class ChatDataStore {
     }
 
     private func createFreshIndex(projectID: String) throws -> ProjectChatThreadIndex {
-        let now = Date()
         let threadID = makeThreadID()
-        let thread = ProjectChatThreadRecord(
-            id: threadID,
-            title: String(localized: "thread.default_title"),
-            createdAt: now,
-            updatedAt: now,
-            currentVersion: 0
-        )
+        let title = String(localized: "thread.default_title")
 
         try dbPool.write { db in
             guard try projectExists(projectID: projectID, in: db) else {
                 throw Error.missingProject(projectID: projectID)
             }
-
-            let dbThread = DBChatThread.from(thread, projectID: projectID, isCurrent: true, sortOrder: 0)
-            try dbThread.insert(db)
-
-            // Create default assistant
-            let assistant = DBAssistant(
-                id: UUID().uuidString.lowercased(),
-                threadID: threadID,
-                label: "Assistant",
-                sortOrder: 0,
-                createdAt: DatabaseTimestamp.toNanos(now)
+            try insertThreadWithAssistant(
+                db: db, threadID: threadID, projectID: projectID,
+                title: title, isCurrent: true, sortOrder: 0
             )
-            try assistant.insert(db)
         }
 
+        let now = Date()
+        let thread = ProjectChatThreadRecord(
+            id: threadID, title: title,
+            createdAt: now, updatedAt: now, currentVersion: 0
+        )
         return ProjectChatThreadIndex(currentThreadID: thread.id, threads: [thread])
     }
 
@@ -109,14 +98,6 @@ final class ChatDataStore {
                 fallback: String(format: String(localized: "thread.default_title_format"), nextCount)
             )
 
-            let record = ProjectChatThreadRecord(
-                id: threadID,
-                title: resolvedTitle,
-                createdAt: now,
-                updatedAt: now,
-                currentVersion: 0
-            )
-
             if makeCurrent {
                 try db.execute(
                     sql: "UPDATE thread SET is_current = 0 WHERE project_id = ?",
@@ -124,19 +105,15 @@ final class ChatDataStore {
                 )
             }
 
-            let dbThread = DBChatThread.from(record, projectID: projectID, isCurrent: makeCurrent, sortOrder: nextCount - 1)
-            try dbThread.insert(db)
-
-            let assistant = DBAssistant(
-                id: UUID().uuidString.lowercased(),
-                threadID: threadID,
-                label: "Assistant",
-                sortOrder: 0,
-                createdAt: DatabaseTimestamp.toNanos(now)
+            try insertThreadWithAssistant(
+                db: db, threadID: threadID, projectID: projectID,
+                title: resolvedTitle, isCurrent: makeCurrent, sortOrder: nextCount - 1
             )
-            try assistant.insert(db)
 
-            return record
+            return ProjectChatThreadRecord(
+                id: threadID, title: resolvedTitle,
+                createdAt: now, updatedAt: now, currentVersion: 0
+            )
         }
 
         return thread
@@ -195,28 +172,11 @@ final class ChatDataStore {
                 .fetchCount(db)
 
             if count == 0 {
-                let now = Date()
-                let newID = makeThreadID()
-                let newThread = DBChatThread(
-                    id: newID,
-                    projectID: projectID,
+                try insertThreadWithAssistant(
+                    db: db, threadID: makeThreadID(), projectID: projectID,
                     title: String(localized: "thread.default_title"),
-                    isCurrent: true,
-                    sortOrder: 0,
-                    currentVersion: 0,
-                    createdAt: DatabaseTimestamp.toNanos(now),
-                    updatedAt: DatabaseTimestamp.toNanos(now)
+                    isCurrent: true, sortOrder: 0
                 )
-                try newThread.insert(db)
-
-                let assistant = DBAssistant(
-                    id: UUID().uuidString.lowercased(),
-                    threadID: newID,
-                    label: "Assistant",
-                    sortOrder: 0,
-                    createdAt: DatabaseTimestamp.toNanos(now)
-                )
-                try assistant.insert(db)
             }
         }
     }
@@ -315,6 +275,90 @@ final class ChatDataStore {
         }
     }
 
+    /// Incremental variant of `saveMessages` that avoids a full DELETE + INSERT.
+    ///
+    /// - `unchangedPrefixCount`: number of messages from the start whose DB
+    ///   rows are already up-to-date and can be skipped entirely.
+    ///
+    /// Messages from `unchangedPrefixCount` to `existingRowCount` are UPDATEd
+    /// in-place; messages beyond `existingRowCount` are INSERTed. Any surplus
+    /// DB rows (if the list shrank) are DELETEd.
+    func saveMessagesIncrementally(
+        projectID: String,
+        threadID: String,
+        messages: [ProjectChatPersistedMessage],
+        unchangedPrefixCount: Int
+    ) throws {
+        do {
+            try dbPool.write { db in
+                let assistantID = try DBAssistant
+                    .filter(DBAssistant.Columns.threadID == threadID)
+                    .order(DBAssistant.Columns.sortOrder)
+                    .fetchOne(db)?.id
+
+                // Fetch existing row IDs ordered by sort_order so we can
+                // UPDATE in-place instead of DELETE + re-INSERT.
+                let existingRowIDs: [Int64] = try Int64.fetchAll(db, sql: """
+                    SELECT id FROM message
+                    WHERE thread_id = ?
+                    ORDER BY sort_order
+                    """, arguments: [threadID])
+
+                let existingCount = existingRowIDs.count
+                let newCount = messages.count
+
+                // 1. DELETE surplus rows if the list shrank.
+                if existingCount > newCount {
+                    let idsToDelete = Array(existingRowIDs[newCount...])
+                    try DBChatMessage
+                        .filter(idsToDelete.contains(Column("id")))
+                        .deleteAll(db)
+                }
+
+                // 2. UPDATE rows in [unchangedPrefixCount, min(existingCount, newCount)).
+                let updateEnd = min(existingCount, newCount)
+                let clampedPrefix = max(0, min(unchangedPrefixCount, updateEnd))
+                for i in clampedPrefix..<updateEnd {
+                    let rowID = existingRowIDs[i]
+                    let msg = messages[i]
+                    let dbMsg = DBChatMessage.from(msg, threadID: threadID, assistantID: assistantID, sortOrder: i)
+                    try db.execute(sql: """
+                        UPDATE message SET
+                            assistant_id = ?,
+                            message_type = ?,
+                            content = ?,
+                            sort_order = ?,
+                            created_at = ?,
+                            token_usage_id = ?,
+                            summary = ?,
+                            started_at = ?,
+                            finished_at = ?
+                        WHERE id = ?
+                        """, arguments: [
+                            dbMsg.assistantID,
+                            dbMsg.messageType,
+                            dbMsg.content,
+                            dbMsg.sortOrder,
+                            dbMsg.createdAt,
+                            dbMsg.tokenUsageID,
+                            dbMsg.summary,
+                            dbMsg.startedAt,
+                            dbMsg.finishedAt,
+                            rowID
+                        ])
+                }
+
+                // 3. INSERT new rows beyond the existing count.
+                for i in existingCount..<newCount {
+                    let dbMsg = DBChatMessage.from(messages[i], threadID: threadID, assistantID: assistantID, sortOrder: i)
+                    try dbMsg.insert(db)
+                }
+            }
+        } catch {
+            throw Error.messageSaveFailed(threadID: threadID, underlying: error)
+        }
+    }
+
     // MARK: - Session Memory
 
     func loadSessionMemory(projectID: String, threadID: String) throws -> SessionMemory? {
@@ -354,6 +398,40 @@ final class ChatDataStore {
     }
 
     // MARK: - Private Helpers
+
+    /// Insert a new thread row and its default assistant in a single
+    /// write transaction.  Consolidates logic previously duplicated
+    /// across `createFreshIndex`, `createThread`, and `deleteThread`.
+    private func insertThreadWithAssistant(
+        db: Database,
+        threadID: String,
+        projectID: String,
+        title: String,
+        isCurrent: Bool,
+        sortOrder: Int
+    ) throws {
+        let now = Date()
+        let dbThread = DBChatThread(
+            id: threadID,
+            projectID: projectID,
+            title: title,
+            isCurrent: isCurrent,
+            sortOrder: sortOrder,
+            currentVersion: 0,
+            createdAt: DatabaseTimestamp.toNanos(now),
+            updatedAt: DatabaseTimestamp.toNanos(now)
+        )
+        try dbThread.insert(db)
+
+        let assistant = DBAssistant(
+            id: UUID().uuidString.lowercased(),
+            threadID: threadID,
+            label: "Assistant",
+            sortOrder: 0,
+            createdAt: DatabaseTimestamp.toNanos(now)
+        )
+        try assistant.insert(db)
+    }
 
     private func makeThreadID() -> String {
         UUID().uuidString.lowercased()

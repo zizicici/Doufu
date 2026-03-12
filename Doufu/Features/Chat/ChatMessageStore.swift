@@ -48,14 +48,14 @@ final class ChatMessageStore {
 
     private var didAppendCancelMessage = false
     private var lastProgressPhaseText: String?
-    private var progressDebounceWorkItem: DispatchWorkItem?
-    private var streamRefreshWorkItem: DispatchWorkItem?
+    private var progressDebounceTask: Task<Void, Never>?
+    private var streamRefreshTask: Task<Void, Never>?
 
     init() {}
 
     // MARK: - Request Lifecycle
 
-    /// Called by the VC right before `taskCoordinator.execute(...)`.
+    /// Called by `ChatSession.sendMessage(_:...)` before execution starts.
     func beginRequest(startedAt: Date) {
         requestStartedAt = startedAt
         didAppendCancelMessage = false
@@ -76,26 +76,26 @@ final class ChatMessageStore {
         guard normalized != lastProgressPhaseText else { return }
 
         // Cancel any pending debounced transition.
-        progressDebounceWorkItem?.cancel()
+        progressDebounceTask?.cancel()
 
-        let workItem = DispatchWorkItem { [weak self] in
-            guard let self else { return }
+        // During the 50ms window, the OLD live cell stays live — no gap.
+        progressDebounceTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
+            guard !Task.isCancelled, let self else { return }
             self.transitionToProgress(text: normalized)
         }
-        progressDebounceWorkItem = workItem
-        // During the 50ms window, the OLD live cell stays live — no gap.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: workItem)
     }
 
-    /// Receive a chunk of streamed text from the LLM.
-    func receiveStreamedText(_ chunk: String) {
-        let trimmed = chunk.trimmingCharacters(in: .whitespacesAndNewlines)
+    /// Receive the latest accumulated text from the LLM streaming response.
+    /// The value is the full response text so far (not a delta).
+    func receiveStreamedText(_ accumulatedText: String) {
+        let trimmed = accumulatedText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
         // Cancel any pending progress transition — streaming takes priority
         // when they race (the LLM started outputting text).
-        progressDebounceWorkItem?.cancel()
-        progressDebounceWorkItem = nil
+        progressDebounceTask?.cancel()
+        progressDebounceTask = nil
 
         switch flowState {
         case .idle:
@@ -300,8 +300,8 @@ final class ChatMessageStore {
 
         // Cancel any pending stream refresh from a previous streaming phase
         // to avoid stale index updates after the state transition.
-        streamRefreshWorkItem?.cancel()
-        streamRefreshWorkItem = nil
+        streamRefreshTask?.cancel()
+        streamRefreshTask = nil
 
         // Finalize whatever is currently live.
         finalizeActiveFlowCell(finishedAt: now)
@@ -359,23 +359,22 @@ final class ChatMessageStore {
     }
 
     private func cancelPendingWorkItems() {
-        progressDebounceWorkItem?.cancel()
-        progressDebounceWorkItem = nil
-        streamRefreshWorkItem?.cancel()
-        streamRefreshWorkItem = nil
+        progressDebounceTask?.cancel()
+        progressDebounceTask = nil
+        streamRefreshTask?.cancel()
+        streamRefreshTask = nil
     }
 
     /// Coalesces rapid streaming updates into a single cell refresh (100ms window).
     private func scheduleStreamedCellRefresh(at index: Int) {
-        streamRefreshWorkItem?.cancel()
-        let workItem = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            delegate?.messageStoreDidUpdateStreamingText(at: index, text: messages[index].text)
-            delegate?.messageStoreDidRequestBatchUpdate()
-            delegate?.messageStoreDidRequestScroll(force: false)
+        streamRefreshTask?.cancel()
+        streamRefreshTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
+            guard !Task.isCancelled, let self else { return }
+            self.delegate?.messageStoreDidUpdateStreamingText(at: index, text: self.messages[index].text)
+            self.delegate?.messageStoreDidRequestBatchUpdate()
+            self.delegate?.messageStoreDidRequestScroll(force: false)
         }
-        streamRefreshWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: workItem)
     }
 
     // MARK: - Tool Progress Formatting

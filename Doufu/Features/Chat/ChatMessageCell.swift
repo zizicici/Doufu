@@ -84,11 +84,16 @@ final class ChatMessageCell: UITableViewCell {
         leadingConstraint = bubbleContainer.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 10)
         trailingConstraint = bubbleContainer.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -10)
 
+        // Only activate the leading constraint initially — applyStyle
+        // toggles between leading (assistant/system) and trailing (user).
+        // Activating both simultaneously causes a constraint conflict with
+        // the max-width multiplier constraint.
+        trailingConstraint.isActive = false
+
         NSLayoutConstraint.activate([
             bubbleContainer.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 4),
             bubbleContainer.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -4),
             leadingConstraint,
-            trailingConstraint,
             bubbleContainer.widthAnchor.constraint(lessThanOrEqualTo: contentView.widthAnchor, multiplier: 0.92),
 
             messageTextView.topAnchor.constraint(equalTo: bubbleContainer.topAnchor, constant: 10),

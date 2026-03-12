@@ -1,20 +1,23 @@
 //
-//  ChatThreadSessionManager.swift
+//  ChatThreadManager.swift
 //  Doufu
 //
 
 import Foundation
 
 @MainActor
-protocol ChatThreadSessionManagerDelegate: AnyObject {
-    func threadSessionDidSwitchThread()
-    func threadSessionDidEncounterError(_ error: Error)
+protocol ChatThreadManagerDelegate: AnyObject {
+    func threadManagerDidSwitchThread()
+    func threadManagerDidEncounterError(_ error: Error)
+    /// Called before persisting current state (e.g. thread switch) so the
+    /// session can flush any pending debounced persistence.
+    func threadManagerWillPersistCurrentState()
 }
 
 @MainActor
-final class ChatThreadSessionManager {
+final class ChatThreadManager {
 
-    weak var delegate: ChatThreadSessionManagerDelegate?
+    weak var delegate: ChatThreadManagerDelegate?
 
     private(set) var threadIndex: ProjectChatThreadIndex?
     private(set) var currentThread: ProjectChatThreadRecord?
@@ -51,7 +54,7 @@ final class ChatThreadSessionManager {
         do {
             try switchToThread(threadID: threadID)
         } catch {
-            delegate?.threadSessionDidEncounterError(error)
+            delegate?.threadManagerDidEncounterError(error)
         }
     }
 
@@ -66,7 +69,7 @@ final class ChatThreadSessionManager {
             }
             try switchToThread(threadID: currentThreadID)
         } catch {
-            delegate?.threadSessionDidEncounterError(error)
+            delegate?.threadManagerDidEncounterError(error)
         }
     }
 
@@ -81,7 +84,7 @@ final class ChatThreadSessionManager {
         modelSelection.reloadModelSelectionContext(triggerModelRefresh: false)
 
         messageStore.replaceMessages(result.messages)
-        delegate?.threadSessionDidSwitchThread()
+        delegate?.threadManagerDidSwitchThread()
     }
 
     // MARK: - Session Memory
@@ -91,7 +94,7 @@ final class ChatThreadSessionManager {
         do {
             try persistSessionMemory()
         } catch {
-            delegate?.threadSessionDidEncounterError(error)
+            delegate?.threadManagerDidEncounterError(error)
         }
     }
 
@@ -108,7 +111,7 @@ final class ChatThreadSessionManager {
                 }
             }
         } catch {
-            delegate?.threadSessionDidEncounterError(error)
+            delegate?.threadManagerDidEncounterError(error)
         }
     }
 
@@ -131,7 +134,7 @@ final class ChatThreadSessionManager {
                 currentThread = newIndex.threads.first(where: { $0.id == currentThreadID })
             }
         } catch {
-            delegate?.threadSessionDidEncounterError(error)
+            delegate?.threadManagerDidEncounterError(error)
         }
     }
 
@@ -139,6 +142,9 @@ final class ChatThreadSessionManager {
 
     private func persistCurrentState() throws {
         guard let currentThread else { return }
+        // Flush any debounced persistence from the session first, then
+        // perform a full write to guarantee nothing is lost.
+        delegate?.threadManagerWillPersistCurrentState()
         try dataService.persistMessages(messageStore.messages, threadID: currentThread.id)
         modelSelection.persistCurrentModelSelection()
         try dataService.persistSessionMemory(sessionMemory, threadID: currentThread.id)

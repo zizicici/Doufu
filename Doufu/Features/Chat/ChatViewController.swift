@@ -32,7 +32,7 @@ final class ChatViewController: UIViewController {
 
     private var messageStore: ChatMessageStore { session.messageStore }
     private var modelSelection: ChatModelSelectionManager { session.modelSelection }
-    private var threadSession: ChatThreadSessionManager { session.threadSession }
+    private var threadManager: ChatThreadManager { session.threadManager }
     private var taskCoordinator: ChatTaskCoordinator { session.taskCoordinator }
     private var project: AppProjectRecord { session.project }
     private var projectIdentifier: String { session.projectID }
@@ -140,8 +140,7 @@ final class ChatViewController: UIViewController {
         title = nil
         view.backgroundColor = .doufuBackground
 
-        session.observationDelegate = self
-        session.activeConfirmationHandler = self
+        session.setUIObserver(self)
 
         configureNavigation()
         configureLayout()
@@ -168,8 +167,10 @@ final class ChatViewController: UIViewController {
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        session.observationDelegate = self
-        session.activeConfirmationHandler = self
+        session.setUIObserver(self)
+
+        // Re-read permission mode in case it was changed from settings.
+        toolPermissionMode = AppProjectStore.shared.loadToolPermissionMode(projectURL: project.projectURL)
 
         // Sync tableView with messageStore in case messages were added
         // while the VC was dismissed (e.g., execution continued in background).
@@ -195,8 +196,7 @@ final class ChatViewController: UIViewController {
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
         if view.window == nil {
-            session.observationDelegate = nil
-            session.activeConfirmationHandler = nil
+            session.setUIObserver(nil)
             initialLoadTask?.cancel()
             initialLoadTask = nil
             appearReloadTask?.cancel()
@@ -240,12 +240,12 @@ final class ChatViewController: UIViewController {
 
     func refreshNavigationItems() {
         let isExecuting = taskCoordinator.isExecuting
-        threadBarButtonItem.title = threadSession.currentThread?.title ?? String(localized: "chat.thread.button_title")
+        threadBarButtonItem.title = threadManager.currentThread?.title ?? String(localized: "chat.thread.button_title")
         threadBarButtonItem.menu = isExecuting ? nil : ChatMenuBuilder.threadMenu(
-            threads: threadSession.threadIndex?.threads ?? [],
-            currentThreadID: threadSession.currentThread?.id,
-            onSwitch: { [weak self] threadID in self?.threadSession.handleSwitchThread(threadID: threadID) },
-            onCreate: { [weak self] in self?.threadSession.createAndSwitchThread() },
+            threads: threadManager.threadIndex?.threads ?? [],
+            currentThreadID: threadManager.currentThread?.id,
+            onSwitch: { [weak self] threadID in self?.threadManager.handleSwitchThread(threadID: threadID) },
+            onCreate: { [weak self] in self?.threadManager.createAndSwitchThread() },
             onManage: { [weak self] in self?.presentThreadManagement() }
         )
         threadBarButtonItem.isEnabled = !isExecuting
@@ -339,7 +339,7 @@ final class ChatViewController: UIViewController {
         let vc = ThreadManagementViewController(projectID: project.id)
         vc.onChanged = { [weak self] in
             guard let self else { return }
-            threadSession.reloadIndex()
+            threadManager.reloadIndex()
             refreshNavigationItems()
         }
         let nav = UINavigationController(rootViewController: vc)
@@ -370,7 +370,7 @@ final class ChatViewController: UIViewController {
 
     private func refreshSendButton() {
         let hasText = !currentInputText().isEmpty
-        let hasThread = threadSession.currentThread != nil
+        let hasThread = threadManager.currentThread != nil
         if taskCoordinator.isExecuting {
             sendButton.isEnabled = true
             var configuration = sendButton.configuration ?? UIButton.Configuration.filled()
@@ -499,6 +499,14 @@ final class ChatViewController: UIViewController {
         )
         settingsController.onProjectUpdated = { [weak self] updatedProjectName in
             guard let self else { return }
+            let updatedProject = AppProjectRecord(
+                id: self.session.project.id,
+                name: updatedProjectName,
+                projectURL: self.session.project.projectURL,
+                createdAt: self.session.project.createdAt,
+                updatedAt: Date()
+            )
+            self.session.updateProject(updatedProject)
             self.session.onProjectFilesUpdated?()
         }
         settingsController.onToolPermissionModeChanged = { [weak self] mode in
@@ -547,17 +555,16 @@ final class ChatViewController: UIViewController {
         guard !userInput.isEmpty else {
             return
         }
-        guard threadSession.currentThread != nil else {
+        guard threadManager.currentThread != nil else {
             messageStore.appendMessage(role: .system, text: ChatProviderError.noThreadAvailable.localizedDescription)
             return
         }
-        guard modelSelection.canSend, let baseProviderCredential = modelSelection.providerCredential else {
+        guard modelSelection.canSend else {
             if let blockedMessage = modelSelection.sendBlockedMessage() {
                 messageStore.appendMessage(role: .system, text: blockedMessage)
             }
             return
         }
-        let credential = modelSelection.runtimeCredential(from: baseProviderCredential)
 
         inputTextView.text = ""
         refreshInputPlaceholder()
@@ -565,64 +572,52 @@ final class ChatViewController: UIViewController {
         messageStore.appendMessage(role: .user, text: userInput)
         inputTextView.resignFirstResponder()
 
-        let historyTurns = messageStore.buildHistoryTurns()
-        messageStore.beginRequest(startedAt: Date())
-
-        let sessionContext = ChatSessionContext(
-            projectID: projectIdentifier,
-            workspaceURL: workspaceURL,
-            projectRootURL: project.projectURL,
-            projectName: projectName
-        )
-        let request = ChatTaskCoordinator.Request(
-            userMessage: userInput,
-            history: historyTurns,
-            sessionContext: sessionContext,
-            credential: credential,
-            memory: threadSession.sessionMemory,
-            executionOptions: modelSelection.executionOptions(for: credential),
-            confirmationHandler: session,
-            permissionMode: toolPermissionMode,
+        session.sendMessage(
+            userInput,
+            toolPermissionMode: toolPermissionMode,
             validationServerBaseURL: validationServerBaseURL,
             validationBridge: validationBridge
         )
-        session.execute(request)
         refreshSendButton()
     }
 
 }
 
-// MARK: - ChatSessionObservationDelegate
+// MARK: - ChatMessageStoreDelegate
 
-extension ChatViewController: ChatSessionObservationDelegate {
-    func sessionDidInsertMessage(at index: Int) {
+extension ChatViewController: ChatMessageStoreDelegate {
+    func messageStoreDidInsertRow(at index: Int) {
         UIView.performWithoutAnimation {
             tableView.insertRows(at: [IndexPath(row: index, section: 0)], with: .none)
         }
     }
 
-    func sessionDidUpdateMessage(at index: Int, message: ChatMessage) {
+    func messageStoreDidUpdateCell(at index: Int, message: ChatMessage) {
         let ip = IndexPath(row: index, section: 0)
         if let cell = tableView.cellForRow(at: ip) as? ChatMessageCell {
             cell.configure(message: message, now: Date())
         }
     }
 
-    func sessionDidUpdateStreamingText(at index: Int, text: String) {
+    func messageStoreDidUpdateStreamingText(at index: Int, text: String) {
         let ip = IndexPath(row: index, section: 0)
         if let cell = tableView.cellForRow(at: ip) as? ChatMessageCell {
             cell.updateText(text)
         }
     }
 
-    func sessionDidRequestBatchUpdate() {
+    func messageStoreDidRequestBatchUpdate() {
         tableView.performBatchUpdates(nil)
     }
 
-    func sessionDidRequestScroll(force: Bool) {
+    func messageStoreDidRequestScroll(force: Bool) {
         scrollToBottomIfNeeded(force: force)
     }
+}
 
+// MARK: - ChatSessionDelegate
+
+extension ChatViewController: ChatSessionDelegate {
     func sessionDidFinishExecution() {
         refreshSendButton()
     }

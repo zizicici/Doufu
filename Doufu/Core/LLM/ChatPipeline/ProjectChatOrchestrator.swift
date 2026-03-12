@@ -52,6 +52,16 @@ final class ProjectChatOrchestrator {
         self.streamingClient = streamingClient ?? LLMStreamingClient(configuration: configuration)
     }
 
+    /// Mutable state accumulated across agent loop iterations.
+    private struct AgentLoopState {
+        var conversation: [AgentConversationItem]
+        var allChangedPaths: [String] = []
+        var allToolMetadata: [AgentToolProvider.ToolResultMetadata] = []
+        var accumulatedText = ""
+        var totalToolCalls = 0
+        var toolActivityLog: [String] = []
+    }
+
     func sendAndApply(
         userMessage: String,
         history: [ProjectChatService.ChatTurn],
@@ -84,62 +94,16 @@ final class ProjectChatOrchestrator {
         toolProvider.validationBridge = validationBridge
 
         do {
-        // Auto-save any uncommitted changes (e.g. user manual edits)
-        // before the agent starts, so they are preserved for undo.
         autoSaveBeforeAgentLoop(workspaceURL: workspaceURL)
 
-        // Read AGENTS.md and DOUFU.MD if present
-        let agentsMarkdown = readAgentsMarkdown(workspaceURL: workspaceURL)
-        let doufuMarkdown = readDoufuMarkdown(workspaceURL: workspaceURL)
-
-        // Build system prompt
-        let systemPrompt = promptBuilder.agentSystemPrompt(
-            agentsMarkdown: agentsMarkdown,
-            doufuMarkdown: doufuMarkdown
+        let systemPrompt = buildSystemPrompt(workspaceURL: workspaceURL)
+        let conversation = buildInitialConversation(
+            normalizedHistory: normalizedHistory,
+            trimmedMessage: trimmedMessage,
+            requestMemory: requestMemory
         )
 
-        // Build initial conversation
-        var conversation: [AgentConversationItem] = []
-
-        // Add history turns (include tool summaries so the model knows what happened)
-        // Build an ID→toolSummary lookup from the normalized history for fast matching
-        let toolSummaryByID: [String: String] = normalizedHistory.reduce(into: [:]) { map, turn in
-            if turn.role == .assistant, let summary = turn.toolSummary, !summary.isEmpty {
-                map[turn.id] = summary
-            }
-        }
-        let historyItems = memoryManager.buildHistoryInputMessages(from: normalizedHistory)
-        for item in historyItems {
-            let role = item.role.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            let text = item.content.map(\.text).joined(separator: "\n")
-            if role == "user" {
-                conversation.append(.userMessage(text))
-            } else if role == "assistant" {
-                var assistantText = text
-                // Use the turn ID embedded in the ResponseInputMessage to look up
-                // the tool summary instead of fragile text comparison
-                if let turnID = item.sourceTurnID,
-                   let summary = toolSummaryByID[turnID], !summary.isEmpty {
-                    assistantText += "\n\n<tool-activity>\n\(summary)\n</tool-activity>"
-                }
-                conversation.append(.assistantMessage(text: assistantText, toolCalls: []))
-            }
-        }
-
-        // Add current user message with memory context
-        let memoryJSON = memoryManager.encodeMemoryToJSONString(requestMemory)
-        let userPrompt = promptBuilder.agentUserPrompt(
-            userMessage: trimmedMessage,
-            memoryJSON: memoryJSON
-        )
-        conversation.append(.userMessage(userPrompt))
-
-        // Agent loop
-        var allChangedPaths: [String] = []
-        var allToolMetadata: [AgentToolProvider.ToolResultMetadata] = []
-        var accumulatedText = ""
-        var totalToolCalls = 0
-        var toolActivityLog: [String] = []
+        var state = AgentLoopState(conversation: conversation)
 
         if let onProgress {
             await onProgress(.text(String(localized: "orchestrator.thinking")))
@@ -150,23 +114,12 @@ final class ProjectChatOrchestrator {
         for iteration in 0 ..< configuration.maxAgentIterations {
             try Task.checkCancellation()
 
-            // Inject budget warning when approaching iteration limit.
-            // Append as a system-like user message. If the last item is already
-            // a userMessage (e.g. a continuation prompt), merge into it to
-            // avoid violating the user/assistant alternation constraint.
-            if iteration == budgetWarningThreshold {
-                let remaining = configuration.maxAgentIterations - iteration
-                let warning = "[System: You have \(remaining) tool-use iterations remaining. Please complete your current task and provide a summary. Do not start new tasks.]"
-                if case let .userMessage(existingText) = conversation.last {
-                    conversation[conversation.count - 1] = .userMessage(existingText + "\n\n" + warning)
-                } else {
-                    conversation.append(.userMessage(warning))
-                }
-            }
+            injectBudgetWarningIfNeeded(
+                &state.conversation,
+                iteration: iteration,
+                threshold: budgetWarningThreshold
+            )
 
-            // Stream text from the LLM response to the UI in real-time.
-            // Only send the current iteration's partial text (not the full
-            // accumulated text) so each progress bubble stays independent.
             let streamCallback: (@MainActor (String) -> Void)? = onStreamedText.map { callback in
                 { @MainActor partialText in
                     let trimmed = partialText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -177,11 +130,11 @@ final class ProjectChatOrchestrator {
             }
 
             let lastInputTokens = await usageAccumulator.lastSingleCallInputTokens
-            compactConversationIfNeeded(&conversation, credential: credential, lastInputTokens: lastInputTokens)
+            compactConversationIfNeeded(&state.conversation, credential: credential, lastInputTokens: lastInputTokens)
 
             let response = try await streamingClient.requestWithTools(
                 systemInstruction: systemPrompt,
-                conversationItems: conversation,
+                conversationItems: state.conversation,
                 tools: toolProvider.toolDefinitions(),
                 credential: credential,
                 projectUsageIdentifier: projectIdentifier,
@@ -196,160 +149,248 @@ final class ProjectChatOrchestrator {
 
             let responseText = response.textContent.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
 
-            // Emit extended thinking content if present
             if let thinking = response.thinkingContent, !thinking.isEmpty, let onProgress {
                 await onProgress(.thinking(content: thinking))
             }
 
-            // No tool calls — check if this is a final response or a truncated one
+            // No tool calls — final or truncated response
             if response.toolCalls.isEmpty {
                 if !responseText.isEmpty {
-                    accumulatedText += (accumulatedText.isEmpty ? "" : "\n\n") + responseText
+                    state.accumulatedText += (state.accumulatedText.isEmpty ? "" : "\n\n") + responseText
                 }
                 if let onStreamedText {
                     await onStreamedText(responseText)
                 }
 
-                // If truncated by max_tokens, auto-continue
+                // Auto-continue on max_tokens truncation
                 if response.stopReason == .maxTokens {
-                    conversation.append(.assistantMessage(text: responseText, toolCalls: []))
-                    conversation.append(.userMessage("Please continue from where you left off."))
+                    state.conversation.append(.assistantMessage(text: responseText, toolCalls: []))
+                    state.conversation.append(.userMessage("Please continue from where you left off."))
                     LLMProviderHelpers.debugLog("[Doufu Agent] response truncated (max_tokens), requesting continuation")
                     continue
                 }
 
-                let rawFinalMessage = accumulatedText.isEmpty ? String(localized: "orchestrator.done") : accumulatedText
-                let (modelMemoryUpdate, afterMemory) = extractMemoryUpdate(from: rawFinalMessage)
-                let cleanedFinalMessage = extractAndPersistDoufuUpdate(from: afterMemory, workspaceURL: workspaceURL)
-                let finalMessage = cleanedFinalMessage.isEmpty ? String(localized: "orchestrator.done") : cleanedFinalMessage
-
-                if let onStreamedText, cleanedFinalMessage != rawFinalMessage {
-                    await onStreamedText(finalMessage)
-                }
-
-                if !allChangedPaths.isEmpty {
-                    AppProjectStore.shared.touchProjectUpdatedAt(projectID: projectIdentifier)
-                    createCheckpointAfterAgentLoop(workspaceURL: workspaceURL, userMessage: trimmedMessage)
-                }
-
-                let updatedMemory = memoryManager.buildRolledMemory(
-                    current: requestMemory,
-                    userMessage: trimmedMessage,
-                    assistantMessage: finalMessage,
-                    changedPaths: allChangedPaths,
-                    modelMemoryUpdate: modelMemoryUpdate
-                )
-
-                return ProjectChatService.ResultPayload(
-                    assistantMessage: finalMessage,
-                    changedPaths: allChangedPaths,
-                    updatedMemory: updatedMemory,
-                    requestTokenUsage: await persistedUsage(
-                        from: usageAccumulator,
-                        credential: credential,
-                        projectIdentifier: projectIdentifier
-                    ),
-                    toolActivitySummary: toolActivityLog.isEmpty ? nil : toolActivityLog.joined(separator: "\n"),
-                    toolMetadata: allToolMetadata
+                return try await buildFinalResult(
+                    accumulatedText: state.accumulatedText,
+                    allChangedPaths: state.allChangedPaths,
+                    allToolMetadata: state.allToolMetadata,
+                    toolActivityLog: state.toolActivityLog,
+                    requestMemory: requestMemory,
+                    trimmedMessage: trimmedMessage,
+                    workspaceURL: workspaceURL,
+                    projectIdentifier: projectIdentifier,
+                    usageAccumulator: usageAccumulator,
+                    credential: credential,
+                    onStreamedText: onStreamedText
                 )
             }
 
-            // Has tool calls — execute them
+            // Has tool calls — accumulate text, then execute
             if !responseText.isEmpty {
-                accumulatedText += (accumulatedText.isEmpty ? "" : "\n\n") + responseText
+                state.accumulatedText += (state.accumulatedText.isEmpty ? "" : "\n\n") + responseText
                 if let onStreamedText {
                     await onStreamedText(responseText)
                 }
             }
 
-            // Add assistant message with tool calls to conversation
-            conversation.append(.assistantMessage(text: responseText, toolCalls: response.toolCalls))
+            state.conversation.append(.assistantMessage(text: responseText, toolCalls: response.toolCalls))
 
-            // Partition tool calls into read-only (parallelizable) and mutating (sequential)
-            // validate_code uses a shared WKWebView and is NOT safe to parallelize.
-            let readOnlyTools: Set<String> = ["read_file", "list_directory", "search_files", "grep_files", "glob_files", "diff_file", "changed_files"]
-            let (parallelCalls, sequentialCalls) = partitionToolCalls(response.toolCalls, readOnly: readOnlyTools)
+            try await executeToolCalls(
+                response.toolCalls,
+                state: &state,
+                toolProvider: toolProvider,
+                onProgress: onProgress
+            )
 
-            // Execute read-only tools in parallel
-            if !parallelCalls.isEmpty {
-                let parallelResults = await executeToolCallsInParallel(
-                    parallelCalls,
-                    toolProvider: toolProvider,
-                    totalToolCalls: &totalToolCalls,
-                    maxTotalToolCalls: configuration.maxAgentIterations * configuration.maxToolCallsPerIteration,
-                    onProgress: onProgress,
-                    toolActivityLog: &toolActivityLog
-                )
-                for (toolCall, result) in parallelResults {
-                    if !result.changedPaths.isEmpty {
-                        let enriched = enrichPathsWithSummary(result.changedPaths, summary: result.changeSummary)
-                        mergeChangedPaths(enriched, into: &allChangedPaths)
-                    }
-                    if let meta = result.metadata {
-                        allToolMetadata.append(meta)
-                    }
-                    let truncatedOutput = truncateToolResult(result.output)
-                    conversation.append(.toolResult(
-                        callID: toolCall.id,
-                        name: toolCall.name,
-                        content: truncatedOutput,
-                        isError: result.isError
-                    ))
-                }
-            }
-
-            // Execute mutating tools sequentially
-            for toolCall in sequentialCalls {
-                try Task.checkCancellation()
-
-                totalToolCalls += 1
-                if totalToolCalls > configuration.maxAgentIterations * configuration.maxToolCallsPerIteration {
-                    LLMProviderHelpers.debugLog("[Doufu Agent] exceeded maximum total tool calls, stopping")
-                    break
-                }
-
-                let toolDescription = describeToolCall(toolCall)
-                toolActivityLog.append(toolDescription)
-
-                let result = await toolProvider.execute(toolCall: toolCall, onProgress: onProgress)
-
-                // Emit completion event if the tool produced one, otherwise fall back to text
-                if let onProgress {
-                    if let event = result.completionEvent {
-                        await onProgress(event)
-                    } else {
-                        await onProgress(.text(toolDescription))
-                    }
-                }
-
-                // Track changed paths and metadata
-                if !result.changedPaths.isEmpty {
-                    let enriched = enrichPathsWithSummary(result.changedPaths, summary: result.changeSummary)
-                    mergeChangedPaths(enriched, into: &allChangedPaths)
-                }
-                if let meta = result.metadata {
-                    allToolMetadata.append(meta)
-                }
-
-                // Add tool result to conversation (truncated to prevent context bloat)
-                let truncatedOutput = truncateToolResult(result.output)
-                conversation.append(.toolResult(
-                    callID: toolCall.id,
-                    name: toolCall.name,
-                    content: truncatedOutput,
-                    isError: result.isError
-                ))
-            }
-
-            LLMProviderHelpers.debugLog("[Doufu Agent] iteration \(iteration + 1): \(response.toolCalls.count) tool calls executed, \(allChangedPaths.count) files changed total")
+            LLMProviderHelpers.debugLog("[Doufu Agent] iteration \(iteration + 1): \(response.toolCalls.count) tool calls executed, \(state.allChangedPaths.count) files changed total")
         }
 
         // Max iterations reached
-        let rawMaxMessage = accumulatedText.isEmpty
+        let rawMaxMessage = state.accumulatedText.isEmpty
             ? String(localized: "orchestrator.max_iterations_reached")
-            : accumulatedText + "\n\n" + String(localized: "orchestrator.max_iterations_suffix")
-        let (maxModelMemoryUpdate, afterMaxMemory) = extractMemoryUpdate(from: rawMaxMessage)
-        let finalMessage = extractAndPersistDoufuUpdate(from: afterMaxMemory, workspaceURL: workspaceURL)
+            : state.accumulatedText + "\n\n" + String(localized: "orchestrator.max_iterations_suffix")
+
+        return try await buildFinalResult(
+            accumulatedText: rawMaxMessage,
+            allChangedPaths: state.allChangedPaths,
+            allToolMetadata: state.allToolMetadata,
+            toolActivityLog: state.toolActivityLog,
+            requestMemory: requestMemory,
+            trimmedMessage: trimmedMessage,
+            workspaceURL: workspaceURL,
+            projectIdentifier: projectIdentifier,
+            usageAccumulator: usageAccumulator,
+            credential: credential,
+            onStreamedText: nil
+        )
+
+        } catch {
+            let _ = await persistedUsage(
+                from: usageAccumulator,
+                credential: credential,
+                projectIdentifier: projectIdentifier
+            )
+            throw error
+        }
+    }
+
+    // MARK: - Pipeline Phases
+
+    private func buildSystemPrompt(workspaceURL: URL) -> String {
+        let agentsMarkdown = readAgentsMarkdown(workspaceURL: workspaceURL)
+        let doufuMarkdown = readDoufuMarkdown(workspaceURL: workspaceURL)
+        return promptBuilder.agentSystemPrompt(
+            agentsMarkdown: agentsMarkdown,
+            doufuMarkdown: doufuMarkdown
+        )
+    }
+
+    private func buildInitialConversation(
+        normalizedHistory: [ProjectChatService.ChatTurn],
+        trimmedMessage: String,
+        requestMemory: SessionMemory
+    ) -> [AgentConversationItem] {
+        var conversation: [AgentConversationItem] = []
+
+        let toolSummaryByID: [String: String] = normalizedHistory.reduce(into: [:]) { map, turn in
+            if turn.role == .assistant, let summary = turn.toolSummary, !summary.isEmpty {
+                map[turn.id] = summary
+            }
+        }
+        let historyItems = memoryManager.buildHistoryInputMessages(from: normalizedHistory)
+        for item in historyItems {
+            let role = item.role.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let text = item.content.map(\.text).joined(separator: "\n")
+            if role == "user" {
+                conversation.append(.userMessage(text))
+            } else if role == "assistant" {
+                var assistantText = text
+                if let turnID = item.sourceTurnID,
+                   let summary = toolSummaryByID[turnID], !summary.isEmpty {
+                    assistantText += "\n\n<tool-activity>\n\(summary)\n</tool-activity>"
+                }
+                conversation.append(.assistantMessage(text: assistantText, toolCalls: []))
+            }
+        }
+
+        let memoryJSON = memoryManager.encodeMemoryToJSONString(requestMemory)
+        let userPrompt = promptBuilder.agentUserPrompt(
+            userMessage: trimmedMessage,
+            memoryJSON: memoryJSON
+        )
+        conversation.append(.userMessage(userPrompt))
+
+        return conversation
+    }
+
+    private func injectBudgetWarningIfNeeded(
+        _ conversation: inout [AgentConversationItem],
+        iteration: Int,
+        threshold: Int
+    ) {
+        guard iteration == threshold else { return }
+        let remaining = configuration.maxAgentIterations - iteration
+        let warning = "[System: You have \(remaining) tool-use iterations remaining. Please complete your current task and provide a summary. Do not start new tasks.]"
+        if case let .userMessage(existingText) = conversation.last {
+            conversation[conversation.count - 1] = .userMessage(existingText + "\n\n" + warning)
+        } else {
+            conversation.append(.userMessage(warning))
+        }
+    }
+
+    private func executeToolCalls(
+        _ toolCalls: [AgentToolCall],
+        state: inout AgentLoopState,
+        toolProvider: AgentToolProvider,
+        onProgress: (@MainActor (ToolProgressEvent) -> Void)?
+    ) async throws {
+        let readOnlyTools: Set<String> = ["read_file", "list_directory", "search_files", "grep_files", "glob_files", "diff_file", "changed_files"]
+        let (parallelCalls, sequentialCalls) = partitionToolCalls(toolCalls, readOnly: readOnlyTools)
+
+        if !parallelCalls.isEmpty {
+            let parallelResults = await executeToolCallsInParallel(
+                parallelCalls,
+                toolProvider: toolProvider,
+                totalToolCalls: &state.totalToolCalls,
+                maxTotalToolCalls: configuration.maxAgentIterations * configuration.maxToolCallsPerIteration,
+                onProgress: onProgress,
+                toolActivityLog: &state.toolActivityLog
+            )
+            for (toolCall, result) in parallelResults {
+                collectToolResult(result, into: &state)
+                let truncatedOutput = truncateToolResult(result.output)
+                state.conversation.append(.toolResult(
+                    callID: toolCall.id, name: toolCall.name,
+                    content: truncatedOutput, isError: result.isError
+                ))
+            }
+        }
+
+        for toolCall in sequentialCalls {
+            try Task.checkCancellation()
+
+            state.totalToolCalls += 1
+            if state.totalToolCalls > configuration.maxAgentIterations * configuration.maxToolCallsPerIteration {
+                LLMProviderHelpers.debugLog("[Doufu Agent] exceeded maximum total tool calls, stopping")
+                break
+            }
+
+            let toolDescription = describeToolCall(toolCall)
+            state.toolActivityLog.append(toolDescription)
+
+            let result = await toolProvider.execute(toolCall: toolCall, onProgress: onProgress)
+
+            if let onProgress {
+                if let event = result.completionEvent {
+                    await onProgress(event)
+                } else {
+                    await onProgress(.text(toolDescription))
+                }
+            }
+
+            collectToolResult(result, into: &state)
+            let truncatedOutput = truncateToolResult(result.output)
+            state.conversation.append(.toolResult(
+                callID: toolCall.id, name: toolCall.name,
+                content: truncatedOutput, isError: result.isError
+            ))
+        }
+    }
+
+    private func collectToolResult(
+        _ result: AgentToolProvider.ToolExecutionResult,
+        into state: inout AgentLoopState
+    ) {
+        if !result.changedPaths.isEmpty {
+            let enriched = enrichPathsWithSummary(result.changedPaths, summary: result.changeSummary)
+            mergeChangedPaths(enriched, into: &state.allChangedPaths)
+        }
+        if let meta = result.metadata {
+            state.allToolMetadata.append(meta)
+        }
+    }
+
+    private func buildFinalResult(
+        accumulatedText: String,
+        allChangedPaths: [String],
+        allToolMetadata: [AgentToolProvider.ToolResultMetadata],
+        toolActivityLog: [String],
+        requestMemory: SessionMemory,
+        trimmedMessage: String,
+        workspaceURL: URL,
+        projectIdentifier: String,
+        usageAccumulator: UsageAccumulator,
+        credential: ProjectChatService.ProviderCredential,
+        onStreamedText: (@MainActor (String) -> Void)?
+    ) async throws -> ProjectChatService.ResultPayload {
+        let rawFinalMessage = accumulatedText.isEmpty ? String(localized: "orchestrator.done") : accumulatedText
+        let (modelMemoryUpdate, afterMemory) = extractMemoryUpdate(from: rawFinalMessage)
+        let cleanedFinalMessage = extractAndPersistDoufuUpdate(from: afterMemory, workspaceURL: workspaceURL)
+        let finalMessage = cleanedFinalMessage.isEmpty ? String(localized: "orchestrator.done") : cleanedFinalMessage
+
+        if let onStreamedText, cleanedFinalMessage != rawFinalMessage {
+            await onStreamedText(finalMessage)
+        }
 
         if !allChangedPaths.isEmpty {
             AppProjectStore.shared.touchProjectUpdatedAt(projectID: projectIdentifier)
@@ -361,7 +402,7 @@ final class ProjectChatOrchestrator {
             userMessage: trimmedMessage,
             assistantMessage: finalMessage,
             changedPaths: allChangedPaths,
-            modelMemoryUpdate: maxModelMemoryUpdate
+            modelMemoryUpdate: modelMemoryUpdate
         )
 
         return ProjectChatService.ResultPayload(
@@ -376,16 +417,6 @@ final class ProjectChatOrchestrator {
             toolActivitySummary: toolActivityLog.isEmpty ? nil : toolActivityLog.joined(separator: "\n"),
             toolMetadata: allToolMetadata
         )
-
-        } catch {
-            // Always record consumed tokens, even on cancel/error
-            let _ = await persistedUsage(
-                from: usageAccumulator,
-                credential: credential,
-                projectIdentifier: projectIdentifier
-            )
-            throw error
-        }
     }
 
     // MARK: - Helpers
