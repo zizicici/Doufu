@@ -68,6 +68,7 @@ final class ChatViewController: UIViewController {
         tableView.keyboardDismissMode = .interactive
         tableView.backgroundColor = .doufuBackground
         tableView.register(ChatMessageCell.self, forCellReuseIdentifier: ChatMessageCell.reuseIdentifier)
+        tableView.register(ChatToolMessageCell.self, forCellReuseIdentifier: ChatToolMessageCell.reuseIdentifier)
         return tableView
     }()
 
@@ -530,22 +531,7 @@ final class ChatViewController: UIViewController {
     // MARK: - Expand Handler
 
     private func bindExpandHandler(cell: ChatMessageCell, message: ChatMessage) {
-        if message.role == .tool && message.finishedAt != nil {
-            // Tool messages: content holds the JSON detail.
-            let detail = message.content
-            cell.onExpandTapped = { [weak self] in
-                guard let self else { return }
-                let detailVC = ToolActivityDetailViewController(toolSummary: detail)
-                let nav = UINavigationController(rootViewController: detailVC)
-                nav.modalPresentationStyle = .pageSheet
-                if let sheet = nav.sheetPresentationController {
-                    sheet.detents = [.medium(), .large()]
-                    sheet.prefersGrabberVisible = true
-                }
-                self.present(nav, animated: true)
-            }
-        } else if let summary = message.summary, message.role != .tool {
-            // Assistant messages with tool summary.
+        if let summary = message.summary {
             cell.onExpandTapped = { [weak self] in
                 guard let self else { return }
                 let detailVC = ToolActivityDetailViewController(toolSummary: summary)
@@ -623,7 +609,23 @@ extension ChatViewController: ChatMessageStoreDelegate {
 
     func messageStoreDidUpdateCell(at index: Int, message: ChatMessage) {
         let ip = IndexPath(row: index, section: 0)
-        if let cell = tableView.cellForRow(at: ip) as? ChatMessageCell {
+        if let toolCell = tableView.cellForRow(at: ip) as? ChatToolMessageCell {
+            toolCell.configure(message: message)
+            if message.finishedAt != nil {
+                let detail = message.content
+                toolCell.onTapped = { [weak self] in
+                    guard let self else { return }
+                    let detailVC = ToolActivityDetailViewController(toolSummary: detail)
+                    let nav = UINavigationController(rootViewController: detailVC)
+                    nav.modalPresentationStyle = .pageSheet
+                    if let sheet = nav.sheetPresentationController {
+                        sheet.detents = [.medium(), .large()]
+                        sheet.prefersGrabberVisible = true
+                    }
+                    self.present(nav, animated: true)
+                }
+            }
+        } else if let cell = tableView.cellForRow(at: ip) as? ChatMessageCell {
             cell.configure(message: message, now: Date())
             bindExpandHandler(cell: cell, message: message)
         }
@@ -685,6 +687,33 @@ extension ChatViewController: UITableViewDataSource {
     }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        let message = session.messages[indexPath.row]
+
+        if message.role == .tool {
+            guard let cell = tableView.dequeueReusableCell(
+                withIdentifier: ChatToolMessageCell.reuseIdentifier,
+                for: indexPath
+            ) as? ChatToolMessageCell else {
+                return UITableViewCell()
+            }
+            cell.configure(message: message)
+            if message.finishedAt != nil {
+                let detail = message.content
+                cell.onTapped = { [weak self] in
+                    guard let self else { return }
+                    let detailVC = ToolActivityDetailViewController(toolSummary: detail)
+                    let nav = UINavigationController(rootViewController: detailVC)
+                    nav.modalPresentationStyle = .pageSheet
+                    if let sheet = nav.sheetPresentationController {
+                        sheet.detents = [.medium(), .large()]
+                        sheet.prefersGrabberVisible = true
+                    }
+                    self.present(nav, animated: true)
+                }
+            }
+            return cell
+        }
+
         guard
             let cell = tableView.dequeueReusableCell(
                 withIdentifier: ChatMessageCell.reuseIdentifier,
@@ -694,7 +723,6 @@ extension ChatViewController: UITableViewDataSource {
             return UITableViewCell()
         }
 
-        let message = session.messages[indexPath.row]
         cell.configure(message: message, now: Date())
         bindExpandHandler(cell: cell, message: message)
 
