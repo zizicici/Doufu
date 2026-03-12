@@ -75,6 +75,7 @@ final class ProjectChatOrchestrator {
         var accumulatedText = ""
         var totalToolCalls = 0
         var toolActivityLog: [String] = []
+        var toolActivityEntries: [ToolActivityEntry] = []
     }
 
     func sendAndApply(
@@ -89,7 +90,9 @@ final class ProjectChatOrchestrator {
         validationServerBaseURL: URL? = nil,
         validationBridge: DoufuBridge? = nil,
         onStreamedText: (@MainActor (String) -> Void)? = nil,
-        onProgress: (@MainActor (ToolProgressEvent) -> Void)? = nil
+        onProgress: (@MainActor (ToolProgressEvent) -> Void)? = nil,
+        onToolStarted: (@MainActor (String) -> Void)? = nil,
+        onToolCompleted: (@MainActor (ToolActivityEntry) -> Void)? = nil
     ) async throws -> ProjectChatService.ResultPayload {
         let projectIdentifier = sessionContext.projectID
         let workspaceURL = sessionContext.workspaceURL
@@ -192,6 +195,7 @@ final class ProjectChatOrchestrator {
                     allChangedPaths: state.allChangedPaths,
                     allToolMetadata: state.allToolMetadata,
                     toolActivityLog: state.toolActivityLog,
+                    toolActivityEntries: state.toolActivityEntries,
                     requestMemory: requestMemory,
                     trimmedMessage: trimmedMessage,
                     workspaceURL: workspaceURL,
@@ -216,7 +220,9 @@ final class ProjectChatOrchestrator {
                 response.toolCalls,
                 state: &state,
                 toolProvider: toolProvider,
-                onProgress: onProgress
+                onProgress: onProgress,
+                onToolStarted: onToolStarted,
+                onToolCompleted: onToolCompleted
             )
 
             LLMProviderHelpers.debugLog("[Doufu Agent] iteration \(iteration + 1): \(response.toolCalls.count) tool calls executed, \(state.allChangedPaths.count) files changed total")
@@ -232,6 +238,7 @@ final class ProjectChatOrchestrator {
             allChangedPaths: state.allChangedPaths,
             allToolMetadata: state.allToolMetadata,
             toolActivityLog: state.toolActivityLog,
+            toolActivityEntries: state.toolActivityEntries,
             requestMemory: requestMemory,
             trimmedMessage: trimmedMessage,
             workspaceURL: workspaceURL,
@@ -283,11 +290,6 @@ final class ProjectChatOrchestrator {
     ) -> [AgentConversationItem] {
         var conversation: [AgentConversationItem] = []
 
-        let toolSummaryByID: [String: String] = normalizedHistory.reduce(into: [:]) { map, turn in
-            if turn.role == .assistant, let summary = turn.toolSummary, !summary.isEmpty {
-                map[turn.id] = summary
-            }
-        }
         let historyItems = memoryManager.buildHistoryInputMessages(from: normalizedHistory)
         for item in historyItems {
             let role = item.role.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -295,12 +297,7 @@ final class ProjectChatOrchestrator {
             if role == "user" {
                 conversation.append(.userMessage(text))
             } else if role == "assistant" {
-                var assistantText = text
-                if let turnID = item.sourceTurnID,
-                   let summary = toolSummaryByID[turnID], !summary.isEmpty {
-                    assistantText += "\n\n<tool-activity>\n\(summary)\n</tool-activity>"
-                }
-                conversation.append(.assistantMessage(text: assistantText, toolCalls: []))
+                conversation.append(.assistantMessage(text: text, toolCalls: []))
             }
         }
 
@@ -333,7 +330,9 @@ final class ProjectChatOrchestrator {
         _ toolCalls: [AgentToolCall],
         state: inout AgentLoopState,
         toolProvider: AgentToolProvider,
-        onProgress: (@MainActor (ToolProgressEvent) -> Void)?
+        onProgress: (@MainActor (ToolProgressEvent) -> Void)?,
+        onToolStarted: (@MainActor (String) -> Void)? = nil,
+        onToolCompleted: (@MainActor (ToolActivityEntry) -> Void)? = nil
     ) async throws {
         let readOnlyTools: Set<String> = ["read_file", "list_directory", "search_files", "grep_files", "glob_files", "diff_file", "changed_files"]
         let maxBudget = configuration.maxAgentIterations * configuration.maxToolCallsPerIteration
@@ -377,8 +376,11 @@ final class ProjectChatOrchestrator {
                 )
                 let executedCount = parallelResults.count
                 for (toolCall, result) in parallelResults {
-                    if let onProgress, let event = result.completionEvent {
-                        await onProgress(event)
+                    let desc = describeToolCall(toolCall)
+                    let entry = buildToolActivityEntry(toolCall: toolCall, description: desc, result: result)
+                    state.toolActivityEntries.append(entry)
+                    if let onToolCompleted {
+                        await onToolCompleted(entry)
                     }
                     collectToolResult(result, into: &state)
                     let truncatedOutput = truncateToolResult(result.output)
@@ -419,17 +421,18 @@ final class ProjectChatOrchestrator {
                 let toolDescription = describeToolCall(toolCall)
                 state.toolActivityLog.append(toolDescription)
 
+                if let onToolStarted {
+                    await onToolStarted(toolDescription)
+                }
+
                 let result = await toolProvider.execute(toolCall: toolCall, onProgress: onProgress)
                 try Task.checkCancellation()
 
-                if let onProgress {
-                    if let event = result.completionEvent {
-                        await onProgress(event)
-                    } else {
-                        await onProgress(.text(toolDescription))
-                    }
+                let entry = buildToolActivityEntry(toolCall: toolCall, description: toolDescription, result: result)
+                state.toolActivityEntries.append(entry)
+                if let onToolCompleted {
+                    await onToolCompleted(entry)
                 }
-
                 collectToolResult(result, into: &state)
                 let truncatedOutput = truncateToolResult(result.output)
                 state.conversation.append(.toolResult(
@@ -459,6 +462,7 @@ final class ProjectChatOrchestrator {
         allChangedPaths: [String],
         allToolMetadata: [AgentToolProvider.ToolResultMetadata],
         toolActivityLog: [String],
+        toolActivityEntries: [ToolActivityEntry],
         requestMemory: SessionMemory,
         trimmedMessage: String,
         workspaceURL: URL,
@@ -497,7 +501,7 @@ final class ProjectChatOrchestrator {
                 credential: credential,
                 projectIdentifier: projectIdentifier
             ),
-            toolActivitySummary: toolActivityLog.isEmpty ? nil : toolActivityLog.joined(separator: "\n"),
+            toolActivitySummary: Self.serializeToolActivitySummary(entries: toolActivityEntries, fallbackLog: toolActivityLog),
             toolMetadata: allToolMetadata
         )
     }
@@ -547,6 +551,99 @@ final class ProjectChatOrchestrator {
             return String(format: String(localized: "tool.activity.web_fetch"), url)
         default:
             return String(format: String(localized: "tool.activity.unknown"), toolCall.name)
+        }
+    }
+
+    private static func serializeToolActivitySummary(
+        entries: [ToolActivityEntry],
+        fallbackLog: [String]
+    ) -> String? {
+        if !entries.isEmpty, let data = try? JSONEncoder().encode(entries),
+           let json = String(data: data, encoding: .utf8) {
+            return json
+        }
+        return fallbackLog.isEmpty ? nil : fallbackLog.joined(separator: "\n")
+    }
+
+    private func buildToolActivityEntry(
+        toolCall: AgentToolCall,
+        description: String,
+        result: AgentToolProvider.ToolExecutionResult
+    ) -> ToolActivityEntry {
+        let truncatedOutput = String(result.output.prefix(2000))
+        let args = toolCall.decodedArguments() ?? [:]
+        let path = args["path"] as? String
+
+        guard let meta = result.metadata else {
+            return ToolActivityEntry(
+                toolName: toolCall.name, description: description,
+                output: truncatedOutput, isError: result.isError, path: path
+            )
+        }
+
+        switch meta {
+        case let .fileRead(metaPath, lineCount, sizeBytes):
+            return ToolActivityEntry(
+                toolName: toolCall.name, description: description,
+                output: truncatedOutput, isError: result.isError,
+                path: metaPath, lineCount: lineCount, sizeBytes: sizeBytes
+            )
+        case let .fileWritten(metaPath, isNew, sizeBytes):
+            return ToolActivityEntry(
+                toolName: toolCall.name, description: description,
+                output: truncatedOutput, isError: result.isError,
+                path: metaPath, sizeBytes: sizeBytes, isNew: isNew
+            )
+        case let .fileEdited(metaPath, editCount, diffPreview):
+            return ToolActivityEntry(
+                toolName: toolCall.name, description: description,
+                output: truncatedOutput, isError: result.isError,
+                path: metaPath, editCount: editCount,
+                diffPreview: String(diffPreview.prefix(2000))
+            )
+        case let .fileDeleted(metaPath, sizeBytes):
+            return ToolActivityEntry(
+                toolName: toolCall.name, description: description,
+                output: truncatedOutput, isError: result.isError,
+                path: metaPath, sizeBytes: sizeBytes
+            )
+        case let .fileMoved(source, destination):
+            return ToolActivityEntry(
+                toolName: toolCall.name, description: description,
+                output: truncatedOutput, isError: result.isError,
+                source: source, destination: destination
+            )
+        case let .fileReverted(metaPath):
+            return ToolActivityEntry(
+                toolName: toolCall.name, description: description,
+                output: truncatedOutput, isError: result.isError,
+                path: metaPath
+            )
+        case let .directoryListed(metaPath, entryCount, _, _):
+            return ToolActivityEntry(
+                toolName: toolCall.name, description: description,
+                output: truncatedOutput, isError: result.isError,
+                path: metaPath, matchCount: entryCount
+            )
+        case let .searchResult(queryStr, matchCount, matchedFiles):
+            return ToolActivityEntry(
+                toolName: toolCall.name, description: description,
+                output: truncatedOutput, isError: result.isError,
+                query: queryStr, matchCount: matchCount,
+                matchedFiles: Array(matchedFiles.prefix(20))
+            )
+        case let .webResult(urlStr, code):
+            return ToolActivityEntry(
+                toolName: toolCall.name, description: description,
+                output: truncatedOutput, isError: result.isError,
+                url: urlStr, statusCode: code
+            )
+        case let .codeValidation(metaPath, errorCount, passed):
+            return ToolActivityEntry(
+                toolName: toolCall.name, description: description,
+                output: truncatedOutput, isError: result.isError,
+                path: metaPath, errorCount: errorCount, passed: passed
+            )
         }
     }
 
@@ -685,7 +782,7 @@ final class ProjectChatOrchestrator {
             guard excess > 0 else { break }
             if case let .toolResult(callID, name, content, isError) = conversation[i],
                !isError, reReadableTools.contains(name), content.count > 300 {
-                let truncated = String(content.prefix(100)) + "\n[Compacted — use \(name) again if needed]"
+                let truncated = String(content.prefix(100)) + "\n[Compacted]"
                 let saved = content.count - truncated.count
                 conversation[i] = .toolResult(callID: callID, name: name, content: truncated, isError: isError)
                 excess -= saved
@@ -697,7 +794,7 @@ final class ProjectChatOrchestrator {
             guard excess > 0 else { break }
             if case let .toolResult(callID, name, content, isError) = conversation[i],
                !isError, searchTools.contains(name), content.count > 800 {
-                let truncated = String(content.prefix(400)) + "\n[Compacted to save context space]"
+                let truncated = String(content.prefix(400)) + "\n[Compacted]"
                 let saved = content.count - truncated.count
                 conversation[i] = .toolResult(callID: callID, name: name, content: truncated, isError: isError)
                 excess -= saved
@@ -709,7 +806,7 @@ final class ProjectChatOrchestrator {
             guard excess > 0 else { break }
             if case let .toolResult(callID, name, content, isError) = conversation[i],
                !isError, content.count > 500 {
-                let truncated = String(content.prefix(200)) + "\n[Compacted to save context space]"
+                let truncated = String(content.prefix(200)) + "\n[Compacted]"
                 let saved = content.count - truncated.count
                 guard saved > 0 else { continue }
                 conversation[i] = .toolResult(callID: callID, name: name, content: truncated, isError: isError)
@@ -743,7 +840,7 @@ final class ProjectChatOrchestrator {
             if dropEnd > 0 {
                 let droppedCount = dropEnd
                 let marker = AgentConversationItem.userMessage(
-                    "[System: \(droppedCount) earlier conversation items were removed to fit the context window. Use tools to re-read any files you need.]"
+                    "[System: \(droppedCount) earlier conversation items removed to fit context window.]"
                 )
                 conversation.replaceSubrange(0..<dropEnd, with: [marker])
             }
@@ -859,6 +956,7 @@ final class ProjectChatOrchestrator {
     }
 
     private func mergeChangedPaths(_ paths: [String], into target: inout [String]) {
+        let maxSummaryLength = 80
         // Deduplicate by path prefix (before " — ") so that enriched entries
         // update rather than duplicate plain path entries.
         for path in paths {
@@ -870,7 +968,9 @@ final class ProjectChatOrchestrator {
                 let newSummary = Self.extractSummary(from: path)
                 if let new = newSummary {
                     if let existing = existingSummary {
-                        target[existingIdx] = "\(pathKey) — \(existing), \(new)"
+                        let merged = "\(existing), \(new)"
+                        let summary = merged.count > maxSummaryLength ? "multiple edits" : merged
+                        target[existingIdx] = "\(pathKey) — \(summary)"
                     } else {
                         target[existingIdx] = path
                     }

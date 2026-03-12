@@ -236,7 +236,7 @@ final class ChatDataStore {
 
     // MARK: - Messages
 
-    func loadMessages(projectID: String, threadID: String) throws -> [ProjectChatPersistedMessage] {
+    func loadMessages(projectID: String, threadID: String) throws -> [ChatMessage] {
         do {
             return try dbPool.read { db in
                 let rows = try DBChatMessage
@@ -260,8 +260,8 @@ final class ChatDataStore {
                     )
                 }
 
-                return rows.map { row in
-                    row.toPersistedMessage(tokenUsage: row.tokenUsageID.flatMap { tokenUsageByID[$0] })
+                return rows.compactMap { row in
+                    row.toChatMessage(tokenUsage: row.tokenUsageID.flatMap { tokenUsageByID[$0] })
                 }
             }
         } catch {
@@ -269,7 +269,7 @@ final class ChatDataStore {
         }
     }
 
-    func saveMessages(projectID: String, threadID: String, messages: [ProjectChatPersistedMessage]) throws {
+    func saveMessages(projectID: String, threadID: String, messages: [ChatMessage]) throws {
         do {
             try dbPool.write { db in
                 let assistantID = try DBAssistant
@@ -302,7 +302,7 @@ final class ChatDataStore {
     func saveMessagesIncrementally(
         projectID: String,
         threadID: String,
-        messages: [ProjectChatPersistedMessage],
+        messages: [ChatMessage],
         unchangedPrefixCount: Int
     ) throws {
         do {

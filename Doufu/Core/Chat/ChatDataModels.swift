@@ -20,67 +20,78 @@ struct ProjectChatThreadIndex: Codable {
     var threads: [ProjectChatThreadRecord]
 }
 
-struct ProjectChatPersistedMessage: Codable {
-    let role: String
-    let text: String
-    let createdAt: Date
-    let startedAt: Date?
-    let finishedAt: Date?
-    let isProgress: Bool
-    let tokenUsageID: Int64?
-    let inputTokens: Int64?
-    let outputTokens: Int64?
-    let toolSummary: String?
+/// Structured entry for a single tool call and its execution result.
+/// Serialized as JSON into the `toolSummary` / DB `summary` column.
+struct ToolActivityEntry: Codable, Sendable {
+    let toolName: String
+    let description: String
+    let output: String
+    let isError: Bool
+    let path: String?
+    let lineCount: Int?
+    let sizeBytes: Int64?
+    let editCount: Int?
+    let diffPreview: String?
+    let query: String?
+    let matchCount: Int?
+    let matchedFiles: [String]?
+    let url: String?
+    let statusCode: Int?
+    let errorCount: Int?
+    let passed: Bool?
+    let isNew: Bool?
+    let source: String?
+    let destination: String?
 
     init(
-        role: String,
-        text: String,
-        createdAt: Date,
-        startedAt: Date? = nil,
-        finishedAt: Date? = nil,
-        isProgress: Bool = false,
-        tokenUsageID: Int64? = nil,
-        inputTokens: Int64? = nil,
-        outputTokens: Int64? = nil,
-        toolSummary: String? = nil
+        toolName: String,
+        description: String,
+        output: String,
+        isError: Bool,
+        path: String? = nil,
+        lineCount: Int? = nil,
+        sizeBytes: Int64? = nil,
+        editCount: Int? = nil,
+        diffPreview: String? = nil,
+        query: String? = nil,
+        matchCount: Int? = nil,
+        matchedFiles: [String]? = nil,
+        url: String? = nil,
+        statusCode: Int? = nil,
+        errorCount: Int? = nil,
+        passed: Bool? = nil,
+        isNew: Bool? = nil,
+        source: String? = nil,
+        destination: String? = nil
     ) {
-        self.role = role
-        self.text = text
-        self.createdAt = createdAt
-        self.startedAt = startedAt
-        self.finishedAt = finishedAt
-        self.isProgress = isProgress
-        self.tokenUsageID = tokenUsageID
-        self.inputTokens = inputTokens
-        self.outputTokens = outputTokens
-        self.toolSummary = toolSummary
+        self.toolName = toolName
+        self.description = description
+        self.output = output
+        self.isError = isError
+        self.path = path
+        self.lineCount = lineCount
+        self.sizeBytes = sizeBytes
+        self.editCount = editCount
+        self.diffPreview = diffPreview
+        self.query = query
+        self.matchCount = matchCount
+        self.matchedFiles = matchedFiles
+        self.url = url
+        self.statusCode = statusCode
+        self.errorCount = errorCount
+        self.passed = passed
+        self.isNew = isNew
+        self.source = source
+        self.destination = destination
     }
 
-    private enum CodingKeys: String, CodingKey {
-        case role
-        case text
-        case createdAt
-        case startedAt
-        case finishedAt
-        case isProgress
-        case tokenUsageID
-        case inputTokens
-        case outputTokens
-        case toolSummary
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        role = try container.decode(String.self, forKey: .role)
-        text = try container.decode(String.self, forKey: .text)
-        createdAt = try container.decode(Date.self, forKey: .createdAt)
-        startedAt = try container.decodeIfPresent(Date.self, forKey: .startedAt)
-        finishedAt = try container.decodeIfPresent(Date.self, forKey: .finishedAt)
-        isProgress = try container.decodeIfPresent(Bool.self, forKey: .isProgress) ?? false
-        tokenUsageID = try container.decodeIfPresent(Int64.self, forKey: .tokenUsageID)
-        inputTokens = try container.decodeIfPresent(Int64.self, forKey: .inputTokens)
-        outputTokens = try container.decodeIfPresent(Int64.self, forKey: .outputTokens)
-        toolSummary = try container.decodeIfPresent(String.self, forKey: .toolSummary)
+    /// Parse a `toolSummary` string. Tries JSON first; returns nil for plain text.
+    static func parse(from toolSummary: String) -> [ToolActivityEntry]? {
+        guard let data = toolSummary.data(using: .utf8) else { return nil }
+        if let entries = try? JSONDecoder().decode([ToolActivityEntry].self, from: data), !entries.isEmpty {
+            return entries
+        }
+        return nil
     }
 }
 

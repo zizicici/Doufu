@@ -21,6 +21,8 @@ struct ChatTaskResult {
 protocol ChatTaskCoordinatorDelegate: AnyObject {
     func coordinatorDidReceiveStreamedText(_ accumulatedText: String)
     func coordinatorDidReceiveProgressEvent(_ event: ToolProgressEvent)
+    func coordinatorDidStartToolCall(description: String)
+    func coordinatorDidCompleteToolCall(entry: ToolActivityEntry)
     func coordinatorDidCompleteWithResult(_ result: ChatTaskResult)
     func coordinatorDidCancel(changedPaths: [String])
     func coordinatorDidFailWithError(_ error: Error, changedPaths: [String])
@@ -101,6 +103,12 @@ final class ChatTaskCoordinator {
                         guard let self else { return }
                         PiPProgressManager.shared.updateStatus(event.displayText, sessionID: sessionID)
                         self.delegate?.coordinatorDidReceiveProgressEvent(event)
+                    },
+                    onToolStarted: { [weak self] description in
+                        self?.delegate?.coordinatorDidStartToolCall(description: description)
+                    },
+                    onToolCompleted: { [weak self] entry in
+                        self?.delegate?.coordinatorDidCompleteToolCall(entry: entry)
                     }
                 )
 

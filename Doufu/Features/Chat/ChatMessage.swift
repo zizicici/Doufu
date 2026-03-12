@@ -10,17 +10,18 @@ nonisolated struct ChatMessage: Hashable, Sendable {
         case user
         case assistant
         case system
+        case tool
     }
 
     let id = UUID()
     let role: Role
-    var text: String
+    var content: String
     let createdAt: Date
     let startedAt: Date
     var finishedAt: Date?
     let isProgress: Bool
     var requestTokenUsage: ProjectChatService.RequestTokenUsage?
-    var toolSummary: String?
+    var summary: String?
 
     // MARK: - Custom Hashable (identity = id only)
 

@@ -13,7 +13,7 @@ final class SessionMemoryManager {
 
     init(configuration: ProjectChatConfiguration) {
         self.configuration = configuration
-        jsonEncoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        jsonEncoder.outputFormatting = [.sortedKeys]
     }
 
     func normalizedHistoryTurns(
@@ -251,7 +251,21 @@ final class SessionMemoryManager {
             guard seen.insert(pathKey).inserted else {
                 continue
             }
-            output.append(normalized)
+            // Truncate overly long summary portions
+            let entry: String
+            if normalized.count > configuration.maxMemoryItemCharacters,
+               let dashRange = normalized.range(of: " — ") {
+                let summaryStart = dashRange.upperBound
+                let maxSummary = configuration.maxMemoryItemCharacters - normalized.distance(from: normalized.startIndex, to: summaryStart)
+                if maxSummary > 0 {
+                    entry = String(normalized[..<summaryStart]) + String(normalized[summaryStart...].prefix(maxSummary)) + "..."
+                } else {
+                    entry = pathKey
+                }
+            } else {
+                entry = normalized
+            }
+            output.append(entry)
             if output.count >= limit {
                 break
             }

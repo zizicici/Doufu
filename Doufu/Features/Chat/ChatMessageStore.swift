@@ -34,6 +34,8 @@ final class ChatMessageStore {
         case progress(messageIndex: Int)
         /// A streaming‐text cell is the live message.
         case streaming(messageIndex: Int)
+        /// A live tool message is tracking an executing tool call.
+        case tool(messageIndex: Int)
     }
 
     private(set) var flowState: FlowState = .idle
@@ -48,6 +50,7 @@ final class ChatMessageStore {
 
     private var didAppendCancelMessage = false
     private var lastProgressPhaseText: String?
+    private var pendingProgressText: String?
     private var progressDebounceTask: Task<Void, Never>?
     private var streamRefreshTask: Task<Void, Never>?
 
@@ -67,8 +70,19 @@ final class ChatMessageStore {
     // MARK: - Incoming Events (State Machine Inputs)
 
     /// Receive a tool progress event from the coordinator.
-    /// Formats the event text and transitions to `.progress`.
+    /// If a tool message is live, updates its summary (the cell display text).
+    /// Otherwise transitions to `.progress`.
     func receiveProgressEvent(_ event: ToolProgressEvent) {
+        // If a tool message is currently live, route the event to update its summary.
+        if case let .tool(index) = flowState {
+            let text = Self.formatProgressEvent(event)
+            let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !normalized.isEmpty else { return }
+            messages[index].summary = normalized
+            delegate?.messageStoreDidUpdateCell(at: index, message: messages[index])
+            return
+        }
+
         let displayText = Self.formatProgressEvent(event)
         let normalized = displayText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else { return }
@@ -77,11 +91,13 @@ final class ChatMessageStore {
 
         // Cancel any pending debounced transition.
         progressDebounceTask?.cancel()
+        pendingProgressText = normalized
 
         // During the 50ms window, the OLD live cell stays live — no gap.
         progressDebounceTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
             guard !Task.isCancelled, let self else { return }
+            self.pendingProgressText = nil
             self.transitionToProgress(text: normalized)
         }
     }
@@ -99,19 +115,19 @@ final class ChatMessageStore {
 
         switch flowState {
         case .idle:
-            let index = insertLiveMessage(role: .assistant, text: trimmed, isProgress: false, startedAt: Date())
+            let index = insertLiveMessage(role: .assistant, content: trimmed, isProgress: false, startedAt: Date())
             flowState = .streaming(messageIndex: index)
 
-        case .progress(let oldIndex):
-            // Atomic transition: finalize progress → create streaming.
+        case .progress(let oldIndex), .tool(let oldIndex):
+            // Atomic transition: finalize progress/tool → create streaming.
             let now = Date()
             finalizeMessage(at: oldIndex, finishedAt: now)
-            let newIndex = insertLiveMessage(role: .assistant, text: trimmed, isProgress: false, startedAt: now)
+            let newIndex = insertLiveMessage(role: .assistant, content: trimmed, isProgress: false, startedAt: now)
             flowState = .streaming(messageIndex: newIndex)
 
         case .streaming(let index):
-            // Same cell — just update text.
-            messages[index].text = trimmed
+            // Same cell — just update content.
+            messages[index].content = trimmed
             scheduleStreamedCellRefresh(at: index)
         }
     }
@@ -119,50 +135,50 @@ final class ChatMessageStore {
     /// Called when the coordinator completes successfully.
     /// Finalizes the active cell or promotes streaming to the final assistant message.
     func completeWithResult(
-        text: String,
+        content: String,
         requestTokenUsage: ProjectChatService.RequestTokenUsage?,
-        toolSummary: String?
+        summary: String?
     ) {
         cancelPendingWorkItems()
         let now = Date()
-        let normalizedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedContent = content.trimmingCharacters(in: .whitespacesAndNewlines)
 
         switch flowState {
         case .streaming(let index):
             // Promote the streaming cell to the final assistant message.
-            if !normalizedText.isEmpty {
-                messages[index].text = normalizedText
+            if !normalizedContent.isEmpty {
+                messages[index].content = normalizedContent
             }
             messages[index].finishedAt = now
             messages[index].requestTokenUsage = requestTokenUsage
-            messages[index].toolSummary = toolSummary
+            messages[index].summary = summary
             delegate?.messageStoreDidUpdateCell(at: index, message: messages[index])
             delegate?.messageStoreDidRequestBatchUpdate()
 
-        case .progress(let index):
-            // Finalize the progress cell, then insert a separate final assistant message.
+        case .progress(let index), .tool(let index):
+            // Finalize the progress/tool cell, then insert a separate final assistant message.
             finalizeMessage(at: index, finishedAt: now)
-            if !normalizedText.isEmpty {
+            if !normalizedContent.isEmpty {
                 appendMessage(
                     role: .assistant,
-                    text: normalizedText,
+                    content: normalizedContent,
                     startedAt: requestStartedAt,
                     finishedAt: now,
                     requestTokenUsage: requestTokenUsage,
-                    toolSummary: toolSummary
+                    summary: summary
                 )
             }
 
         case .idle:
             // No streaming/progress happened (very fast response).
-            if !normalizedText.isEmpty {
+            if !normalizedContent.isEmpty {
                 appendMessage(
                     role: .assistant,
-                    text: normalizedText,
+                    content: normalizedContent,
                     startedAt: requestStartedAt,
                     finishedAt: now,
                     requestTokenUsage: requestTokenUsage,
-                    toolSummary: toolSummary
+                    summary: summary
                 )
             }
         }
@@ -181,7 +197,7 @@ final class ChatMessageStore {
         if !didAppendCancelMessage {
             appendMessage(
                 role: .system,
-                text: String(localized: "chat.system.request_cancelled"),
+                content: String(localized: "chat.system.request_cancelled"),
                 startedAt: requestStartedAt
             )
             didAppendCancelMessage = true
@@ -200,7 +216,7 @@ final class ChatMessageStore {
 
         appendMessage(
             role: .system,
-            text: error.localizedDescription,
+            content: error.localizedDescription,
             startedAt: requestStartedAt
         )
 
@@ -230,21 +246,64 @@ final class ChatMessageStore {
         mutationDelegate?.messageStoreDidMutateMessages()
     }
 
+    // MARK: - Tool Messages
+
+    /// Insert a new live tool message (tool execution just started).
+    /// `summary` holds the description shown in the cell; `content` is empty
+    /// until the tool completes and fills in the detailed result.
+    func insertLiveToolMessage(_ description: String) {
+        cancelPendingWorkItems()
+        let now = Date()
+        finalizeActiveFlowCell(finishedAt: now)
+        let index = insertLiveMessage(role: .tool, content: description, isProgress: false, startedAt: now)
+        messages[index].summary = description
+        flowState = .tool(messageIndex: index)
+    }
+
+    /// Finalize (or append) a completed tool message from a `ToolActivityEntry`.
+    /// - `summary` = short description (cell display).
+    /// - `content` = JSON-encoded `[ToolActivityEntry]` (detail page).
+    /// If `flowState == .tool(index)`: updates and finalizes that live message.
+    /// Otherwise: directly appends a new already-completed tool message.
+    func appendCompletedToolMessage(_ entry: ToolActivityEntry) {
+        let json = (try? JSONEncoder().encode([entry]))
+            .flatMap { String(data: $0, encoding: .utf8) }
+        let now = Date()
+
+        if case let .tool(index) = flowState {
+            messages[index].content = json ?? entry.description
+            messages[index].summary = entry.description
+            messages[index].finishedAt = now
+            flowState = .idle
+            delegate?.messageStoreDidUpdateCell(at: index, message: messages[index])
+            delegate?.messageStoreDidRequestBatchUpdate()
+            mutationDelegate?.messageStoreDidMutateMessages()
+        } else {
+            appendMessage(
+                role: .tool,
+                content: json ?? entry.description,
+                startedAt: now,
+                finishedAt: now,
+                summary: entry.description
+            )
+        }
+    }
+
     // MARK: - User / System Messages (outside the flow state machine)
 
     /// Append a user or system message. These are immediately finalized.
     @discardableResult
     func appendMessage(
         role: ChatMessage.Role,
-        text: String,
+        content: String,
         isProgress: Bool = false,
         startedAt: Date? = nil,
         finishedAt: Date? = nil,
         requestTokenUsage: ProjectChatService.RequestTokenUsage? = nil,
-        toolSummary: String? = nil
+        summary: String? = nil
     ) -> Int? {
-        let normalizedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalizedText.isEmpty else { return nil }
+        let normalizedContent = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedContent.isEmpty else { return nil }
 
         let createdAt = Date()
         let startedAt = startedAt ?? createdAt
@@ -253,13 +312,13 @@ final class ChatMessageStore {
         messages.append(
             ChatMessage(
                 role: role,
-                text: normalizedText,
+                content: normalizedContent,
                 createdAt: createdAt,
                 startedAt: startedAt,
                 finishedAt: resolvedFinishedAt,
                 isProgress: isProgress,
                 requestTokenUsage: requestTokenUsage,
-                toolSummary: toolSummary
+                summary: summary
             )
         )
         let newIndex = messages.count - 1
@@ -273,15 +332,15 @@ final class ChatMessageStore {
 
     func buildHistoryTurns() -> [ProjectChatService.ChatTurn] {
         messages.compactMap { message in
-            let normalizedText = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !normalizedText.isEmpty else { return nil }
+            let normalized = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !normalized.isEmpty else { return nil }
             switch message.role {
             case .user:
-                return .init(id: message.id.uuidString, role: .user, text: normalizedText)
+                return .init(id: message.id.uuidString, role: .user, text: normalized)
             case .assistant:
                 if message.isProgress { return nil }
-                return .init(id: message.id.uuidString, role: .assistant, text: normalizedText, toolSummary: message.toolSummary)
-            case .system:
+                return .init(id: message.id.uuidString, role: .assistant, text: normalized, toolSummary: message.summary)
+            case .system, .tool:
                 return nil
             }
         }
@@ -307,7 +366,7 @@ final class ChatMessageStore {
         finalizeActiveFlowCell(finishedAt: now)
 
         lastProgressPhaseText = text
-        let newIndex = insertLiveMessage(role: .assistant, text: text, isProgress: true, startedAt: now)
+        let newIndex = insertLiveMessage(role: .assistant, content: text, isProgress: true, startedAt: now)
         flowState = .progress(messageIndex: newIndex)
     }
 
@@ -315,7 +374,7 @@ final class ChatMessageStore {
     @discardableResult
     private func insertLiveMessage(
         role: ChatMessage.Role,
-        text: String,
+        content: String,
         isProgress: Bool,
         startedAt: Date
     ) -> Int {
@@ -323,13 +382,13 @@ final class ChatMessageStore {
         messages.append(
             ChatMessage(
                 role: role,
-                text: text,
+                content: content,
                 createdAt: createdAt,
                 startedAt: startedAt,
                 finishedAt: nil,
                 isProgress: isProgress,
                 requestTokenUsage: nil,
-                toolSummary: nil
+                summary: nil
             )
         )
         let newIndex = messages.count - 1
@@ -355,6 +414,8 @@ final class ChatMessageStore {
             finalizeMessage(at: index, finishedAt: finishedAt)
         case .streaming(let index):
             finalizeMessage(at: index, finishedAt: finishedAt)
+        case .tool(let index):
+            finalizeMessage(at: index, finishedAt: finishedAt)
         }
     }
 
@@ -371,7 +432,7 @@ final class ChatMessageStore {
         streamRefreshTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
             guard !Task.isCancelled, let self else { return }
-            self.delegate?.messageStoreDidUpdateStreamingText(at: index, text: self.messages[index].text)
+            self.delegate?.messageStoreDidUpdateStreamingText(at: index, text: self.messages[index].content)
             self.delegate?.messageStoreDidRequestBatchUpdate()
             self.delegate?.messageStoreDidRequestScroll(force: false)
         }

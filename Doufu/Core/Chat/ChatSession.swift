@@ -172,7 +172,7 @@ final class ChatSession {
 
         messageStore.appendMessage(
             role: .system,
-            text: String(localized: "chat.system.checkpoint_restored.new_thread")
+            content: String(localized: "chat.system.checkpoint_restored.new_thread")
         )
     }
 
@@ -361,7 +361,7 @@ final class ChatSession {
 
     @discardableResult
     func appendUserMessage(_ text: String) -> Int? {
-        messageStore.appendMessage(role: .user, text: text)
+        messageStore.appendMessage(role: .user, content: text)
     }
 
     // MARK: - Execution
@@ -497,6 +497,14 @@ extension ChatSession: ChatTaskCoordinatorDelegate {
         messageStore.receiveProgressEvent(event)
     }
 
+    func coordinatorDidStartToolCall(description: String) {
+        messageStore.insertLiveToolMessage(description)
+    }
+
+    func coordinatorDidCompleteToolCall(entry: ToolActivityEntry) {
+        messageStore.appendCompletedToolMessage(entry)
+    }
+
     func coordinatorDidCompleteWithResult(_ result: ChatTaskResult) {
         guard threadManager.currentThread != nil else { return }
 
@@ -505,22 +513,13 @@ extension ChatSession: ChatTaskCoordinatorDelegate {
             try? dataService.persistSessionMemory(threadManager.sessionMemory, threadID: threadID)
         }
 
-        var assistantText = result.assistantMessage
-        if !result.changedPaths.isEmpty {
-            let changesSummary = result.changedPaths.joined(separator: ", ")
-            assistantText += String(
-                format: String(localized: "chat.system.files_updated.append_format"),
-                changesSummary
-            )
-        }
-
         // Mark for immediate persistence — completeWithResult finalizes
         // the assistant message and its mutation must be flushed at once.
         needsImmediatePersistence = true
         messageStore.completeWithResult(
-            text: assistantText,
+            content: result.assistantMessage,
             requestTokenUsage: result.requestTokenUsage,
-            toolSummary: result.toolActivitySummary
+            summary: result.toolActivitySummary
         )
 
         threadManager.touchCurrentThread()

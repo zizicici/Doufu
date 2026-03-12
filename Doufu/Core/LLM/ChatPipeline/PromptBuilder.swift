@@ -34,15 +34,15 @@ final class PromptBuilder {
         5. After making changes, briefly summarize what you did.
 
         ## Tool Selection Strategy
-        - **Explore**: `list_directory` to see project structure; `glob_files` to find files by name or extension (e.g. `**/*.css`). Use `glob_files`'s `path` parameter to limit search to a subdirectory.
-        - **Search**: `search_files` for simple text search; `grep_files` for regex patterns. Both support an optional `path` parameter (limit to a subdirectory) and an optional `include` parameter (e.g. `*.js`, `*.{html,css}`) to filter by file name.
-        - **Read**: `read_file` to see current file content before editing. Call multiple reads in one response when you need several files.
-        - **Edit**: `edit_file` for surgical changes. Edits apply sequentially — earlier edits modify the file content before later ones run, so if edit #1 changes a function signature, edit #2's `old_text` should match the *post-edit-#1* content. Provide enough surrounding lines in `old_text` to ensure a unique match; exact whitespace is not required (the tool normalizes indentation and whitespace automatically). If a match is ambiguous, include more context.
+        - **Explore**: `list_directory` to see project structure; `glob_files` to find files by pattern.
+        - **Search**: `search_files` for text search; `grep_files` for regex. Use `files_only=true` when you only need to know which files match. Both support `path` and `include` params.
+        - **Read**: `read_file` before editing. Use `start_line`/`line_count` to read specific sections of large files. Call multiple reads in parallel.
+        - **Edit**: `edit_file` for surgical changes. Edits apply sequentially — `old_text` in edit #2 must match the post-edit-#1 content. Include enough context for a unique match.
         - **Write**: `write_file` for new files or complete rewrites only.
-        - **Revert**: `revert_file` to undo your changes to a single file — restores original content, or deletes the file if it was created during this session.
-        - **Review**: `diff_file` to see a unified diff of your changes to a file since the session started; `changed_files` to list all files you have modified in this session.
-        - **Web**: `web_search` to find documentation or examples; `web_fetch` to read a specific page (optionally set `raw: true` to get the original HTML when you need to parse page structure).
-        - **Validate**: `validate_code` to check HTML/JS files for errors by loading them in a hidden browser. Validate once after completing a group of related changes — not after every single edit. If errors are found, fix them and validate again.
+        - **Revert**: `revert_file` to restore a file to its checkpoint state.
+        - **Review**: `diff_file` / `changed_files` to review your modifications.
+        - **Web**: `web_search` / `web_fetch` for external info.
+        - **Validate**: `validate_code` after completing a group of related changes — not after every edit.
 
         ## Doufu Runtime Environment
         Pages run inside a native iOS app (WKWebView served via localhost). `fetch()` is CORS-free, `localStorage` and `IndexedDB` are natively persisted. No special SDK needed — see the project's AGENTS.md for full details.
@@ -93,12 +93,13 @@ final class PromptBuilder {
         """)
 
         if let agentsMarkdown, !agentsMarkdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let truncatedAgents = truncatedLongContent(agentsMarkdown)
             sections.append("""
             ## Project-Specific Rules (AGENTS.md)
             The following project-level rules take highest priority. AGENTS.md typically contains:
             coding conventions, preferred libraries/frameworks, file organization rules, naming patterns, or any constraints specific to this project.
 
-            \(agentsMarkdown)
+            \(truncatedAgents)
             """)
         }
 

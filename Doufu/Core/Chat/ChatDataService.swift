@@ -37,48 +37,8 @@ final class ChatDataService {
         memory: SessionMemory?
     ) {
         let thread = try dataStore.switchCurrentThread(projectID: projectID, threadID: threadID)
-        let persisted = try dataStore.loadMessages(projectID: projectID, threadID: threadID)
+        let messages = try dataStore.loadMessages(projectID: projectID, threadID: threadID)
         let memory = try dataStore.loadSessionMemory(projectID: projectID, threadID: threadID)
-
-        let messages = persisted.compactMap { persistedMessage -> ChatMessage? in
-            let normalizedRole = persistedMessage.role.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            guard let role = ChatMessage.Role(rawValue: normalizedRole) else {
-                return nil
-            }
-            let text = persistedMessage.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !text.isEmpty else {
-                return nil
-            }
-            let startedAt = persistedMessage.startedAt ?? persistedMessage.createdAt
-            let finishedAt: Date? = {
-                if let finishedAt = persistedMessage.finishedAt {
-                    return finishedAt
-                }
-                if persistedMessage.isProgress {
-                    return startedAt
-                }
-                return persistedMessage.createdAt
-            }()
-            return ChatMessage(
-                role: role,
-                text: text,
-                createdAt: persistedMessage.createdAt,
-                startedAt: startedAt,
-                finishedAt: finishedAt,
-                isProgress: persistedMessage.isProgress,
-                requestTokenUsage: {
-                    let input = max(0, persistedMessage.inputTokens ?? 0)
-                    let output = max(0, persistedMessage.outputTokens ?? 0)
-                    guard input > 0 || output > 0 else { return nil }
-                    return ProjectChatService.RequestTokenUsage(
-                        tokenUsageID: persistedMessage.tokenUsageID,
-                        inputTokens: input,
-                        outputTokens: output
-                    )
-                }(),
-                toolSummary: persistedMessage.toolSummary
-            )
-        }
 
         // Initialize persisted count so subsequent incremental saves
         // know how many rows already exist in DB for this thread.
@@ -105,9 +65,9 @@ final class ChatDataService {
     /// Full-replace persistence (DELETE ALL + INSERT ALL).
     /// Used before thread switches where we need a clean, authoritative write.
     func persistMessages(_ messages: [ChatMessage], threadID: String) throws {
-        let persisted = convertToPersistedMessages(messages)
-        try dataStore.saveMessages(projectID: projectID, threadID: threadID, messages: persisted)
-        persistedCountByThread[threadID] = persisted.count
+        let filtered = filteredMessages(messages)
+        try dataStore.saveMessages(projectID: projectID, threadID: threadID, messages: filtered)
+        persistedCountByThread[threadID] = filtered.count
     }
 
     /// Incremental persistence that avoids rewriting the entire table.
@@ -115,15 +75,15 @@ final class ChatDataService {
     /// any new messages.  Falls back to full-replace when the message
     /// list shrank (rare: should not happen in normal append-only flow).
     func persistMessagesIncrementally(_ messages: [ChatMessage], threadID: String) throws {
-        let persisted = convertToPersistedMessages(messages)
+        let filtered = filteredMessages(messages)
         let previousCount = persistedCountByThread[threadID] ?? 0
 
         // Fall back to full-replace if the list shrank (e.g. unexpected
         // state) — incremental delete logic is handled inside the store
         // but a full replace is simpler and this path is rare.
-        if persisted.count < previousCount {
-            try dataStore.saveMessages(projectID: projectID, threadID: threadID, messages: persisted)
-            persistedCountByThread[threadID] = persisted.count
+        if filtered.count < previousCount {
+            try dataStore.saveMessages(projectID: projectID, threadID: threadID, messages: filtered)
+            persistedCountByThread[threadID] = filtered.count
             return
         }
 
@@ -131,10 +91,10 @@ final class ChatDataService {
         try dataStore.saveMessagesIncrementally(
             projectID: projectID,
             threadID: threadID,
-            messages: persisted,
+            messages: filtered,
             unchangedPrefixCount: unchangedPrefix
         )
-        persistedCountByThread[threadID] = persisted.count
+        persistedCountByThread[threadID] = filtered.count
     }
 
     /// Reset persisted count tracking (e.g. after loading a thread from DB).
@@ -148,23 +108,9 @@ final class ChatDataService {
 
     // MARK: - Helpers
 
-    private func convertToPersistedMessages(_ messages: [ChatMessage]) -> [ProjectChatPersistedMessage] {
-        messages.compactMap { message -> ProjectChatPersistedMessage? in
-            let text = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !text.isEmpty else { return nil }
-            return ProjectChatPersistedMessage(
-                role: message.role.rawValue,
-                text: text,
-                createdAt: message.createdAt,
-                startedAt: message.startedAt,
-                finishedAt: message.finishedAt,
-                isProgress: message.isProgress,
-                tokenUsageID: message.requestTokenUsage?.tokenUsageID,
-                inputTokens: message.requestTokenUsage?.inputTokens,
-                outputTokens: message.requestTokenUsage?.outputTokens,
-                toolSummary: message.toolSummary
-            )
-        }
+    /// Filter out messages with empty content before persisting.
+    private func filteredMessages(_ messages: [ChatMessage]) -> [ChatMessage] {
+        messages.filter { !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }
 
     func touchThread(threadID: String) throws {

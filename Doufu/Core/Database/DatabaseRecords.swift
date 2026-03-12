@@ -559,6 +559,7 @@ struct DBChatMessage: Codable, FetchableRecord, PersistableRecord {
     static let typeSystem = 0
     static let typeNormal = 1
     static let typeProgress = 2
+    static let typeTool = 3
 }
 
 struct DBSessionMemory: Codable, FetchableRecord, PersistableRecord {
@@ -607,50 +608,79 @@ extension DBChatThread {
 }
 
 extension DBChatMessage {
-    static func from(_ msg: ProjectChatPersistedMessage, threadID: String, assistantID: String?, sortOrder: Int) -> DBChatMessage {
+    static func from(_ msg: ChatMessage, threadID: String, assistantID: String?, sortOrder: Int) -> DBChatMessage {
         let messageType: Int = {
-            let role = msg.role.lowercased()
-            if role == "system" { return typeSystem }
-            if msg.isProgress { return typeProgress }
-            return typeNormal
+            switch msg.role {
+            case .system: return typeSystem
+            case .tool: return typeTool
+            case .user, .assistant:
+                return msg.isProgress ? typeProgress : typeNormal
+            }
         }()
 
         return DBChatMessage(
             id: nil,
             threadID: threadID,
-            assistantID: (msg.role.lowercased() == "assistant") ? assistantID : nil,
+            assistantID: msg.role == .assistant ? assistantID : nil,
             messageType: messageType,
-            content: msg.text,
+            content: msg.content,
             sortOrder: sortOrder,
             createdAt: DatabaseTimestamp.toNanos(msg.createdAt),
-            tokenUsageID: msg.tokenUsageID,
-            summary: msg.toolSummary,
-            startedAt: msg.startedAt.map(DatabaseTimestamp.toNanos),
+            tokenUsageID: msg.requestTokenUsage?.tokenUsageID,
+            summary: msg.summary,
+            startedAt: DatabaseTimestamp.toNanos(msg.startedAt),
             finishedAt: msg.finishedAt.map(DatabaseTimestamp.toNanos)
         )
     }
 
-    func toPersistedMessage(tokenUsage: DBTokenUsage?) -> ProjectChatPersistedMessage {
-        let role: String
+    func toChatMessage(tokenUsage: DBTokenUsage?) -> ChatMessage? {
+        let role: ChatMessage.Role
         if messageType == DBChatMessage.typeSystem {
-            role = "system"
+            role = .system
+        } else if messageType == DBChatMessage.typeTool {
+            role = .tool
         } else if assistantID != nil {
-            role = "assistant"
+            role = .assistant
         } else {
-            role = "user"
+            role = .user
         }
 
-        return ProjectChatPersistedMessage(
+        let text = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+
+        let createdAtDate = DatabaseTimestamp.fromNanos(createdAt)
+        let startedAtDate = startedAt.map(DatabaseTimestamp.fromNanos) ?? createdAtDate
+        let isProgress = messageType == DBChatMessage.typeProgress
+
+        let finishedAtDate: Date? = {
+            if let finishedAt {
+                return DatabaseTimestamp.fromNanos(finishedAt)
+            }
+            if isProgress { return startedAtDate }
+            return createdAtDate
+        }()
+
+        let requestTokenUsage: ProjectChatService.RequestTokenUsage? = {
+            guard let tokenUsage else { return nil }
+            let input = max(0, tokenUsage.inputTokens)
+            let output = max(0, tokenUsage.outputTokens)
+            guard input > 0 || output > 0 else { return nil }
+            return ProjectChatService.RequestTokenUsage(
+                tokenUsageID: tokenUsageID,
+                inputTokens: input,
+                outputTokens: output
+            )
+        }()
+
+        return ChatMessage(
             role: role,
-            text: content,
-            createdAt: DatabaseTimestamp.fromNanos(createdAt),
-            startedAt: startedAt.map(DatabaseTimestamp.fromNanos),
-            finishedAt: finishedAt.map(DatabaseTimestamp.fromNanos),
-            isProgress: messageType == DBChatMessage.typeProgress,
-            tokenUsageID: tokenUsageID,
-            inputTokens: tokenUsage?.inputTokens,
-            outputTokens: tokenUsage?.outputTokens,
-            toolSummary: summary
+            content: text,
+            createdAt: createdAtDate,
+            startedAt: startedAtDate,
+            finishedAt: finishedAtDate,
+            isProgress: isProgress,
+            requestTokenUsage: requestTokenUsage,
+            summary: summary
         )
     }
 }

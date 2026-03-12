@@ -38,6 +38,10 @@ struct ProjectChatConfiguration {
     let maxAgentIterations = 25
     let maxToolCallsPerIteration = 8
 
+    /// Maximum characters per line when returning file content via read_file.
+    /// Lines exceeding this limit are truncated (prevents minified file bloat).
+    let maxCharsPerLineInReadFile = 500
+
     /// Maximum tool result size in characters to prevent conversation bloat.
     let maxToolResultCharacters = 32_000
 

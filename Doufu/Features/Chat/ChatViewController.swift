@@ -527,6 +527,54 @@ final class ChatViewController: UIViewController {
         dismiss(animated: true)
     }
 
+    // MARK: - Expand Handler
+
+    private func bindExpandHandler(cell: ChatMessageCell, message: ChatMessage) {
+        if message.role == .tool && message.finishedAt != nil {
+            // Tool messages: content holds the JSON detail.
+            let detail = message.content
+            cell.onExpandTapped = { [weak self] in
+                guard let self else { return }
+                let detailVC = ToolActivityDetailViewController(toolSummary: detail)
+                let nav = UINavigationController(rootViewController: detailVC)
+                nav.modalPresentationStyle = .pageSheet
+                if let sheet = nav.sheetPresentationController {
+                    sheet.detents = [.medium(), .large()]
+                    sheet.prefersGrabberVisible = true
+                }
+                self.present(nav, animated: true)
+            }
+        } else if let summary = message.summary, message.role != .tool {
+            // Assistant messages with tool summary.
+            cell.onExpandTapped = { [weak self] in
+                guard let self else { return }
+                let detailVC = ToolActivityDetailViewController(toolSummary: summary)
+                let nav = UINavigationController(rootViewController: detailVC)
+                nav.modalPresentationStyle = .pageSheet
+                if let sheet = nav.sheetPresentationController {
+                    sheet.detents = [.medium(), .large()]
+                    sheet.prefersGrabberVisible = true
+                }
+                self.present(nav, animated: true)
+            }
+        } else if message.isProgress && message.finishedAt == nil {
+            let progressText = message.content
+            cell.onExpandTapped = { [weak self] in
+                guard let self else { return }
+                let detailVC = MessageDetailViewController(text: progressText)
+                let nav = UINavigationController(rootViewController: detailVC)
+                nav.modalPresentationStyle = .pageSheet
+                if let sheet = nav.sheetPresentationController {
+                    sheet.detents = [.medium(), .large()]
+                    sheet.prefersGrabberVisible = true
+                }
+                self.present(nav, animated: true)
+            }
+        } else {
+            cell.onExpandTapped = nil
+        }
+    }
+
     // MARK: - Send / Cancel
 
     @objc
@@ -577,6 +625,7 @@ extension ChatViewController: ChatMessageStoreDelegate {
         let ip = IndexPath(row: index, section: 0)
         if let cell = tableView.cellForRow(at: ip) as? ChatMessageCell {
             cell.configure(message: message, now: Date())
+            bindExpandHandler(cell: cell, message: message)
         }
     }
 
@@ -647,20 +696,7 @@ extension ChatViewController: UITableViewDataSource {
 
         let message = session.messages[indexPath.row]
         cell.configure(message: message, now: Date())
-
-        if message.isProgress {
-            let progressText = message.text
-            cell.onExpandTapped = { [weak self] in
-                guard let self else { return }
-                let detailVC = MessageDetailViewController(text: progressText)
-                let nav = UINavigationController(rootViewController: detailVC)
-                nav.modalPresentationStyle = .pageSheet
-                if let sheet = nav.sheetPresentationController {
-                    sheet.detents = [.large()]
-                }
-                self.present(nav, animated: true)
-            }
-        }
+        bindExpandHandler(cell: cell, message: message)
 
         cell.onNeedsHeightUpdate = { [weak self] in
             self?.tableView.performBatchUpdates(nil)

@@ -133,7 +133,7 @@ final class ChatMessageCell: UITableViewCell {
         currentMessage = message
 
         applyContent(message: message, now: now)
-        let isActiveProgress = message.isProgress && message.finishedAt == nil
+        let isActiveProgress = (message.isProgress || message.role == .tool) && message.finishedAt == nil
         applyStyle(message: message, isActiveProgress: isActiveProgress)
 
         if isLive {
@@ -147,7 +147,7 @@ final class ChatMessageCell: UITableViewCell {
     /// Avoids re-applying styles, constraints, markdown rendering, etc.
     func updateText(_ text: String) {
         guard var message = currentMessage else { return }
-        message.text = text
+        message.content = text
         currentMessage = message
 
         let now = Date()
@@ -178,8 +178,8 @@ final class ChatMessageCell: UITableViewCell {
             return
         }
         let now = Date()
-        // Progress cells: animate dots
-        if message.isProgress {
+        // Progress and tool cells: animate dots
+        if message.isProgress || message.role == .tool {
             let animatedText = displayText(for: message, now: now)
             messageTextView.attributedText = nil
             messageTextView.text = animatedText
@@ -197,17 +197,26 @@ final class ChatMessageCell: UITableViewCell {
         let useMarkdown = message.role == .assistant && (message.finishedAt != nil || !message.isProgress)
 
         if useMarkdown {
-            messageTextView.attributedText = MarkdownRenderer.render(message.text)
+            messageTextView.attributedText = MarkdownRenderer.render(message.content)
         } else {
             let animatedText = displayText(for: message, now: now)
             messageTextView.attributedText = nil
             messageTextView.text = animatedText
-            messageTextView.font = .systemFont(ofSize: 15)
+            messageTextView.font = .systemFont(ofSize: message.role == .tool ? 14 : 15)
         }
 
-        if message.isProgress {
+        if message.role == .tool {
+            // Tool messages: single line, truncate with tail, show expand when finalized
+            messageTextView.textContainer.maximumNumberOfLines = 1
+            messageTextView.textContainer.lineBreakMode = .byTruncatingTail
+            expandButton.isHidden = message.finishedAt == nil
+        } else if message.isProgress && message.finishedAt == nil {
             messageTextView.textContainer.maximumNumberOfLines = 6
             messageTextView.textContainer.lineBreakMode = .byTruncatingTail
+            expandButton.isHidden = false
+        } else if message.summary != nil {
+            messageTextView.textContainer.maximumNumberOfLines = 0
+            messageTextView.textContainer.lineBreakMode = .byWordWrapping
             expandButton.isHidden = false
         } else {
             messageTextView.textContainer.maximumNumberOfLines = 0
@@ -250,6 +259,18 @@ final class ChatMessageCell: UITableViewCell {
             messageTextView.linkTextAttributes = [.foregroundColor: UIColor.systemBlue, .underlineStyle: NSUnderlineStyle.single.rawValue]
             metaLabel.textColor = .tertiaryLabel
             bubbleContainer.layer.borderColor = UIColor.clear.cgColor
+        case .tool:
+            trailingConstraint.isActive = false
+            leadingConstraint.isActive = true
+            bubbleContainer.backgroundColor = .clear
+            messageTextView.textColor = .tertiaryLabel
+            messageTextView.linkTextAttributes = [.foregroundColor: UIColor.systemBlue, .underlineStyle: NSUnderlineStyle.single.rawValue]
+            metaLabel.textColor = .tertiaryLabel
+            if isLive {
+                bubbleContainer.layer.borderColor = tintColor.withAlphaComponent(0.25).cgColor
+            } else {
+                bubbleContainer.layer.borderColor = UIColor.clear.cgColor
+            }
         }
     }
 
@@ -258,10 +279,16 @@ final class ChatMessageCell: UITableViewCell {
     }
 
     private func displayText(for message: ChatMessage, now: Date) -> String {
-        guard message.isProgress, message.finishedAt == nil else {
-            return message.text
+        // Tool messages always display summary (short description), not content.
+        let rawText = message.role == .tool
+            ? (message.summary ?? message.content)
+            : message.content
+
+        let shouldAnimate = (message.isProgress || message.role == .tool) && message.finishedAt == nil
+        guard shouldAnimate else {
+            return rawText
         }
-        let baseText = message.text.replacingOccurrences(
+        let baseText = rawText.replacingOccurrences(
             of: #"[.。…\s]+$"#,
             with: "",
             options: .regularExpression
@@ -272,6 +299,16 @@ final class ChatMessageCell: UITableViewCell {
     }
 
     private func metadataText(for message: ChatMessage, now: Date) -> String {
+        // Tool messages use minimal metadata — just duration while live.
+        if message.role == .tool {
+            if message.finishedAt == nil {
+                let duration = max(0, now.timeIntervalSince(message.startedAt))
+                return formatDuration(duration)
+            }
+            let duration = max(0, (message.finishedAt ?? now).timeIntervalSince(message.startedAt))
+            return formatDuration(duration)
+        }
+
         let timestamp = Self.timestampFormatter.string(from: message.createdAt)
         var parts: [String] = [timestamp]
         if message.role != .user {

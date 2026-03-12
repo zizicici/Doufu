@@ -93,6 +93,7 @@ final class PiPProgressManager: NSObject {
 
     @objc private func appWillResignActive() {
         guard isActive, isEnabled, hasActiveTask else { return }
+        startAudioPlayer()
         pipController?.startPictureInPicture()
     }
 
@@ -100,6 +101,7 @@ final class PiPProgressManager: NSObject {
         guard isPiPShowing else { return }
         stopAudioPlayer()
         pipController?.stopPictureInPicture()
+        pipSourceView?.removeFromSuperview()
 
         // Detach old infrastructure so preparePiPController creates fresh ones.
         pipSourceView = nil
@@ -112,8 +114,14 @@ final class PiPProgressManager: NSObject {
         if hasActiveTask {
             preparePiPController()
         } else {
+            displayedSessionID = nil
+            displayedEntry = nil
             isFinished = false
+            needsUserAction = false
             finishedStatusText = nil
+            currentStatusText = ""
+            currentElapsedText = ""
+            taskStartDate = nil
             projectSnapshot = nil
         }
     }

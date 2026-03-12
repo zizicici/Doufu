@@ -212,13 +212,21 @@ final class AgentToolProvider {
     private func readFileTool() -> AgentToolDefinition {
         AgentToolDefinition(
             name: "read_file",
-            description: "Read the contents of a file in the project. Use this to understand existing code before making changes.",
+            description: "Read file contents. Use start_line/line_count to read specific sections of large files.",
             parameters: .object([
                 "type": .string("object"),
                 "properties": .object([
                     "path": .object([
                         "type": .string("string"),
                         "description": .string("File path relative to project root, e.g. index.html or src/main.js")
+                    ]),
+                    "start_line": .object([
+                        "type": .string("integer"),
+                        "description": .string("1-based line number to start reading from")
+                    ]),
+                    "line_count": .object([
+                        "type": .string("integer"),
+                        "description": .string("Number of lines to read from start_line")
                     ])
                 ]),
                 "required": .array([.string("path")]),
@@ -230,7 +238,7 @@ final class AgentToolProvider {
     private func writeFileTool() -> AgentToolDefinition {
         AgentToolDefinition(
             name: "write_file",
-            description: "Create a new file or completely overwrite an existing file. Use this for new files or when the entire content needs to change. For small modifications to existing files, prefer edit_file instead.",
+            description: "Create a new file or completely overwrite an existing file. Prefer edit_file for partial changes.",
             parameters: .object([
                 "type": .string("object"),
                 "properties": .object([
@@ -252,7 +260,7 @@ final class AgentToolProvider {
     private func editFileTool() -> AgentToolDefinition {
         AgentToolDefinition(
             name: "edit_file",
-            description: "Make targeted edits to an existing file using search and replace. Edits are applied sequentially — earlier edits change the file content before later edits run, so plan accordingly. The tool uses multi-level fuzzy matching: if an exact match isn't found, it automatically tries indentation normalization, whitespace normalization, and line-trimmed matching. You don't need to match whitespace perfectly, but provide enough unique context (a few surrounding lines) to avoid ambiguous matches. Always read the file first before editing.",
+            description: "Apply search-and-replace edits to a file. Edits run sequentially. Whitespace is auto-normalized. Read the file first.",
             parameters: .object([
                 "type": .string("object"),
                 "properties": .object([
@@ -289,7 +297,7 @@ final class AgentToolProvider {
     private func deleteFileTool() -> AgentToolDefinition {
         AgentToolDefinition(
             name: "delete_file",
-            description: "Delete a file from the project. Use this when refactoring or cleaning up unused files.",
+            description: "Delete a file from the project.",
             parameters: .object([
                 "type": .string("object"),
                 "properties": .object([
@@ -307,7 +315,7 @@ final class AgentToolProvider {
     private func moveFileTool() -> AgentToolDefinition {
         AgentToolDefinition(
             name: "move_file",
-            description: "Move or rename a file within the project. The source file is moved to the destination path.",
+            description: "Move or rename a file within the project.",
             parameters: .object([
                 "type": .string("object"),
                 "properties": .object([
@@ -329,7 +337,7 @@ final class AgentToolProvider {
     private func revertFileTool() -> AgentToolDefinition {
         AgentToolDefinition(
             name: "revert_file",
-            description: "Revert a single file to its state at the last git checkpoint (before the current agent loop started). Use this when your edits to a file caused problems and you want to start over with that file. Does not affect other files.",
+            description: "Revert a file to its checkpoint state. Use when edits caused problems.",
             parameters: .object([
                 "type": .string("object"),
                 "properties": .object([
@@ -347,7 +355,7 @@ final class AgentToolProvider {
     private func diffFileTool() -> AgentToolDefinition {
         AgentToolDefinition(
             name: "diff_file",
-            description: "Show a unified diff of a file comparing the current content to its state at the start of this session (the last checkpoint). Useful for reviewing what you changed before responding to the user. Returns nothing if the file is unchanged.",
+            description: "Show a unified diff of a file compared to its checkpoint state.",
             parameters: .object([
                 "type": .string("object"),
                 "properties": .object([
@@ -365,7 +373,7 @@ final class AgentToolProvider {
     private func changedFilesTool() -> AgentToolDefinition {
         AgentToolDefinition(
             name: "changed_files",
-            description: "List all files that have been modified, added, or deleted since the start of this session (the last checkpoint). Useful for reviewing the overall scope of changes you have made.",
+            description: "List all files modified since the last checkpoint.",
             parameters: .object([
                 "type": .string("object"),
                 "properties": .object([:]),
@@ -377,7 +385,7 @@ final class AgentToolProvider {
     private func listDirectoryTool() -> AgentToolDefinition {
         AgentToolDefinition(
             name: "list_directory",
-            description: "List files and directories at the given path. Returns file names, sizes, and types. Use this to explore the project structure.",
+            description: "List files and directories at a path. Returns names, sizes, and types.",
             parameters: .object([
                 "type": .string("object"),
                 "properties": .object([
@@ -395,7 +403,7 @@ final class AgentToolProvider {
     private func searchFilesTool() -> AgentToolDefinition {
         AgentToolDefinition(
             name: "search_files",
-            description: "Search for a text pattern across project files. Returns matching file paths and the lines containing the match. Useful for finding where something is defined or used.",
+            description: "Search for text across project files. Returns matching lines. Set files_only=true to return only file paths.",
             parameters: .object([
                 "type": .string("object"),
                 "properties": .object([
@@ -409,7 +417,11 @@ final class AgentToolProvider {
                     ]),
                     "include": .object([
                         "type": .string("string"),
-                        "description": .string("Optional glob pattern to filter by file name (not path), e.g. '*.js', '*.{html,css}'. Only files whose name matches will be searched.")
+                        "description": .string("Optional glob pattern to filter by file name, e.g. '*.js', '*.{html,css}'")
+                    ]),
+                    "files_only": .object([
+                        "type": .string("boolean"),
+                        "description": .string("If true, return only matching file paths without line content")
                     ])
                 ]),
                 "required": .array([.string("query")]),
@@ -421,13 +433,13 @@ final class AgentToolProvider {
     private func grepFilesTool() -> AgentToolDefinition {
         AgentToolDefinition(
             name: "grep_files",
-            description: "Search for a regular expression pattern across project files. More powerful than search_files — supports full regex syntax (e.g. \"function\\s+\\w+\", \"class\\s+Foo\"). Returns matching file paths with line numbers and content.",
+            description: "Search for a regex pattern across project files. Set files_only=true to return only file paths.",
             parameters: .object([
                 "type": .string("object"),
                 "properties": .object([
                     "pattern": .object([
                         "type": .string("string"),
-                        "description": .string("Regular expression pattern to search for. Uses ICU regex syntax.")
+                        "description": .string("Regular expression pattern to search for (ICU regex syntax)")
                     ]),
                     "path": .object([
                         "type": .string("string"),
@@ -435,11 +447,15 @@ final class AgentToolProvider {
                     ]),
                     "include": .object([
                         "type": .string("string"),
-                        "description": .string("Optional glob pattern to filter by file name (not path), e.g. '*.js', '*.{html,css}'. Only files whose name matches will be searched.")
+                        "description": .string("Optional glob pattern to filter by file name, e.g. '*.js', '*.{html,css}'")
                     ]),
                     "case_sensitive": .object([
                         "type": .string("boolean"),
                         "description": .string("Whether the search is case-sensitive. Defaults to false.")
+                    ]),
+                    "files_only": .object([
+                        "type": .string("boolean"),
+                        "description": .string("If true, return only matching file paths without line content")
                     ])
                 ]),
                 "required": .array([.string("pattern")]),
@@ -451,7 +467,7 @@ final class AgentToolProvider {
     private func globFilesTool() -> AgentToolDefinition {
         AgentToolDefinition(
             name: "glob_files",
-            description: "Find files matching a glob pattern. Returns a list of file paths. Use this to find files by name or extension (e.g. \"**/*.css\", \"src/**/*.js\", \"*.html\").",
+            description: "Find files matching a glob pattern. Returns file paths.",
             parameters: .object([
                 "type": .string("object"),
                 "properties": .object([
@@ -473,7 +489,7 @@ final class AgentToolProvider {
     private func webSearchTool() -> AgentToolDefinition {
         AgentToolDefinition(
             name: "web_search",
-            description: "Search the web for information. Returns a list of results with titles, URLs, and descriptions. Use this to find documentation, API references, code examples, or any information not available in the project files.",
+            description: "Search the web. Returns results with titles, URLs, and descriptions.",
             parameters: .object([
                 "type": .string("object"),
                 "properties": .object([
@@ -491,7 +507,7 @@ final class AgentToolProvider {
     private func webFetchTool() -> AgentToolDefinition {
         AgentToolDefinition(
             name: "web_fetch",
-            description: "Fetch the content of a web page. By default returns extracted text with HTML stripped. Set raw to true to get the original HTML, useful when you need to parse the page structure (tables, lists, specific tags). Only supports http/https URLs.",
+            description: "Fetch a web page's content. Set raw=true for original HTML.",
             parameters: .object([
                 "type": .string("object"),
                 "properties": .object([
@@ -513,7 +529,7 @@ final class AgentToolProvider {
     private func validateCodeTool() -> AgentToolDefinition {
         AgentToolDefinition(
             name: "validate_code",
-            description: "Validate HTML/JS code by loading it in a hidden browser and checking for JavaScript errors. Use this after writing or editing HTML/JS files to catch syntax errors, runtime errors, and missing references before the user sees them. If errors are found, fix them with edit_file and validate again.",
+            description: "Validate HTML/JS by loading in a hidden browser. Catches syntax and runtime errors.",
             parameters: .object([
                 "type": .string("object"),
                 "properties": .object([
@@ -682,26 +698,71 @@ final class AgentToolProvider {
         }
 
         let truncatedData = data.prefix(configuration.maxBytesPerContextFile)
-        guard let content = String(data: truncatedData, encoding: .utf8) else {
+        guard let fullContent = String(data: truncatedData, encoding: .utf8) else {
             return ToolExecutionResult(output: "File is not valid UTF-8 text: \(path)", isError: true, changedPaths: [])
         }
 
-        let isTruncated = data.count > configuration.maxBytesPerContextFile
-        let lineCount = content.components(separatedBy: .newlines).count
+        let isByteTruncated = data.count > configuration.maxBytesPerContextFile
+        let allLines = fullContent.components(separatedBy: .newlines)
+        let totalLineCount = allLines.count
 
-        let truncationNote = isTruncated
-            ? "\n\n[Note: File truncated at \(configuration.maxBytesPerContextFile) bytes. Total size: \(data.count) bytes]"
-            : ""
+        // Apply start_line / line_count range selection
+        let startLine = (args["start_line"] as? Int) ?? 1
+        let requestedCount = args["line_count"] as? Int
+        let clampedStart = max(1, startLine)
+        let startIndex = clampedStart - 1 // 0-based
 
-        let previewLines = content.components(separatedBy: .newlines).prefix(5)
+        let selectedLines: ArraySlice<String>
+        let isRangeSelected: Bool
+        if startIndex < allLines.count {
+            if let count = requestedCount {
+                let endIndex = min(startIndex + count, allLines.count)
+                selectedLines = allLines[startIndex..<endIndex]
+                isRangeSelected = true
+            } else if startIndex > 0 {
+                selectedLines = allLines[startIndex...]
+                isRangeSelected = true
+            } else {
+                selectedLines = allLines[...]
+                isRangeSelected = false
+            }
+        } else {
+            selectedLines = []
+            isRangeSelected = true
+        }
+
+        // Truncate overly long lines (e.g. minified JS/CSS)
+        let maxCharsPerLine = configuration.maxCharsPerLineInReadFile
+        let processedLines = selectedLines.map { line -> String in
+            if line.count > maxCharsPerLine {
+                return String(line.prefix(maxCharsPerLine)) + " [truncated, \(line.count) chars total]"
+            }
+            return line
+        }
+
+        let content = processedLines.joined(separator: "\n")
+
+        var notes: [String] = []
+        if isRangeSelected {
+            let rangeEnd = startIndex + processedLines.count
+            notes.append("[Lines \(clampedStart)-\(rangeEnd) of \(totalLineCount) total]")
+        }
+        if isByteTruncated {
+            notes.append("[File truncated at \(configuration.maxBytesPerContextFile) bytes. Total size: \(data.count) bytes]")
+        }
+
+        let suffix = notes.isEmpty ? "" : "\n\n" + notes.joined(separator: "\n")
+
+        let previewLines = processedLines.prefix(5)
         let preview = previewLines.joined(separator: "\n")
+        let reportedLineCount = processedLines.count
 
         return ToolExecutionResult(
-            output: content + truncationNote,
+            output: content + suffix,
             isError: false,
             changedPaths: [],
-            metadata: .fileRead(path: normalizeRelativePath(path), lineCount: lineCount, sizeBytes: Int64(data.count)),
-            completionEvent: .fileRead(path: path, lineCount: lineCount, preview: preview)
+            metadata: .fileRead(path: normalizeRelativePath(path), lineCount: reportedLineCount, sizeBytes: Int64(data.count)),
+            completionEvent: .fileRead(path: path, lineCount: reportedLineCount, preview: preview)
         )
     }
 
@@ -1181,6 +1242,7 @@ final class AgentToolProvider {
 
         let searchPath = args["path"] as? String
         let includePattern = args["include"] as? String
+        let filesOnly = args["files_only"] as? Bool ?? false
         let searchRoot: URL
         if let searchPath, !searchPath.isEmpty, searchPath != "." {
             guard let resolved = resolveSafePath(searchPath) else {
@@ -1203,14 +1265,14 @@ final class AgentToolProvider {
 
         let loweredQuery = query.lowercased()
         var results: [String] = []
-        var matchedFileCount = 0
+        var matchedFiles: [String] = []
         var filesSearched = 0
         let maxMatchedFiles = 50
         let maxFilesToSearch = 500
 
         for case let fileURL as URL in enumerator {
             guard filesSearched < maxFilesToSearch else { break }
-            guard matchedFileCount < maxMatchedFiles else { break }
+            guard matchedFiles.count < maxMatchedFiles else { break }
 
             let values = try? fileURL.resourceValues(forKeys: [.isDirectoryKey])
             if values?.isDirectory == true { continue }
@@ -1232,22 +1294,36 @@ final class AgentToolProvider {
 
             filesSearched += 1
             let lines = content.components(separatedBy: .newlines)
-            var fileMatches: [(lineNumber: Int, text: String)] = []
+            var fileHasMatch = false
 
-            for (index, line) in lines.enumerated() {
-                guard fileMatches.count < 5 else { break }
-                if line.lowercased().contains(loweredQuery) {
-                    let trimmed = line.trimmingCharacters(in: .whitespaces)
-                    let preview = trimmed.count > 120 ? String(trimmed.prefix(120)) + "..." : trimmed
-                    fileMatches.append((lineNumber: index + 1, text: preview))
+            if filesOnly {
+                // Only check if any line matches — no need to collect line details
+                for line in lines {
+                    if line.lowercased().contains(loweredQuery) {
+                        fileHasMatch = true
+                        break
+                    }
                 }
-            }
-
-            if !fileMatches.isEmpty {
-                matchedFileCount += 1
-                results.append(relativePath)
-                for match in fileMatches {
-                    results.append("  L\(match.lineNumber): \(match.text)")
+                if fileHasMatch {
+                    matchedFiles.append(relativePath)
+                    results.append(relativePath)
+                }
+            } else {
+                var fileMatches: [(lineNumber: Int, text: String)] = []
+                for (index, line) in lines.enumerated() {
+                    guard fileMatches.count < 5 else { break }
+                    if line.lowercased().contains(loweredQuery) {
+                        let trimmed = line.trimmingCharacters(in: .whitespaces)
+                        let preview = trimmed.count > 120 ? String(trimmed.prefix(120)) + "..." : trimmed
+                        fileMatches.append((lineNumber: index + 1, text: preview))
+                    }
+                }
+                if !fileMatches.isEmpty {
+                    matchedFiles.append(relativePath)
+                    results.append(relativePath)
+                    for match in fileMatches {
+                        results.append("  L\(match.lineNumber): \(match.text)")
+                    }
                 }
             }
         }
@@ -1262,10 +1338,12 @@ final class AgentToolProvider {
             )
         }
 
-        let matchedFiles = results.filter { !$0.hasPrefix("  ") }
         let matchingFileCount = matchedFiles.count
+        let header = filesOnly
+            ? "Found \(matchingFileCount) file(s) matching \"\(query)\":\n"
+            : "Search results for \"\(query)\":\n"
         return ToolExecutionResult(
-            output: "Search results for \"\(query)\":\n" + results.joined(separator: "\n"),
+            output: header + results.joined(separator: "\n"),
             isError: false,
             changedPaths: [],
             metadata: .searchResult(query: query, matchCount: matchingFileCount, matchedFiles: matchedFiles),
@@ -1282,6 +1360,7 @@ final class AgentToolProvider {
 
         let caseSensitive = args["case_sensitive"] as? Bool ?? false
         let includePattern = args["include"] as? String
+        let filesOnly = args["files_only"] as? Bool ?? false
         let regexOptions: NSRegularExpression.Options = caseSensitive ? [] : [.caseInsensitive]
 
         let regex: NSRegularExpression
@@ -1316,7 +1395,7 @@ final class AgentToolProvider {
         }
 
         var results: [String] = []
-        var matchedFileCount = 0
+        var matchedFiles: [String] = []
         var filesSearched = 0
         let maxMatchedFiles = 80
         let maxFilesToSearch = 500
@@ -1324,7 +1403,7 @@ final class AgentToolProvider {
 
         for case let fileURL as URL in enumerator {
             guard filesSearched < maxFilesToSearch else { break }
-            guard matchedFileCount < maxMatchedFiles else { break }
+            guard matchedFiles.count < maxMatchedFiles else { break }
 
             let values = try? fileURL.resourceValues(forKeys: [.isDirectoryKey])
             if values?.isDirectory == true { continue }
@@ -1346,23 +1425,37 @@ final class AgentToolProvider {
 
             filesSearched += 1
             let lines = content.components(separatedBy: .newlines)
-            var fileMatches: [(lineNumber: Int, text: String)] = []
 
-            for (index, line) in lines.enumerated() {
-                guard fileMatches.count < maxMatchesPerFile else { break }
-                let range = NSRange(line.startIndex..., in: line)
-                if regex.firstMatch(in: line, range: range) != nil {
-                    let trimmed = line.trimmingCharacters(in: .whitespaces)
-                    let preview = trimmed.count > 120 ? String(trimmed.prefix(120)) + "..." : trimmed
-                    fileMatches.append((lineNumber: index + 1, text: preview))
+            if filesOnly {
+                var fileHasMatch = false
+                for line in lines {
+                    let range = NSRange(line.startIndex..., in: line)
+                    if regex.firstMatch(in: line, range: range) != nil {
+                        fileHasMatch = true
+                        break
+                    }
                 }
-            }
-
-            if !fileMatches.isEmpty {
-                matchedFileCount += 1
-                results.append(relativePath)
-                for match in fileMatches {
-                    results.append("  L\(match.lineNumber): \(match.text)")
+                if fileHasMatch {
+                    matchedFiles.append(relativePath)
+                    results.append(relativePath)
+                }
+            } else {
+                var fileMatches: [(lineNumber: Int, text: String)] = []
+                for (index, line) in lines.enumerated() {
+                    guard fileMatches.count < maxMatchesPerFile else { break }
+                    let range = NSRange(line.startIndex..., in: line)
+                    if regex.firstMatch(in: line, range: range) != nil {
+                        let trimmed = line.trimmingCharacters(in: .whitespaces)
+                        let preview = trimmed.count > 120 ? String(trimmed.prefix(120)) + "..." : trimmed
+                        fileMatches.append((lineNumber: index + 1, text: preview))
+                    }
+                }
+                if !fileMatches.isEmpty {
+                    matchedFiles.append(relativePath)
+                    results.append(relativePath)
+                    for match in fileMatches {
+                        results.append("  L\(match.lineNumber): \(match.text)")
+                    }
                 }
             }
         }
@@ -1377,10 +1470,12 @@ final class AgentToolProvider {
             )
         }
 
-        let matchedFiles = results.filter { !$0.hasPrefix("  ") }
         let matchingFileCount = matchedFiles.count
+        let header = filesOnly
+            ? "Found \(matchingFileCount) file(s) matching /\(pattern)/:\n"
+            : "Grep results for /\(pattern)/:\n"
         return ToolExecutionResult(
-            output: "Grep results for /\(pattern)/:\n" + results.joined(separator: "\n"),
+            output: header + results.joined(separator: "\n"),
             isError: false,
             changedPaths: [],
             metadata: .searchResult(query: "/\(pattern)/", matchCount: matchingFileCount, matchedFiles: matchedFiles),
