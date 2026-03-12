@@ -466,8 +466,10 @@ extension ChatSession: ToolConfirmationHandler {
             )
             switch decision {
             case .approved:
+                PiPProgressManager.shared.clearNeedsUserAction(sessionID: projectID)
                 return true
             case .denied:
+                PiPProgressManager.shared.clearNeedsUserAction(sessionID: projectID)
                 return false
             case .deferred:
                 break
