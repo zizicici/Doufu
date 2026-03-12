@@ -23,19 +23,18 @@
 1. `Doufu/App/`
    - App 生命周期与根导航。`AppDelegate.setup()` 初始化 `DatabaseManager`。
 2. `Doufu/Core/Database/`
-   - `DatabaseManager`：SQLite 数据库单例，持有 `DatabasePool`，运行迁移（v1 初始 schema → v2 聊天表 → v3 项目与权限表）。
+   - `DatabaseManager`：SQLite 数据库单例，持有 `DatabasePool`，当前保留单个 `v1_initial_schema` 迁移，一次性创建所有现用表结构。
    - `DatabaseRecords`：所有 GRDB Record 类型（DBProject, DBPermission, DBProvider, DBProviderModel, DBTokenUsage, DBAppModelSelection, DBProjectModelSelection, DBThreadModelSelection, DBChatThread, DBAssistant, DBChatMessage, DBSessionMemory）及 domain ↔ DB 映射扩展。
    - `DatabaseTimestamp`：Date ↔ Int64 纳秒转换。
-   - `DatabaseLegacyMigration`：空存根（历史迁移已移除）。
 3. `Doufu/Core/Projects/`
-   - `AppProjectStore`：项目 CRUD 通过 GRDB（`project` + `permission` 表），创建项目目录与模板文件、快照管理。
-   - `ProjectGitService`：项目级 Git 初始化、检查点创建与 undo。
+   - `AppProjectStore`：项目 CRUD 通过 GRDB（`project` + `permission` 表），创建项目目录与模板文件、读写项目元数据与权限。
+   - `ProjectGitService`：项目级 Git 初始化、agent loop 前自动保存、检查点创建、历史恢复与 undo helper。
 4. `Doufu/Core/LLM/`
    - `ProjectChatService`：聊天服务对外入口与数据模型定义。
    - `LLMModelRegistry`：统一模型能力解析（capabilities + token budgets）。
    - `ChatDataStore`：`final class`，通过 GRDB `DatabasePool` 同步读写聊天数据（线程、消息、助理、会话记忆）。
    - `ChatDataService`：`@MainActor final class`，绑定单个 `projectID`，提供自动持久化。
-   - `ChatSessionContext`：分离存储键（`projectID`）、工具执行路径（`projectURL` = App/）和 `projectRootURL`。
+   - `ChatSessionContext`：分离存储键（`projectID`）、工具执行路径（`workspaceURL` = App/）和 `projectRootURL`。
    - `ChatDataModels`：聊天数据模型定义，含 `ModelSelection` 统一类型。
    - `SessionMemory`：会话记忆模型。
    - `ModelSelectionStateStore`：App / Project / Thread 三层模型选择的共享状态源、缓存与变更通知。
@@ -75,7 +74,7 @@
 7. `Doufu/Features/ProjectRuntime/`
    - `ProjectWorkspaceViewController`：项目运行页与悬浮面板。
    - `ProjectFileBrowserViewController`：文件树浏览与内容编辑。
-   - `ProjectSettingsViewController`：项目设置与快照入口。
+   - `ProjectSettingsViewController`：项目设置与 checkpoint history 入口。
    - `ProjectTokenUsageViewController`：项目级 token 使用量。
    - `ProjectModelSelectionViewController`：项目级模型选择。
    - `ProjectOpenTransition`：项目打开转场动画。
@@ -140,7 +139,7 @@
 ### SQLite 数据库
 
 - 路径：`Documents/doufu.sqlite`（WAL 模式，外键 ON）
-- 13 张表：`project`, `permission`, `llm_provider`, `llm_provider_model`, `token_usage`, `app_model_selection`, `project_model_selection`, `thread_model_selection`, `thread`, `assistant`, `message`, `session_memory`
+- 12 张表：`project`, `permission`, `llm_provider`, `llm_provider_model`, `token_usage`, `app_model_selection`, `project_model_selection`, `thread_model_selection`, `thread`, `assistant`, `message`, `session_memory`
 - 所有结构化数据（项目元数据、Provider 配置、模型选择、聊天线程/消息/记忆、token 用量）统一存储在 SQLite 中
 
 ### 项目磁盘结构（v4）
@@ -150,14 +149,10 @@
 - `AppData/`：用户数据（localStorage.json）— Git 检查点恢复时保留
 - `preview.jpg`：项目预览图（运行页截图写入），位于项目根目录
 
-### 快照
-
-- `{project}/App/.doufu_snapshots/manual/*`
-- `{project}/App/.doufu_snapshots/auto/*`
-
 ### Git
 
 - `{project}/App/.git/`（由 `ProjectGitService` 管理）
+- 当前版本恢复能力依赖 Git checkpoint history；未启用独立的文件系统快照目录
 
 ### 凭证
 
@@ -176,7 +171,7 @@
    - 读取 `AGENTS.md` 和 `DOUFU.MD` 作为额外上下文。
    - 构建系统提示词（含工具说明、安全约束、memory 格式）。
    - 将历史对话与工具活动摘要组装为 conversation items。
-   - 创建 Git 检查点。
+   - 确保 Git 仓库存在，并自动保存当前脏工作区。
 3. Agent 循环
    - 每轮向模型发送完整 conversation + 工具定义。
    - 模型返回文本和/或工具调用。
@@ -212,6 +207,7 @@
      - 任意 → `.idle`：请求完成/取消/出错时 finalize 并重置。
      - 不变量：任务执行期间恰好有一条消息 `finishedAt == nil`。
 8. 失败与回退
+   - 若 agent 实际改动了文件，结束时创建新的 Git checkpoint。
    - SSE 与非 SSE 响应都做失败解析。
    - `xhigh` 被拒时回退到 `high`。
    - `json_schema` 被拒时回退为普通文本模式重试。

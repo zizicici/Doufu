@@ -76,10 +76,11 @@
 
 ## Git 检查点注意事项
 
-1. Agent loop 开始前通过 `ProjectGitService.createCheckpoint()` 创建检查点。
-2. 检查点 commit message 格式：`[doufu-checkpoint] {用户消息前 120 字}`。
-3. `undo()` 回退到最近检查点 commit。
-4. 项目创建时自动初始化 Git 仓库。
+1. Agent loop 开始前通过 `ProjectGitService.ensureRepository()` 确保仓库存在，并通过 `autoSaveIfDirty()` 保存当前脏工作区。
+2. Agent loop 结束后若实际改动了文件，再通过 `createCheckpoint()` 创建检查点。
+3. 检查点 commit message 格式：`[doufu-checkpoint] {用户消息前 120 字}`。
+4. `restore(checkpointID:)` 会从目标检查点创建新分支并切换；`undo()` 目前仍是服务层 helper。
+5. 项目创建时自动初始化 Git 仓库。
 
 ## 模型能力解析注意事项
 

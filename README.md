@@ -25,10 +25,10 @@
    - 可拖拽悬浮面板（刷新/聊天/文件/设置/退出）。
    - 支持边缘吸附、自动收起、点击展开。
    - 支持 JS 错误桥接提示，项目预览图保存为 `preview.jpg`（JPEG）。
-3. 项目设置与快照：
-   - 项目名修改。
-   - 手动快照最多 10 条、自动快照最多 10 条。
-   - 支持"载入快照"恢复。
+3. 项目设置与版本记录：
+   - 项目名与描述修改。
+   - 项目默认模型与工具权限覆盖。
+   - Git 检查点历史查看与恢复入口。
 4. 文件浏览与编辑：
    - 内置项目文件浏览器，支持二级目录。
    - 文件内容页支持编辑与保存。
@@ -46,8 +46,9 @@
    - 工具权限分三级（autoAllow / confirmOnce / alwaysConfirm），支持三种权限模式（standard / autoApproveNonDestructive / fullAutoApprove）。
    - 只读工具并行执行，写入工具顺序执行。
    - 支持 extended thinking 内容展示（如 Claude thinking blocks）。
-   - 聊天成功改动后自动快照。
-   - Git 检查点：Agent 循环前自动创建 checkpoint commit，支持 undo 回退。
+   - Agent 循环开始前会确保项目 Git 仓库存在，并自动保存用户当前未提交改动。
+   - 若本轮实际改动了文件，结束后会创建 Git checkpoint，并刷新运行页与项目更新时间。
+   - 设置页支持查看并恢复 checkpoint 历史。
    - 对话上下文 4 阶段自适应压缩，控制 token 预算。
    - 支持任务进度分气泡展示、取消请求、请求级 token 用量展示。
 7. 模型管理：
@@ -76,4 +77,4 @@
 2. 新增用户可见文案时，必须同步 `Localizable.xcstrings`。
 3. 涉及架构调整时，必须同步 `technical-architecture.md` 与 `module-design.md`。
 
-文档已按当前实现同步更新（2026-03-11）。所有结构化数据已迁移到 SQLite（GRDB.swift 7.10.0）。
+文档已按当前实现同步更新（2026-03-12）。所有结构化数据已迁移到 SQLite（GRDB.swift 7.10.0）。

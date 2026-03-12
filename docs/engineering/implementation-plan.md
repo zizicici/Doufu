@@ -1,11 +1,11 @@
 # 执行计划
 
-## 当前状态（2026-03-11）
+## 当前状态（2026-03-12）
 
 1. 已完成首页项目画廊（搜索、长按菜单、拖拽排序、新建入口）。
 2. 已完成项目运行页（全屏预览 + 悬浮面板 + 退出确认 + 文件入口）。
-3. 已完成项目级设置页（名称修改 + 快照入口）。
-4. 已完成项目快照能力（手动 10 条 + 自动 10 条 + 载入快照页）。
+3. 已完成项目级设置页（名称/描述修改、项目级模型、工具权限、checkpoint history 入口）。
+4. 已完成 Git checkpoint history（agent loop 前自动保存、实际改动后创建 checkpoint、列表恢复）。
 5. 已完成 Provider 管理全链路（OpenAI Compatible / Anthropic / Gemini，均支持 API Key + OAuth）。
 6. 已完成 Provider 模型管理（发现/自定义/能力参数编辑）。
 7. 已完成 `LLMModelRegistry` 统一模型能力解析（多级优先级回退）。
@@ -13,7 +13,7 @@
 9. 已完成 15 种 Agent 工具：文件 CRUD、搜索、diff、web_search、web_fetch、validate_code。
 10. 已完成工具权限分级与三种权限模式（standard / autoApproveNonDestructive / fullAutoApprove）。
 11. 已完成只读工具并行执行与写入工具顺序执行。
-12. 已完成 `ProjectGitService`：项目级 Git 初始化、检查点创建与 undo。
+12. 已完成 `ProjectGitService`：项目级 Git 初始化、自动保存、检查点创建、历史恢复与 undo helper。
 13. 已完成 `CodeValidator`：隐藏 WKWebView 代码验证。
 14. 已完成 `WebToolProvider`：Web 搜索（多引擎降级）与网页抓取。
 15. 已完成对话上下文 4 阶段自适应压缩。
@@ -39,7 +39,7 @@
 1. Phase A：基础框架
    - 文档骨架、目录规范、核心模块边界。
 2. Phase B：项目生命周期
-   - 本地项目创建、读取、删除、改名、更新时间维护、快照管理。
+   - 本地项目创建、读取、删除、改名、更新时间维护、Git 仓库初始化与 checkpoint history。
 3. Phase C：首页交互
    - 卡片网格展示、搜索、空状态、上下文菜单、排序页。
 4. Phase D：运行与编辑入口
@@ -51,7 +51,7 @@
 7. Phase G：Agent 架构升级
    - 从 pipeline 三路执行升级为 tool-use agent loop。
    - 15 种工具定义与执行、权限分级。
-   - Git 检查点与 undo。
+   - Git 检查点、历史恢复与 undo helper。
    - 代码验证、Web 搜索与抓取。
    - 对话上下文自适应压缩。
    - Extended thinking 支持。
@@ -65,7 +65,7 @@
    - 消息流 FlowState 状态机，保证任务期间恰好一条 live 消息。
 10. Phase I：SQLite 迁移
     - 引入 GRDB.swift 7.10.0，建立 `DatabaseManager` 单例（WAL 模式，外键 ON）。
-    - 13 张表覆盖所有结构化数据：项目元数据（`project` + `permission`）、Provider 配置（`llm_provider` + `llm_provider_model`）、三层模型选择、聊天数据（`thread` + `assistant` + `message` + `session_memory`）、token 用量。
+    - 12 张表覆盖所有结构化数据：项目元数据（`project` + `permission`）、Provider 配置（`llm_provider` + `llm_provider_model`）、三层模型选择、聊天数据（`thread` + `assistant` + `message` + `session_memory`）、token 用量。
     - 移除所有 JSON 文件存储（manifest.json, threads_index, thread_messages, project_config, thread_selections）和 UserDefaults 存储（providers, token usage）。
     - 项目磁盘结构升级到 v4：`Documents/Projects/{uuid}/App/` + `AppData/`。
     - 聊天 UI 文件重组到 `Features/Chat/` 目录。
@@ -85,5 +85,5 @@
 
 1. 聊天失败场景可定位原因并有明确恢复路径。
 2. 关键改动可回滚，不破坏项目目录完整性。
-3. 快照能力在手动与自动两条链路均稳定工作，且可正确按类型淘汰旧快照。
+3. Git checkpoint 历史可正确恢复代码目录，同时保持 `AppData/` 用户数据不受影响。
 4. 新增能力不破坏现有项目运行与 Provider 配置。

@@ -7,7 +7,7 @@
    - 责任：项目卡片画廊、搜索、长按菜单、排序与新建入口。
 2. `Project Runtime`
    - 主要文件：`Features/ProjectRuntime/ProjectWorkspaceViewController.swift`
-   - 责任：网页运行、悬浮面板、退出确认、运行时快捷入口、LLM 设置检测与快速设置引导。
+   - 责任：网页运行、悬浮面板、退出确认、运行时快捷入口、Chat 入口的 App 默认模型检查、`LLMQuickSetup` / `Read Only` 分流、LLM 设置检测与快速设置引导。
 3. `Project Chat`
    - 主要文件：
      - `Features/Chat/ChatViewController.swift`：UI 布局、View 生命周期、UITableViewDataSource、输入处理、线程管理协调、ChatTaskCoordinatorDelegate 转发。
@@ -30,7 +30,7 @@
    - 责任：项目文件树浏览、文件编辑与保存（Runestone 优先）。
 6. `Project Settings`
    - 主要文件：`Features/ProjectRuntime/ProjectSettingsViewController.swift`
-   - 责任：项目名修改、快照保存、快照恢复入口。
+   - 责任：项目名/描述修改、项目级模型与工具权限配置、Git checkpoint 历史入口。
 7. `Global Settings`
    - 主要文件：`Features/Settings/SettingsViewController.swift`
    - 责任：全局设置页，分 General / LLM Providers / Project 三组。
@@ -54,10 +54,10 @@
     - 责任：SQLite 数据库初始化与迁移、GRDB Record 类型定义、domain ↔ DB 映射。
 14. `Project Storage`
     - 主要文件：`Core/Projects/AppProjectStore.swift`
-    - 责任：项目生命周期（GRDB `project` + `permission` 表）、模板写入、快照管理。
+    - 责任：项目生命周期（GRDB `project` + `permission` 表）、模板写入、项目元数据与权限读写。
 15. `Project Git Service`
     - 主要文件：`Core/Projects/ProjectGitService.swift`
-    - 责任：项目级 Git 初始化、检查点创建（agent loop 前）、undo 回退、变更查询。
+    - 责任：项目级 Git 初始化、agent loop 前自动保存、检查点创建、历史恢复、变更查询。
 16. `Provider Storage`
     - 主要文件：`Core/LLM/LLMProviderSettingsStore.swift`
     - 责任：Provider / Model CRUD 通过 GRDB（`llm_provider` + `llm_provider_model` 表）、Keychain 凭证管理、三层 ModelSelection CRUD。
@@ -97,7 +97,7 @@
    - 调用 `ProjectChatOrchestrator.sendAndApply()` 启动 agent loop
    - Agent 自主调用工具（读文件 → 分析 → 编辑/写入 → 验证）
    - 只读工具并行执行，写入工具顺序执行
-   - 改动成功后刷新运行页并创建 `auto` 快照
+   - 改动成功后刷新运行页、更新时间，并创建 Git checkpoint
 3. 工具权限与确认
    - 工具按危险程度分级（autoAllow / confirmOnce / alwaysConfirm）
    - `ToolConfirmationHandler` 协议由 ChatViewController 实现
@@ -113,17 +113,15 @@
    - 线程级：`thread_model_selection` 表
    - `LLMProviderSettingsStore` 统一 CRUD
    - 运行时 UI 通过 `ModelSelectionStateStore` 读取和订阅
-6. Git 检查点与 undo
-   - Agent loop 开始前 `ProjectGitService.createCheckpoint()` 提交当前状态
-   - `ProjectGitService.undo()` 可回退到最近检查点
-7. 快照恢复
-   - `ProjectSettingsViewController` 或聊天自动链路触发快照
-   - `AppProjectStore.restoreSnapshot()` 覆盖恢复并更新时间
-8. Provider 配置
+6. Git 检查点与恢复
+   - Agent loop 开始前 `ProjectGitService.ensureRepository()` + `autoSaveIfDirty()` 保存当前工作区状态
+   - Agent loop 结束后若实际改动文件，再通过 `createCheckpoint()` 记录检查点
+   - `ProjectSettingsViewController` 提供 checkpoint history 恢复入口
+7. Provider 配置
    - `AddProviderViewController` 选择 Provider 类型
    - `ProviderAuthMethodViewController` 选择 API Key / OAuth
    - 表单提交后写入 `LLMProviderSettingsStore`（GRDB 元数据 + Keychain 凭证）
-9. Token Usage 统计
+8. Token Usage 统计
    - `LLMTokenUsageStore.recordUsage()` 每次 LLM 请求插入一行到 `token_usage` 表
    - `providerLabel` 通过 SQL JOIN 解析，不在写入时传入
    - Dashboard 使用 GROUP BY / SUM 查询，支持 Provider/Model 维度切换与项目隔离视图

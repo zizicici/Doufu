@@ -22,7 +22,8 @@
 3. 已存在但无效的 `override` 不自动回退。
 4. 恢复默认的语义永远是“删除当前层 override”。
 5. Thread 只保存一条当前显式选择，不保存每个 Provider 的历史选择。
-6. `reasoning / thinking` 不参与三层继承，只属于当前 Thread 的显式配置。
+6. `reasoning / thinking` 与 `provider / model` 一起组成同一份 `ModelSelection`，随三层 override 一起继承。
+7. Workspace 的 Chat 准入规则可以独立于运行时 resolver 结果；尤其 `App Default` 缺失时，不能被 Project / Thread 的可用 override 掩盖。
 
 ## 层级定义
 
@@ -30,7 +31,7 @@
 
 全局默认模型。
 
-- 数据含义：用户给整个 App 设定的默认 Provider + Model。
+- 数据含义：用户给整个 App 设定的默认 Provider + Model + 可选参数。
 - 可为空：为空表示 App 层缺失。
 - 设置入口：`设置 -> 默认模型`
 - 清除动作：`Not Set`
@@ -39,7 +40,7 @@
 
 项目默认模型。
 
-- 数据含义：仅对当前 Project 生效的默认 Provider + Model。
+- 数据含义：仅对当前 Project 生效的默认 Provider + Model + 可选参数。
 - 可为空：为空表示继续继承 App 默认。
 - 设置入口：`项目设置 -> 默认模型`
 - 清除动作：`Use App Default`
@@ -48,21 +49,27 @@
 
 当前线程的显式模型选择。
 
-- 数据含义：当前 Thread 使用的 Provider + Model + 线程级参数。
+- 数据含义：当前 Thread 使用的显式 Provider + Model + 可选参数。
 - 可为空：为空表示继续继承 `Project -> App`。
 - 设置入口：聊天页中的模型配置入口
 - 清除动作：`Use Default`
 
-## Thread 层数据范围
+## 三层数据范围
 
-Thread 层只保存以下信息：
+`App / Project / Thread` 三层都保存同一份 `ModelSelection` 结构：
 
 1. `providerID`
 2. `modelRecordID`
 3. `reasoningEffort?`
 4. `thinkingEnabled?`
 
-不再保存“切到别的 Provider 时上次用过什么模型”的历史信息。
+当前实现里，App 默认模型页、Project 默认模型页、Thread 模型配置页都围绕这同一份结构工作：
+
+1. 三层都可以显式保存 `provider / model / reasoning / thinking`
+2. 三层都通过同一套 `ModelSelectionResolver.sanitizeSelection()` 归一化参数
+3. 三层都遵循“当前层 `override == nil` 时整份结构一起向上继承”的规则
+
+Thread 仍然只保存一条当前显式选择，不再保存“切到别的 Provider 时上次用过什么模型”的历史信息。
 
 ## 有效状态模型
 
@@ -129,27 +136,47 @@ Thread 层只保存以下信息：
 
 ## Workspace 行为
 
+### App 默认缺失时的入口规则
+
+当 `appDefaultSelection == nil` 时：
+
+1. 每次从 Workspace 点击 Chat，都必须先弹 alert。
+2. 该检查优先于合并后的 resolver 结果；即使 Project / Thread 已有可用 override，也不能直接进入 Full Chat。
+3. alert 主按钮：`Setup`
+4. `Setup` 始终进入 `LLMQuickSetup`
+5. alert 次按钮：`Read Only Chat`
+6. 允许临时进入只读聊天
+7. 进入并退出 `Read Only Chat` 不视为“已处理”；只要 App 默认模型仍缺失，下次进入还要继续弹 alert。
+
 ### 进入 Full Chat
 
-以下两种情况都允许进入可编辑聊天页：
+以下规则仅在 App 默认模型已配置时适用。
+
+以下两种情况允许进入可编辑聊天页：
 
 1. `valid`
-2. `missingSelection`
-3. `invalidOverride`
+2. `invalidOverride`
 
 对应行为：
 
 1. `valid`
    - 正常 Full Chat
    - `Send` 可用
-2. `missingSelection`
-   - Full Chat
-   - `Send` 禁用
-   - 用户在 Chat 内修复模型选择
-3. `invalidOverride`
+2. `invalidOverride`
    - Full Chat
    - `Send` 禁用
    - UI 明确显示当前 override 无效
+
+`missingSelection` 不作为 Workspace 冷启动进入 Full Chat 的正常放行条件；如果该状态在 Chat 已打开后因设置变化出现，仍按 Chat 内的禁发与修复规则处理。
+
+### 当前入口实现
+
+当前代码里，三层 `ModelSelection` 的数据结构和继承规则保持一致；这里的差异只发生在 Workspace 冷启动进入 Chat 前的“入口预检范围”，不是三层结构不一致。
+
+1. Workspace 点击 Chat 时，会先读取 `appDefaultSelection` 与 `projectDefaultSelection` 做入口判断。
+2. 当前 `ModelSelectionStateStore.currentThreadSelection(projectID:)` 在没有明确 `threadID` 时不会恢复 persisted thread override，所以冷启动入口阶段不会预先带入 Thread 层。
+3. `ChatSession` 恢复当前线程后，Thread override 会继续按和 App / Project 相同的 `ModelSelection(provider, model, reasoning, thinking)` 结构参与 resolver。
+4. 因此，当前实现的区别是“进入 Chat 前的预检时机”，不是“Thread 层字段或参数语义不同”。
 
 ### 无可用 Provider 环境
 
@@ -204,9 +231,10 @@ Chat 内必须存在明确修复入口。
 
 当状态为 `missingSelection` 时：
 
-1. 不自动弹窗
-2. 允许进入 Chat
+1. Chat 内不自动弹窗
+2. 保持当前 Chat 可见，但 `Send` 禁用
 3. 用户可通过模型入口主动配置
+4. 该规则不覆盖 Workspace 首次进入时的 App 默认缺失拦截
 
 ### Chat 内 Provider 修复
 
