@@ -18,9 +18,6 @@ final class ProjectOpenTransitionDelegate: NSObject, UIViewControllerTransitioni
     /// Corner radius of the source cell.
     var originCornerRadius: CGFloat = 14
 
-    /// Interactive dismiss controller — set by the presented VC.
-    var interactionController: ProjectDismissInteractionController?
-
     func animationController(
         forPresented presented: UIViewController,
         presenting: UIViewController,
@@ -33,14 +30,6 @@ final class ProjectOpenTransitionDelegate: NSObject, UIViewControllerTransitioni
         ProjectOpenAnimator(originFrame: originFrame, originCornerRadius: originCornerRadius, isPresenting: false)
     }
 
-    func interactionControllerForDismissal(
-        using animator: UIViewControllerAnimatedTransitioning
-    ) -> UIViewControllerInteractiveTransitioning? {
-        guard let controller = interactionController, controller.isInteractive else {
-            return nil
-        }
-        return controller
-    }
 }
 
 // MARK: - Animator
@@ -187,54 +176,3 @@ private final class ProjectOpenAnimator: NSObject, UIViewControllerAnimatedTrans
     }
 }
 
-// MARK: - Interactive Dismiss Controller
-
-final class ProjectDismissInteractionController: UIPercentDrivenInteractiveTransition {
-
-    private(set) var isInteractive = false
-    private weak var viewController: UIViewController?
-    private let edgePanGesture: UIScreenEdgePanGestureRecognizer
-
-    var isGestureEnabled: Bool {
-        get { edgePanGesture.isEnabled }
-        set { edgePanGesture.isEnabled = newValue }
-    }
-
-    init(viewController: UIViewController) {
-        self.viewController = viewController
-        edgePanGesture = UIScreenEdgePanGestureRecognizer()
-        edgePanGesture.edges = .left
-        super.init()
-
-        edgePanGesture.addTarget(self, action: #selector(handleEdgePan(_:)))
-        viewController.view.addGestureRecognizer(edgePanGesture)
-    }
-
-    @objc
-    private func handleEdgePan(_ gesture: UIScreenEdgePanGestureRecognizer) {
-        guard let view = gesture.view else { return }
-        let translation = gesture.translation(in: view)
-        let screenWidth = view.bounds.width
-        let progress = min(max(translation.x / screenWidth, 0), 1)
-
-        switch gesture.state {
-        case .began:
-            isInteractive = true
-            viewController?.dismiss(animated: true)
-        case .changed:
-            update(progress)
-        case .ended, .cancelled:
-            isInteractive = false
-            let velocity = gesture.velocity(in: view).x
-            // Complete if dragged past 35% or has strong velocity
-            if progress > 0.35 || velocity > 800 {
-                finish()
-            } else {
-                cancel()
-            }
-        default:
-            isInteractive = false
-            cancel()
-        }
-    }
-}

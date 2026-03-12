@@ -85,15 +85,16 @@ final class AppProjectStore {
 
                 // Insert project record into DB
                 let nowNanos = DatabaseTimestamp.toNanos(now)
-                let dbProject = DBProject(
-                    id: projectID,
-                    createdAt: nowNanos,
-                    title: projectName,
-                    description: description,
-                    sortOrder: 0,
-                    updatedAt: nowNanos
-                )
                 try self.dbPool.write { db in
+                    let maxOrder = try Int.fetchOne(db, sql: "SELECT MAX(sort_order) FROM project") ?? 0
+                    let dbProject = DBProject(
+                        id: projectID,
+                        createdAt: nowNanos,
+                        title: projectName,
+                        description: description,
+                        sortOrder: maxOrder + 1,
+                        updatedAt: nowNanos
+                    )
                     try dbProject.insert(db)
                 }
             } catch {
@@ -314,10 +315,7 @@ final class AppProjectStore {
             return trimmedName
         }
 
-        let formatter = DateFormatter()
-        formatter.locale = Locale.current
-        formatter.dateFormat = "MMdd-HHmm"
-        return String(format: String(localized: "project_store.default_project_name_format"), formatter.string(from: createdAt))
+        return String(localized: "project_store.default_project_name", defaultValue: "Untitled")
     }
 
     private func makeDeletionStagingURL(for projectID: String) -> URL {
@@ -358,9 +356,7 @@ final class AppProjectStore {
         now: Date,
         projectURL: URL
     ) throws {
-        let blankPageTag = String(localized: "project_template.blank_page.tag")
-        let blankPageHintEmpty = String(localized: "project_template.blank_page.hint.empty")
-        let blankPageHintChat = String(localized: "project_template.blank_page.hint.chat")
+        let onboardingHint = String(localized: "project_template.onboarding.hint", defaultValue: "点击菜单，通过对话开发你的应用")
 
         let indexHTML = """
         <!doctype html>
@@ -373,12 +369,13 @@ final class AppProjectStore {
           </head>
           <body>
             <main class="screen">
-              <section class="empty-card">
-                <p class="tag">\(blankPageTag)</p>
-                <h1>\(name)</h1>
-                <p class="hint">\(blankPageHintEmpty)</p>
-                <p class="hint">\(blankPageHintChat)</p>
-              </section>
+              <p class="onboarding-hint">\(onboardingHint)</p>
+              <div class="onboarding-arrow">
+                <svg width="64" height="72" viewBox="0 0 64 72" fill="none">
+                  <path d="M50 4C46 20 38 38 16 52" stroke="#94a3b8" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+                  <path d="M14 43L14 54L25 54" stroke="#94a3b8" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+                </svg>
+              </div>
             </main>
             <script src="./script.js"></script>
           </body>
@@ -414,42 +411,31 @@ final class AppProjectStore {
             env(safe-area-inset-bottom)
             env(safe-area-inset-left);
           display: flex;
-          align-items: center;
-          justify-content: center;
-          overflow-y: auto;
-          overscroll-behavior: contain;
+          flex-direction: column;
+          justify-content: flex-end;
+          align-items: flex-start;
+          overflow: hidden;
         }
 
-        .empty-card {
-          width: min(520px, 100%);
-          margin: 20px 16px;
-          background: #ffffff;
-          border-radius: 18px;
-          border: 1px solid #e2e8f0;
-          padding: 20px 18px;
-          box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
-        }
-
-        .tag {
-          margin: 0;
-          font-size: 12px;
-          font-weight: 600;
-          color: #64748b;
+        .onboarding-hint {
+          margin: 0 0 10px 56px;
+          font-size: 15px;
+          font-weight: 500;
+          color: #94a3b8;
           user-select: none;
           -webkit-touch-callout: none;
         }
 
-        h1 {
-          margin: 8px 0 14px;
-          font-size: 26px;
-          line-height: 1.2;
+        .onboarding-arrow {
+          margin: 0 0 90px 36px;
+          animation: bounce 2s ease-in-out infinite;
+          user-select: none;
+          -webkit-touch-callout: none;
         }
 
-        .hint {
-          margin: 0;
-          line-height: 1.55;
-          color: #334155;
-          font-size: 14px;
+        @keyframes bounce {
+          0%, 100% { transform: translateY(0); }
+          50% { transform: translateY(8px); }
         }
         """
 

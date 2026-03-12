@@ -30,14 +30,9 @@ final class ProjectWorkspaceViewController: UIViewController {
         let selectionResolution: ModelSelectionResolution
     }
 
-    private enum PanelSide {
-        case left
-        case right
-    }
-
     private enum PanelPresentationState {
         case expanded
-        case collapsed(PanelSide)
+        case collapsed
     }
 
     enum InitialRoute: Equatable {
@@ -51,21 +46,19 @@ final class ProjectWorkspaceViewController: UIViewController {
     private let projectChangeCenter = ProjectChangeCenter.shared
     private let coordinator = ProjectLifecycleCoordinator.shared
     var onDismissed: (() -> Void)?
-    private var dismissInteractionController: ProjectDismissInteractionController?
     private let jsErrorHandlerName = "jsError"
     private var lastPresentedJSErrorSignature: String?
     private lazy var jsErrorMessageProxy = WeakScriptMessageHandler(target: self)
 
-    private let panelSize = CGSize(width: 72, height: 278)
-    private let collapsedHandleSize = CGSize(width: 28, height: 72)
-    private let collapsedVisibleWidth: CGFloat = 10
+    private let panelExpandedWidth: CGFloat = 230
+    private let panelHeight: CGFloat = 52
+    private let handleWidth: CGFloat = 28
     private let panelMargin: CGFloat = 10
     private let panelAutoCollapseDelay: TimeInterval = 2.4
     private let panelAnimationDuration: TimeInterval = 0.22
-    private let collapsedHandleVisibleAlpha: CGFloat = 0.5
-    private let edgeSnapThreshold: CGFloat = 28
+    private let exitTargetSize: CGFloat = 56
     private var hasInitializedPanelPosition = false
-    private var panelState: PanelPresentationState = .expanded
+    private var panelState: PanelPresentationState = .collapsed
     private var panelPanStartFrame: CGRect = .zero
     private var autoCollapseWorkItem: DispatchWorkItem?
     private var chatNavigationController: UINavigationController?
@@ -76,6 +69,8 @@ final class ProjectWorkspaceViewController: UIViewController {
     private var pendingInitialRoute: InitialRoute
     private var projectChangeObserver: NSObjectProtocol?
     private var appDidBecomeActiveObserver: NSObjectProtocol?
+    private var isDraggingPanel = false
+    private var isOverExitTargetPrevious = false
 
     private lazy var webView: WKWebView = {
         let configuration = WKWebViewConfiguration()
@@ -117,7 +112,7 @@ final class ProjectWorkspaceViewController: UIViewController {
     private lazy var panelContainer: UIVisualEffectView = {
         let blur = UIBlurEffect(style: .systemThinMaterial)
         let view = UIVisualEffectView(effect: blur)
-        view.layer.cornerRadius = 18
+        view.layer.cornerRadius = 16
         view.layer.cornerCurve = .continuous
         view.layer.masksToBounds = true
         view.layer.borderWidth = 1
@@ -126,63 +121,61 @@ final class ProjectWorkspaceViewController: UIViewController {
         return view
     }()
 
-    private lazy var leftDragArea: UIView = {
+    private lazy var handleArea: UIView = {
         let view = UIView()
         view.translatesAutoresizingMaskIntoConstraints = false
-        view.isUserInteractionEnabled = true
         return view
     }()
 
-    private lazy var rightDragArea: UIView = {
-        let view = UIView()
-        view.translatesAutoresizingMaskIntoConstraints = false
-        view.isUserInteractionEnabled = true
-        return view
-    }()
-
-    private lazy var leftDragIndicator: UIView = {
+    private lazy var handleIndicator: UIView = {
         let view = UIView()
         view.translatesAutoresizingMaskIntoConstraints = false
         view.backgroundColor = .tertiaryLabel
         view.layer.cornerRadius = 1.5
-        view.layer.cornerCurve = .continuous
-        view.alpha = 0.85
-        return view
-    }()
-
-    private lazy var rightDragIndicator: UIView = {
-        let view = UIView()
-        view.translatesAutoresizingMaskIntoConstraints = false
-        view.backgroundColor = .tertiaryLabel
-        view.layer.cornerRadius = 1.5
-        view.layer.cornerCurve = .continuous
-        view.alpha = 0.85
-        return view
-    }()
-
-    private lazy var collapsedHandleView: UIVisualEffectView = {
-        let blur = UIBlurEffect(style: .systemThinMaterial)
-        let view = UIVisualEffectView(effect: blur)
-        view.layer.cornerRadius = 12
-        view.layer.cornerCurve = .continuous
-        view.layer.masksToBounds = true
-        view.layer.borderWidth = 1
-        view.layer.borderColor = UIColor.separator.withAlphaComponent(0.35).cgColor
-        view.alpha = 0
-        view.isHidden = true
-        view.translatesAutoresizingMaskIntoConstraints = true
-        return view
-    }()
-
-    private lazy var collapsedHandleIndicator: UIView = {
-        let view = UIView()
-        view.translatesAutoresizingMaskIntoConstraints = false
-        view.backgroundColor = .tertiaryLabel
-        view.layer.cornerRadius = 2
         view.layer.cornerCurve = .continuous
         view.alpha = 0.9
         return view
     }()
+
+    private lazy var exitTargetView: UIView = {
+        let view = UIView()
+        view.backgroundColor = UIColor.systemRed.withAlphaComponent(0.85)
+        view.layer.cornerRadius = exitTargetSize / 2
+        view.layer.cornerCurve = .continuous
+        view.alpha = 0
+        view.isHidden = true
+        view.translatesAutoresizingMaskIntoConstraints = true
+        let imageView = UIImageView(
+            image: UIImage(
+                systemName: "xmark",
+                withConfiguration: UIImage.SymbolConfiguration(pointSize: 22, weight: .bold)
+            )
+        )
+        imageView.tintColor = .white
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(imageView)
+        NSLayoutConstraint.activate([
+            imageView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            imageView.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+        ])
+        return view
+    }()
+
+    private lazy var exitHintLabel: UILabel = {
+        let label = UILabel()
+        label.text = String(localized: "workspace.panel.exit_hint", defaultValue: "松开退出")
+        label.font = .systemFont(ofSize: 17, weight: .semibold)
+        label.textColor = .systemRed
+        label.textAlignment = .center
+        label.adjustsFontSizeToFitWidth = true
+        label.minimumScaleFactor = 0.6
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.alpha = 0
+        label.isHidden = true
+        return label
+    }()
+
+    private weak var buttonStackView: UIStackView?
 
     private lazy var refreshButton: UIButton = {
         let button = makePanelIconButton(systemName: "arrow.clockwise", tintColor: nil)
@@ -192,7 +185,7 @@ final class ProjectWorkspaceViewController: UIViewController {
     }()
 
     private lazy var chatButton: UIButton = {
-        let button = makePanelIconButton(systemName: "bubble.left.and.bubble.right", tintColor: nil)
+        let button = makePanelIconButton(systemName: "bubble.right", tintColor: nil)
         button.accessibilityLabel = String(localized: "workspace.panel.chat")
         button.addTarget(self, action: #selector(didTapChat), for: .touchUpInside)
         return button
@@ -256,7 +249,6 @@ final class ProjectWorkspaceViewController: UIViewController {
         configureLayout()
         installWebLoadingCover()
         configureFloatingPanel()
-        configureInteractiveDismiss()
         projectChangeObserver = projectChangeCenter.addObserver(projectID: project.id) { [weak self] change in
             self?.handleProjectChange(change)
         }
@@ -291,24 +283,12 @@ final class ProjectWorkspaceViewController: UIViewController {
         super.viewDidLayoutSubviews()
 
         if !hasInitializedPanelPosition {
-            let safeFrame = currentSafeFrame()
-            if AppProjectStore.shared.isAutoCollapsePanelEnabled {
-                // Start collapsed directly
-                let preferredY = safeFrame.minY + panelMargin
-                collapsePanel(to: .right, preferredY: preferredY, animated: false)
-            } else {
-                let initialFrame = expandedFrame(
-                    for: .right,
-                    preferredY: safeFrame.minY + panelMargin,
-                    safeFrame: safeFrame
-                )
-                panelContainer.frame = initialFrame
-                panelContainer.alpha = 1
-                panelContainer.isHidden = false
-                panelState = .expanded
-            }
+            panelContainer.frame = panelCollapsedFrame()
+            panelState = .collapsed
+            panelContainer.alpha = 1
+            panelContainer.isHidden = false
             hasInitializedPanelPosition = true
-        } else {
+        } else if !isDraggingPanel {
             relayoutPanelForCurrentState()
         }
     }
@@ -347,86 +327,61 @@ final class ProjectWorkspaceViewController: UIViewController {
         }
     }
 
-    private func configureInteractiveDismiss() {
-        let interaction = ProjectDismissInteractionController(viewController: self)
-        interaction.isGestureEnabled = true
-        dismissInteractionController = interaction
-        if let delegate = transitioningDelegate as? ProjectOpenTransitionDelegate {
-            delegate.interactionController = interaction
-        }
-    }
-
     private func configureFloatingPanel() {
+        view.addSubview(exitTargetView)
         view.addSubview(panelContainer)
-        view.addSubview(collapsedHandleView)
 
         let stackView = UIStackView(arrangedSubviews: [refreshButton, chatButton, filesButton, settingsButton, exitButton])
         stackView.translatesAutoresizingMaskIntoConstraints = false
-        stackView.axis = .vertical
-        stackView.spacing = 4
+        stackView.axis = .horizontal
+        stackView.spacing = 0
         stackView.distribution = .fillEqually
 
         panelContainer.contentView.addSubview(stackView)
-        panelContainer.contentView.addSubview(leftDragArea)
-        panelContainer.contentView.addSubview(rightDragArea)
-        leftDragArea.addSubview(leftDragIndicator)
-        rightDragArea.addSubview(rightDragIndicator)
-        collapsedHandleView.contentView.addSubview(collapsedHandleIndicator)
+        panelContainer.contentView.addSubview(exitHintLabel)
+        panelContainer.contentView.addSubview(handleArea)
+        handleArea.addSubview(handleIndicator)
+        buttonStackView = stackView
 
         NSLayoutConstraint.activate([
-            leftDragArea.topAnchor.constraint(equalTo: panelContainer.contentView.topAnchor),
-            leftDragArea.leadingAnchor.constraint(equalTo: panelContainer.contentView.leadingAnchor),
-            leftDragArea.bottomAnchor.constraint(equalTo: panelContainer.contentView.bottomAnchor),
-            leftDragArea.widthAnchor.constraint(equalToConstant: 16),
+            handleArea.trailingAnchor.constraint(equalTo: panelContainer.contentView.trailingAnchor),
+            handleArea.topAnchor.constraint(equalTo: panelContainer.contentView.topAnchor),
+            handleArea.bottomAnchor.constraint(equalTo: panelContainer.contentView.bottomAnchor),
+            handleArea.widthAnchor.constraint(equalToConstant: handleWidth),
 
-            rightDragArea.topAnchor.constraint(equalTo: panelContainer.contentView.topAnchor),
-            rightDragArea.trailingAnchor.constraint(equalTo: panelContainer.contentView.trailingAnchor),
-            rightDragArea.bottomAnchor.constraint(equalTo: panelContainer.contentView.bottomAnchor),
-            rightDragArea.widthAnchor.constraint(equalToConstant: 16),
+            handleIndicator.centerXAnchor.constraint(equalTo: handleArea.centerXAnchor),
+            handleIndicator.centerYAnchor.constraint(equalTo: handleArea.centerYAnchor),
+            handleIndicator.widthAnchor.constraint(equalToConstant: 3),
+            handleIndicator.heightAnchor.constraint(equalToConstant: 20),
 
-            leftDragIndicator.centerXAnchor.constraint(equalTo: leftDragArea.centerXAnchor),
-            leftDragIndicator.centerYAnchor.constraint(equalTo: leftDragArea.centerYAnchor),
-            leftDragIndicator.widthAnchor.constraint(equalToConstant: 3),
-            leftDragIndicator.heightAnchor.constraint(equalToConstant: 34),
+            stackView.leadingAnchor.constraint(equalTo: panelContainer.contentView.leadingAnchor, constant: 8),
+            stackView.topAnchor.constraint(equalTo: panelContainer.contentView.topAnchor, constant: 6),
+            stackView.trailingAnchor.constraint(equalTo: handleArea.leadingAnchor, constant: -2),
+            stackView.bottomAnchor.constraint(equalTo: panelContainer.contentView.bottomAnchor, constant: -6),
 
-            rightDragIndicator.centerXAnchor.constraint(equalTo: rightDragArea.centerXAnchor),
-            rightDragIndicator.centerYAnchor.constraint(equalTo: rightDragArea.centerYAnchor),
-            rightDragIndicator.widthAnchor.constraint(equalToConstant: 3),
-            rightDragIndicator.heightAnchor.constraint(equalToConstant: 34),
-
-            stackView.topAnchor.constraint(equalTo: panelContainer.contentView.topAnchor, constant: 8),
-            stackView.leadingAnchor.constraint(equalTo: leftDragArea.trailingAnchor, constant: 2),
-            stackView.trailingAnchor.constraint(equalTo: rightDragArea.leadingAnchor, constant: -2),
-            stackView.bottomAnchor.constraint(equalTo: panelContainer.contentView.bottomAnchor, constant: -8),
-
-            collapsedHandleIndicator.centerXAnchor.constraint(equalTo: collapsedHandleView.contentView.centerXAnchor),
-            collapsedHandleIndicator.centerYAnchor.constraint(equalTo: collapsedHandleView.contentView.centerYAnchor),
-            collapsedHandleIndicator.widthAnchor.constraint(equalToConstant: 14),
-            collapsedHandleIndicator.heightAnchor.constraint(equalToConstant: 3)
+            exitHintLabel.leadingAnchor.constraint(equalTo: panelContainer.contentView.leadingAnchor, constant: 8),
+            exitHintLabel.trailingAnchor.constraint(equalTo: handleArea.leadingAnchor, constant: -2),
+            exitHintLabel.centerYAnchor.constraint(equalTo: panelContainer.contentView.centerYAnchor),
         ])
 
-        let panelPanGestureLeft = UIPanGestureRecognizer(target: self, action: #selector(handleExpandedPanelPan(_:)))
-        let panelPanGestureRight = UIPanGestureRecognizer(target: self, action: #selector(handleExpandedPanelPan(_:)))
-        leftDragArea.addGestureRecognizer(panelPanGestureLeft)
-        rightDragArea.addGestureRecognizer(panelPanGestureRight)
+        let panGesture = UIPanGestureRecognizer(target: self, action: #selector(handlePanelPan(_:)))
+        panelContainer.addGestureRecognizer(panGesture)
 
-        let collapsedTapGesture = UITapGestureRecognizer(target: self, action: #selector(didTapCollapsedHandle))
-        let collapsedPanGesture = UIPanGestureRecognizer(target: self, action: #selector(handleCollapsedHandlePan(_:)))
-        collapsedTapGesture.require(toFail: collapsedPanGesture)
-        collapsedHandleView.addGestureRecognizer(collapsedTapGesture)
-        collapsedHandleView.addGestureRecognizer(collapsedPanGesture)
+        let tapGesture = UITapGestureRecognizer(target: self, action: #selector(didTapPanel(_:)))
+        tapGesture.require(toFail: panGesture)
+        panelContainer.addGestureRecognizer(tapGesture)
     }
 
     private func makePanelIconButton(systemName: String, tintColor: UIColor?) -> UIButton {
+        let symbolConfig = UIImage.SymbolConfiguration(pointSize: 17, weight: .semibold)
+        let image = UIImage(systemName: systemName, withConfiguration: symbolConfig)
         var configuration = UIButton.Configuration.plain()
-        configuration.image = UIImage(systemName: systemName)
+        configuration.image = image
         configuration.title = nil
         configuration.imagePlacement = .all
-        configuration.baseForegroundColor = tintColor
-        configuration.contentInsets = NSDirectionalEdgeInsets(top: 4, leading: 4, bottom: 4, trailing: 4)
+        configuration.baseForegroundColor = tintColor ?? .label
+        configuration.contentInsets = NSDirectionalEdgeInsets(top: 4, leading: 2, bottom: 4, trailing: 2)
         let button = UIButton(configuration: configuration)
-        let symbolConfiguration = UIImage.SymbolConfiguration(pointSize: 21, weight: .semibold)
-        button.setPreferredSymbolConfiguration(symbolConfiguration, forImageIn: .normal)
         return button
     }
 
@@ -454,118 +409,35 @@ final class ProjectWorkspaceViewController: UIViewController {
         view.safeAreaLayoutGuide.layoutFrame.insetBy(dx: panelMargin, dy: panelMargin)
     }
 
-    private func expandedFrame(
-        for side: PanelSide,
-        preferredY: CGFloat,
-        safeFrame: CGRect? = nil
-    ) -> CGRect {
-        let safe = safeFrame ?? currentSafeFrame()
-        let clampedY = min(max(preferredY, safe.minY), safe.maxY - panelSize.height)
-        let x: CGFloat = side == .left ? safe.minX : safe.maxX - panelSize.width
-        return CGRect(x: x, y: clampedY, width: panelSize.width, height: panelSize.height)
+    private let panelBottomOffset: CGFloat = 50
+
+    private func panelCollapsedFrame() -> CGRect {
+        let safe = currentSafeFrame()
+        let y = safe.maxY - panelHeight - panelBottomOffset
+        let x = -panelExpandedWidth + handleWidth
+        return CGRect(x: x, y: y, width: panelExpandedWidth, height: panelHeight)
     }
 
-    private func clampedExpandedFrame(_ frame: CGRect, safeFrame: CGRect? = nil) -> CGRect {
-        let safe = safeFrame ?? currentSafeFrame()
-        var adjusted = frame
-        adjusted.size = panelSize
-        adjusted.origin.x = min(max(adjusted.origin.x, safe.minX), safe.maxX - panelSize.width)
-        adjusted.origin.y = min(max(adjusted.origin.y, safe.minY), safe.maxY - panelSize.height)
-        return adjusted
-    }
-
-    private func collapsedHandleFrame(
-        for side: PanelSide,
-        preferredY: CGFloat,
-        safeFrame: CGRect? = nil
-    ) -> CGRect {
-        let safe = safeFrame ?? currentSafeFrame()
-        let clampedY = min(max(preferredY, safe.minY), safe.maxY - collapsedHandleSize.height)
-        let x: CGFloat
-        switch side {
-        case .left:
-            x = safe.minX - (collapsedHandleSize.width - collapsedVisibleWidth)
-        case .right:
-            x = safe.maxX - collapsedVisibleWidth
-        }
-        return CGRect(x: x, y: clampedY, width: collapsedHandleSize.width, height: collapsedHandleSize.height)
-    }
-
-    private func sideIfShouldSnap(for expandedFrame: CGRect, safeFrame: CGRect? = nil) -> PanelSide? {
-        let safe = safeFrame ?? currentSafeFrame()
-        let leftDistance = expandedFrame.minX - safe.minX
-        if leftDistance <= edgeSnapThreshold {
-            return .left
-        }
-        let rightDistance = safe.maxX - expandedFrame.maxX
-        if rightDistance <= edgeSnapThreshold {
-            return .right
-        }
-        return nil
+    private func panelExpandedFrame() -> CGRect {
+        let safe = currentSafeFrame()
+        let y = safe.maxY - panelHeight - panelBottomOffset
+        let x = safe.minX
+        return CGRect(x: x, y: y, width: panelExpandedWidth, height: panelHeight)
     }
 
     private func relayoutPanelForCurrentState() {
-        let safeFrame = currentSafeFrame()
         switch panelState {
         case .expanded:
-            panelContainer.frame = clampedExpandedFrame(panelContainer.frame, safeFrame: safeFrame)
-            panelContainer.alpha = 1
-            panelContainer.isHidden = false
-            collapsedHandleView.alpha = 0
-            collapsedHandleView.isHidden = true
-        case let .collapsed(side):
-            panelContainer.isHidden = true
-            collapsedHandleView.isHidden = false
-            collapsedHandleView.alpha = collapsedHandleVisibleAlpha
-            collapsedHandleView.frame = collapsedHandleFrame(
-                for: side,
-                preferredY: collapsedHandleView.frame.minY,
-                safeFrame: safeFrame
-            )
-            updateCollapsedHandleAppearance(for: side)
+            panelContainer.frame = panelExpandedFrame()
+        case .collapsed:
+            panelContainer.frame = panelCollapsedFrame()
         }
     }
 
-    private func updateCollapsedHandleAppearance(for side: PanelSide) {
-        collapsedHandleIndicator.backgroundColor = UIColor.tertiaryLabel
-        collapsedHandleIndicator.transform = .identity
-    }
-
-    private func expandPanel(
-        from side: PanelSide,
-        preferredY: CGFloat,
-        animated: Bool,
-        scheduleAutoCollapseAfter: Bool
-    ) {
+    private func expandPanel(animated: Bool, scheduleAutoCollapseAfter: Bool) {
         cancelAutoCollapse()
-        let safeFrame = currentSafeFrame()
-        let targetFrame = expandedFrame(for: side, preferredY: preferredY, safeFrame: safeFrame)
-        var startFrame = targetFrame
-        switch side {
-        case .left:
-            startFrame.origin.x = safeFrame.minX - panelSize.width + collapsedVisibleWidth
-        case .right:
-            startFrame.origin.x = safeFrame.maxX - collapsedVisibleWidth
-        }
-
         panelState = .expanded
-        panelContainer.isHidden = false
-        panelContainer.frame = animated ? startFrame : targetFrame
-        panelContainer.alpha = animated ? 0.92 : 1
-        collapsedHandleView.isHidden = false
-
-        let applyFinalState = {
-            self.panelContainer.frame = targetFrame
-            self.panelContainer.alpha = 1
-            self.collapsedHandleView.alpha = 0
-        }
-
-        let finalize = {
-            self.collapsedHandleView.isHidden = true
-            if scheduleAutoCollapseAfter {
-                self.scheduleAutoCollapse()
-            }
-        }
+        let target = panelExpandedFrame()
 
         if animated {
             UIView.animate(
@@ -573,41 +445,24 @@ final class ProjectWorkspaceViewController: UIViewController {
                 delay: 0,
                 options: [.curveEaseOut, .beginFromCurrentState]
             ) {
-                applyFinalState()
+                self.panelContainer.frame = target
             } completion: { _ in
-                finalize()
+                if scheduleAutoCollapseAfter {
+                    self.scheduleAutoCollapse()
+                }
             }
         } else {
-            applyFinalState()
-            finalize()
+            panelContainer.frame = target
+            if scheduleAutoCollapseAfter {
+                scheduleAutoCollapse()
+            }
         }
     }
 
-    private func collapsePanel(to side: PanelSide, preferredY: CGFloat, animated: Bool) {
+    private func collapsePanel(animated: Bool) {
         cancelAutoCollapse()
-        let safeFrame = currentSafeFrame()
-        let targetHandleFrame = collapsedHandleFrame(for: side, preferredY: preferredY, safeFrame: safeFrame)
-        let targetPanelFrame = expandedFrame(
-            for: side,
-            preferredY: targetHandleFrame.midY - panelSize.height / 2,
-            safeFrame: safeFrame
-        )
-
-        panelState = .collapsed(side)
-        updateCollapsedHandleAppearance(for: side)
-        collapsedHandleView.frame = targetHandleFrame
-        collapsedHandleView.isHidden = false
-        collapsedHandleView.alpha = animated ? 0 : collapsedHandleVisibleAlpha
-
-        let applyFinalState = {
-            self.panelContainer.frame = targetPanelFrame
-            self.panelContainer.alpha = 0
-            self.collapsedHandleView.alpha = self.collapsedHandleVisibleAlpha
-        }
-
-        let finalize = {
-            self.panelContainer.isHidden = true
-        }
+        panelState = .collapsed
+        let target = panelCollapsedFrame()
 
         if animated {
             UIView.animate(
@@ -615,28 +470,18 @@ final class ProjectWorkspaceViewController: UIViewController {
                 delay: 0,
                 options: [.curveEaseOut, .beginFromCurrentState]
             ) {
-                applyFinalState()
-            } completion: { _ in
-                finalize()
+                self.panelContainer.frame = target
             }
         } else {
-            applyFinalState()
-            finalize()
+            panelContainer.frame = target
         }
     }
 
     private func scheduleAutoCollapse() {
         cancelAutoCollapse()
         let workItem = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            guard case .expanded = panelState else {
-                return
-            }
-            guard let side = sideIfShouldSnap(for: panelContainer.frame) else {
-                return
-            }
-            let y = panelContainer.frame.midY - collapsedHandleSize.height / 2
-            collapsePanel(to: side, preferredY: y, animated: true)
+            guard let self, case .expanded = self.panelState else { return }
+            self.collapsePanel(animated: true)
         }
         autoCollapseWorkItem = workItem
         DispatchQueue.main.asyncAfter(deadline: .now() + panelAutoCollapseDelay, execute: workItem)
@@ -647,67 +492,135 @@ final class ProjectWorkspaceViewController: UIViewController {
         autoCollapseWorkItem = nil
     }
 
-    @objc
-    private func didTapCollapsedHandle() {
-        guard case let .collapsed(side) = panelState else {
+    // MARK: - Exit Target
+
+    private func exitTargetCenter() -> CGPoint {
+        let safe = currentSafeFrame()
+        return CGPoint(x: safe.maxX - exitTargetSize / 2, y: panelContainer.frame.midY)
+    }
+
+    private func updateExitTarget(for panelFrame: CGRect) {
+        let expandedMaxX = panelExpandedFrame().maxX
+        let dragDistance = panelFrame.maxX - expandedMaxX
+        let threshold: CGFloat = 40
+        guard dragDistance > threshold else {
+            if exitTargetView.alpha > 0 {
+                exitTargetView.alpha = 0
+                exitTargetView.isHidden = true
+                exitTargetView.transform = .identity
+            }
+            if isOverExitTargetPrevious {
+                isOverExitTargetPrevious = false
+                let generator = UIImpactFeedbackGenerator(style: .light)
+                generator.impactOccurred()
+            }
             return
         }
-        let y = collapsedHandleView.frame.midY - panelSize.height / 2
-        expandPanel(from: side, preferredY: y, animated: true, scheduleAutoCollapseAfter: true)
+
+        let center = exitTargetCenter()
+        exitTargetView.bounds = CGRect(x: 0, y: 0, width: exitTargetSize, height: exitTargetSize)
+        exitTargetView.center = center
+        exitTargetView.isHidden = false
+
+        let progress = min((dragDistance - threshold) / 100, 1.0)
+        exitTargetView.alpha = progress
+
+        let isOver = isOverExitTarget(panelFrame: panelFrame)
+        if isOver != isOverExitTargetPrevious {
+            isOverExitTargetPrevious = isOver
+            let generator = UIImpactFeedbackGenerator(style: isOver ? .heavy : .light)
+            generator.impactOccurred()
+        }
+
+        if isOver {
+            UIView.animate(withDuration: 0.15) {
+                self.exitTargetView.transform = CGAffineTransform(scaleX: 1.3, y: 1.3)
+                self.buttonStackView?.alpha = 0
+                self.exitHintLabel.isHidden = false
+                self.exitHintLabel.alpha = 1
+            }
+        } else {
+            UIView.animate(withDuration: 0.15) {
+                self.exitTargetView.transform = .identity
+                self.buttonStackView?.alpha = 1
+                self.exitHintLabel.alpha = 0
+            } completion: { _ in
+                if !self.isOverExitTargetPrevious {
+                    self.exitHintLabel.isHidden = true
+                }
+            }
+        }
     }
 
-    @objc
-    private func handleCollapsedHandlePan(_ gesture: UIPanGestureRecognizer) {
-        switch gesture.state {
-        case .began:
-            guard case let .collapsed(side) = panelState else { return }
-            let y = collapsedHandleView.frame.midY - panelSize.height / 2
-            expandPanel(from: side, preferredY: y, animated: false, scheduleAutoCollapseAfter: false)
-            panelPanStartFrame = panelContainer.frame
-        case .changed:
-            let translation = gesture.translation(in: view)
-            var frame = panelPanStartFrame
-            frame.origin.x += translation.x
-            frame.origin.y += translation.y
-            panelContainer.frame = clampedExpandedFrame(frame)
-        case .ended, .cancelled, .failed:
-            let clamped = clampedExpandedFrame(panelContainer.frame)
-            panelContainer.frame = clamped
-            if let side = sideIfShouldSnap(for: clamped) {
-                let y = clamped.midY - collapsedHandleSize.height / 2
-                collapsePanel(to: side, preferredY: y, animated: true)
-            } else {
-                panelState = .expanded
-                collapsedHandleView.alpha = 0
-                collapsedHandleView.isHidden = true
+    private func isOverExitTarget(panelFrame: CGRect) -> Bool {
+        let center = exitTargetCenter()
+        let panelTrailing = panelFrame.maxX
+        let distance = abs(panelTrailing - center.x)
+        return distance < exitTargetSize / 2
+    }
+
+    private func hideExitTarget(animated: Bool) {
+        if animated {
+            UIView.animate(withDuration: 0.2) {
+                self.exitTargetView.alpha = 0
+                self.exitTargetView.transform = .identity
+                self.buttonStackView?.alpha = 1
+                self.exitHintLabel.alpha = 0
+            } completion: { _ in
+                self.exitTargetView.isHidden = true
+                self.exitHintLabel.isHidden = true
             }
-        default:
-            break
+        } else {
+            exitTargetView.alpha = 0
+            exitTargetView.isHidden = true
+            exitTargetView.transform = .identity
+            buttonStackView?.alpha = 1
+            exitHintLabel.alpha = 0
+            exitHintLabel.isHidden = true
+        }
+    }
+
+    // MARK: - Panel Gestures
+
+    @objc
+    private func didTapPanel(_ gesture: UITapGestureRecognizer) {
+        if case .collapsed = panelState {
+            expandPanel(animated: true, scheduleAutoCollapseAfter: true)
         }
     }
 
     @objc
-    private func handleExpandedPanelPan(_ gesture: UIPanGestureRecognizer) {
+    private func handlePanelPan(_ gesture: UIPanGestureRecognizer) {
         switch gesture.state {
         case .began:
             cancelAutoCollapse()
+            isDraggingPanel = true
+            panelState = .expanded
             panelPanStartFrame = panelContainer.frame
         case .changed:
             let translation = gesture.translation(in: view)
             var frame = panelPanStartFrame
             frame.origin.x += translation.x
-            frame.origin.y += translation.y
-            panelContainer.frame = clampedExpandedFrame(frame)
+            let minX = panelCollapsedFrame().origin.x
+            frame.origin.x = max(frame.origin.x, minX)
+            panelContainer.frame = frame
+            updateExitTarget(for: frame)
         case .ended, .cancelled, .failed:
-            let clamped = clampedExpandedFrame(panelContainer.frame)
-            panelContainer.frame = clamped
-            if let side = sideIfShouldSnap(for: clamped) {
-                let y = clamped.midY - collapsedHandleSize.height / 2
-                collapsePanel(to: side, preferredY: y, animated: true)
+            isDraggingPanel = false
+            isOverExitTargetPrevious = false
+            if isOverExitTarget(panelFrame: panelContainer.frame) {
+                hideExitTarget(animated: false)
+                dismiss(animated: true)
             } else {
-                panelState = .expanded
-                collapsedHandleView.alpha = 0
-                collapsedHandleView.isHidden = true
+                hideExitTarget(animated: true)
+                let collapsedX = panelCollapsedFrame().origin.x
+                let expandedX = panelExpandedFrame().origin.x
+                let midPoint = (collapsedX + expandedX) / 2
+                if panelContainer.frame.origin.x < midPoint {
+                    collapsePanel(animated: true)
+                } else {
+                    expandPanel(animated: true, scheduleAutoCollapseAfter: true)
+                }
             }
         default:
             break

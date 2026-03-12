@@ -21,7 +21,6 @@ final class SettingsViewController: UITableViewController {
     }
 
     private enum ProjectRow: Int, CaseIterable {
-        case autoCollapsePanel
         case toolPermission
         case pipProgress
     }
@@ -145,11 +144,6 @@ final class SettingsViewController: UITableViewController {
             guard let row = ProjectRow(rawValue: indexPath.row) else { return cell }
             var configuration = UIListContentConfiguration.valueCell()
             switch row {
-            case .autoCollapsePanel:
-                configuration.text = String(localized: "settings.project.auto_collapse_panel.title")
-                configuration.secondaryText = projectStore.isAutoCollapsePanelEnabled
-                    ? String(localized: "settings.common.on")
-                    : String(localized: "settings.common.off")
             case .toolPermission:
                 let mode = projectStore.loadAppToolPermissionMode()
                 configuration.text = String(localized: "settings.chat.tool_permission.title")
@@ -193,9 +187,6 @@ final class SettingsViewController: UITableViewController {
         case .project:
             guard let row = ProjectRow(rawValue: indexPath.row) else { return }
             switch row {
-            case .autoCollapsePanel:
-                let controller = makeAutoCollapsePanelPicker()
-                navigationController?.pushViewController(controller, animated: true)
             case .toolPermission:
                 let controller = makeToolPermissionPicker()
                 navigationController?.pushViewController(controller, animated: true)
@@ -257,18 +248,6 @@ final class SettingsViewController: UITableViewController {
     }
 
     // MARK: - Pickers
-
-    private func makeAutoCollapsePanelPicker() -> SettingsPickerViewController {
-        let onLabel = String(localized: "settings.common.on")
-        let offLabel = String(localized: "settings.common.off")
-        return SettingsPickerViewController(
-            title: String(localized: "settings.project.auto_collapse_panel.title"),
-            options: [SettingsPickerOption(onLabel), SettingsPickerOption(offLabel)],
-            footerText: String(localized: "settings.project.auto_collapse_panel.footer"),
-            selectedIndex: { [projectStore] in projectStore.isAutoCollapsePanelEnabled ? 0 : 1 },
-            onSelect: { [projectStore] index in projectStore.isAutoCollapsePanelEnabled = (index == 0) }
-        )
-    }
 
     private func makeToolPermissionPicker() -> SettingsPickerViewController {
         let modes = ToolPermissionMode.allCases
