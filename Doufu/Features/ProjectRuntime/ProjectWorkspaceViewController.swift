@@ -43,6 +43,7 @@ final class ProjectWorkspaceViewController: UIViewController {
     private(set) var project: AppProjectRecord
     private let isNewlyCreated: Bool
     private let projectStore = AppProjectStore.shared
+    private let coordinator = ProjectLifecycleCoordinator.shared
     var onDismissed: (() -> Void)?
     private var hasProjectBeenModified = false
     private var dismissInteractionController: ProjectDismissInteractionController?
@@ -249,20 +250,7 @@ final class ProjectWorkspaceViewController: UIViewController {
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
         if isBeingDismissed {
-            // End the chat session only if no execution is in flight.
-            // If the agent is still running, the session will persist in the
-            // manager until it finishes (and can be retrieved if the project
-            // is reopened).
-            if let session = ChatSessionManager.shared.existingSession(projectID: project.id) {
-                // Clear the closure to avoid holding references to this VC's
-                // resources (webView, projectStore) after dismissal.
-                session.onProjectFilesUpdated = nil
-                if !session.isExecuting {
-                    ChatSessionManager.shared.endSession(projectID: project.id)
-                }
-                // If executing, the session self-cleans via
-                // coordinatorDidFinishExecution when the task ends.
-            }
+            coordinator.closeProject(projectID: project.id)
             onDismissed?()
         }
     }
@@ -755,7 +743,14 @@ final class ProjectWorkspaceViewController: UIViewController {
         let store = LLMProviderSettingsStore.shared
         let credentials = ProviderCredentialResolver.resolveAvailableCredentials(providerStore: store)
         let projectDefault = await ModelSelectionStateStore.projectDefaultSelection(projectID: project.id)
-        let threadSelection = await ModelSelectionStateStore.currentThreadSelection(projectID: project.id)
+        let threadSelection: ModelSelection? = {
+            let threadID: String? = coordinator.existingSession(projectID: project.id)?.currentThreadID
+                ?? (try? ChatDataStore.shared.loadIndex(projectID: project.id))?.currentThreadID
+            guard let threadID else { return nil }
+            return ModelSelectionStateStore.shared.loadThreadSelection(
+                projectID: project.id, threadID: threadID
+            )
+        }()
         let appDefault = await ModelSelectionStateStore.appDefaultSelection()
 
         return ChatEntryState(
@@ -847,7 +842,7 @@ final class ProjectWorkspaceViewController: UIViewController {
     }
 
     private func presentChatController(readOnly: Bool) {
-        let session = ChatSessionManager.shared.session(for: project)
+        let session = coordinator.session(for: project)
         session.onProjectFilesUpdated = { [weak self] in
             guard let self else { return }
             self.hasProjectBeenModified = true
@@ -882,6 +877,9 @@ final class ProjectWorkspaceViewController: UIViewController {
         )
         settingsController.onProjectUpdated = { [weak self] updatedProjectName in
             guard let self else { return }
+            // Rename DB write + session sync already done by
+            // ProjectSettingsVC → coordinator.renameProject.
+            // Only update local UI state here.
             self.project = AppProjectRecord(
                 id: self.project.id,
                 name: updatedProjectName,
@@ -957,17 +955,19 @@ final class ProjectWorkspaceViewController: UIViewController {
     }
 
     private func discardProjectAndExit() {
-        do {
-            try projectStore.deleteProject(projectURL: projectURL)
-            dismiss(animated: true)
-        } catch {
-            let alert = UIAlertController(
-                title: String(localized: "workspace.alert.delete_failed.title"),
-                message: error.localizedDescription,
-                preferredStyle: .alert
-            )
-            alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
-            present(alert, animated: true)
+        Task {
+            do {
+                try await coordinator.deleteProject(projectID: project.id, projectURL: projectURL)
+                dismiss(animated: true)
+            } catch {
+                let alert = UIAlertController(
+                    title: String(localized: "workspace.alert.delete_failed.title"),
+                    message: error.localizedDescription,
+                    preferredStyle: .alert
+                )
+                alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
+                present(alert, animated: true)
+            }
         }
     }
 

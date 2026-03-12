@@ -8,6 +8,7 @@
    - 长按项目支持 `设置 / 排序 / 删除`。
 2. 项目生命周期与版本记录
    - 一键创建本地项目目录和空白模板。
+   - 项目变更（create / delete / close / rename）通过统一协调器执行，保证聊天 session 状态一致。
    - 项目创建时自动初始化 Git 仓库。
    - Agent 循环开始前自动保存当前脏工作区。
    - Agent 实际改动文件后自动创建 checkpoint commit。

@@ -27,7 +27,8 @@
    - `DatabaseRecords`：所有 GRDB Record 类型（DBProject, DBPermission, DBProvider, DBProviderModel, DBTokenUsage, DBAppModelSelection, DBProjectModelSelection, DBThreadModelSelection, DBChatThread, DBAssistant, DBChatMessage, DBSessionMemory）及 domain ↔ DB 映射扩展。
    - `DatabaseTimestamp`：Date ↔ Int64 纳秒转换。
 3. `Doufu/Core/Projects/`
-   - `AppProjectStore`：项目 CRUD 通过 GRDB（`project` + `permission` 表），创建项目目录与模板文件、读写项目元数据与权限。
+   - `AppProjectStore`：项目元数据 CRUD 通过 GRDB（`project` + `permission` 表），创建项目目录与模板文件、读写项目元数据与权限。
+   - `ProjectLifecycleCoordinator`：项目生命周期统一入口（create / delete / close / rename）；协调 `AppProjectStore` 与 `ChatSessionManager`，确保 ChatSession 状态与项目变更一致。
    - `ProjectGitService`：项目级 Git 初始化、agent loop 前自动保存、检查点创建、历史恢复与 undo helper。
 4. `Doufu/Core/LLM/`
    - `ProjectChatService`：聊天服务对外入口与数据模型定义。

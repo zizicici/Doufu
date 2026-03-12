@@ -64,12 +64,6 @@ final class ModelSelectionStateStore {
         shared.loadProjectDefaultSelection(projectID: projectID)
     }
 
-    static func currentThreadSelection(projectID: String) async -> ModelSelection? {
-        // Without ChatDataStore, we can't resolve the "current" thread here.
-        // Callers should use loadThreadSelection with an explicit threadID.
-        nil
-    }
-
     func addObserver(using handler: @escaping (Change) -> Void) -> NSObjectProtocol {
         let changeUserInfoKey = Self.changeUserInfoKey
         return NotificationCenter.default.addObserver(

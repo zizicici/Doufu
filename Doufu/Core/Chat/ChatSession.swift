@@ -50,6 +50,12 @@ final class ChatSession {
 
     var onProjectFilesUpdated: (() -> Void)?
 
+    /// When true, ``coordinatorDidFinishExecution()`` will **not** self-clean
+    /// the session from the manager.  Set by ``ProjectLifecycleCoordinator``
+    /// before cancelling, so that the coordinator retains control over when
+    /// the session is removed.
+    var suppressAutoEndSession = false
+
     /// Debounce window for coalescing rapid message persistence calls.
     private static let persistenceDebounceNanos: UInt64 = 500_000_000 // 0.5s
     private var persistenceDebounceTask: Task<Void, Never>?
@@ -123,6 +129,12 @@ final class ChatSession {
     var isExecuting: Bool { taskCoordinator.isExecuting }
 
     func cancelExecution() { taskCoordinator.cancel() }
+
+    /// Cancels the current execution and suspends until the task fully completes.
+    func cancelAndAwaitCompletion() async {
+        taskCoordinator.cancel()
+        await taskCoordinator.awaitCompletion()
+    }
 
     // MARK: - Thread State (for UI)
 
@@ -384,7 +396,9 @@ extension ChatSession: ChatTaskCoordinatorDelegate {
 
         // If no UI is observing (workspace was dismissed during execution),
         // clean up this session from the manager to prevent a memory leak.
-        if delegate == nil {
+        // Skip when the coordinator has explicitly suppressed auto-cleanup
+        // (e.g. during a managed deleteProject flow).
+        if delegate == nil && !suppressAutoEndSession {
             onProjectFilesUpdated = nil
             ChatSessionManager.shared.endSession(projectID: projectID)
         }

@@ -32,6 +32,7 @@ final class HomeViewController: UIViewController {
     private var allProjects: [HomeProjectItem] = []
     private var filteredProjects: [HomeProjectItem] = []
     private let projectStore = AppProjectStore.shared
+    private let coordinator = ProjectLifecycleCoordinator.shared
     private let projectTransitionDelegate = ProjectOpenTransitionDelegate()
     private var selectedCellIndexPath: IndexPath?
 
@@ -134,7 +135,7 @@ final class HomeViewController: UIViewController {
 
     private func didTapAddButton() {
         do {
-            let project = try projectStore.createBlankProject()
+            let project = try coordinator.createProject()
             reloadProjects()
             openProject(project, isNewlyCreated: true, cellIndexPath: nil)
         } catch {
@@ -322,11 +323,13 @@ final class HomeViewController: UIViewController {
     }
 
     private func deleteProject(_ project: HomeProjectItem) {
-        do {
-            try projectStore.deleteProject(projectURL: project.projectURL)
-            reloadProjects()
-        } catch {
-            showPlaceholderAlert(title: String(localized: "home.alert.delete_failed.title"), message: error.localizedDescription)
+        Task {
+            do {
+                try await coordinator.deleteProject(projectID: project.id, projectURL: project.projectURL)
+                reloadProjects()
+            } catch {
+                showPlaceholderAlert(title: String(localized: "home.alert.delete_failed.title"), message: error.localizedDescription)
+            }
         }
     }
 

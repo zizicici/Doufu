@@ -143,4 +143,9 @@ final class ChatTaskCoordinator {
         didCancelCurrentRequest = true
         task?.cancel()
     }
+
+    /// Suspends until the current task (if any) finishes.
+    func awaitCompletion() async {
+        await task?.value
+    }
 }

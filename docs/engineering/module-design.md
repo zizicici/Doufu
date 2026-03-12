@@ -54,43 +54,46 @@
     - 责任：SQLite 数据库初始化与迁移、GRDB Record 类型定义、domain ↔ DB 映射。
 14. `Project Storage`
     - 主要文件：`Core/Projects/AppProjectStore.swift`
-    - 责任：项目生命周期（GRDB `project` + `permission` 表）、模板写入、项目元数据与权限读写。
-15. `Project Git Service`
+    - 责任：项目元数据 CRUD（GRDB `project` + `permission` 表）、模板写入、权限读写。
+15. `Project Lifecycle Coordinator`
+    - 主要文件：`Core/Projects/ProjectLifecycleCoordinator.swift`
+    - 责任：项目生命周期操作（create / delete / close / rename）的统一入口；确保 ChatSession 状态与项目变更一致（delete 前 cancel + flush + endSession；rename 同步 session context；close 时按执行状态决定是否 endSession）。
+16. `Project Git Service`
     - 主要文件：`Core/Projects/ProjectGitService.swift`
     - 责任：项目级 Git 初始化、agent loop 前自动保存、检查点创建、历史恢复、变更查询。
-16. `Provider Storage`
+17. `Provider Storage`
     - 主要文件：`Core/LLM/LLMProviderSettingsStore.swift`
     - 责任：Provider / Model CRUD 通过 GRDB（`llm_provider` + `llm_provider_model` 表）、Keychain 凭证管理、三层 ModelSelection CRUD。
-17. `Model Registry`
+18. `Model Registry`
     - 主要文件：`Core/LLM/LLMModelRegistry.swift`
     - 责任：统一模型能力解析，多级优先级回退（用户自定义 > 内置 > 发现 > 保守默认）。
-18. `Model Selection Store`
+19. `Model Selection Store`
     - 主要文件：`Core/LLM/ModelSelectionStateStore.swift`、`Core/LLM/ModelSelectionResolver.swift`
     - 责任：App / Project / Thread 三层 `ModelSelection` 的共享状态源、缓存、变更通知、解析与归一化。从 `LLMProviderSettingsStore` 读取数据（不再依赖 `ChatDataService`）。
-19. `Chat Data Storage`
+20. `Chat Data Storage`
     - 主要文件：`Core/LLM/ChatDataStore.swift`、`Core/LLM/ChatDataService.swift`、`Core/LLM/ChatSessionContext.swift`
     - 责任：`ChatDataStore`（`final class`）通过 GRDB 同步读写聊天数据；`ChatDataService`（`@MainActor`）绑定单个 projectID 提供自动持久化。
-20. `OAuth Service`
+21. `OAuth Service`
     - 主要文件：`Core/LLM/OpenAIOAuthService.swift`
     - 责任：OpenAI OAuth 流程（授权 URL、callback、token 交换、结果回传）。
-21. `Agent Chat Pipeline`
+22. `Agent Chat Pipeline`
     - 主要文件：`Core/LLM/ProjectChatService.swift` + `Core/LLM/ChatPipeline/*`
     - 责任：对外 `sendAndApply`、agent loop 控制、工具定义与执行、流式请求、上下文压缩、进度事件。
-22. `Token Usage Analytics`
+23. `Token Usage Analytics`
     - 主要文件：`Core/LLM/LLMTokenUsageStore.swift`、`Features/Settings/TokenUsageViewController.swift`、`Features/ProjectRuntime/ProjectTokenUsageViewController.swift`
     - 责任：token 用量写入 `token_usage` 表，SQL GROUP BY / SUM 查询，驱动全局与项目视角展示。
 
 ## 通信方式
 
-1. UI 到业务：ViewController 直接调用 Service/Store。
+1. UI 到业务：ViewController 通过 `ProjectLifecycleCoordinator` 执行项目生命周期操作（create / delete / close / rename），其余调用直接到 Service/Store。
 2. 模块间协作：通过结构化模型（如 `LLMProviderRecord`、`ResolvedModelProfile`）。
 3. 页面刷新：项目文件和列表页仍以闭包回调为主；模型选择状态统一通过 `ModelSelectionStateStore` 广播变更。
 
 ## 关键流程
 
 1. 新建项目
-   - `HomeViewController` 调用 `AppProjectStore.createBlankProject()`
-   - 在 `project` 表插入记录、创建磁盘目录与模板文件、初始化 Git 仓库
+   - `HomeViewController` 调用 `ProjectLifecycleCoordinator.createProject()`
+   - Coordinator 委托 `AppProjectStore.createBlankProject()` 完成 DB 插入、磁盘目录创建与模板文件、Git 仓库初始化
    - push 到 `ProjectWorkspaceViewController`
 2. Agent 聊天改项目
    - `ChatViewController` 构建 `ProviderCredential`（含 `ResolvedModelProfile`）

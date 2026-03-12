@@ -275,8 +275,18 @@ final class ProjectSettingsViewController: UITableViewController {
             name = String(localized: "project_settings.unnamed_project")
             projectNameText = name
         }
-        try? store.updateProjectName(projectURL: projectURL, name: name)
-        onProjectUpdated?(name)
+        do {
+            try ProjectLifecycleCoordinator.shared.renameProject(projectURL: projectURL, newName: name)
+            onProjectUpdated?(name)
+        } catch {
+            // Rename failed — revert text field to persisted name and reload
+            // the cell so the visible text matches the persisted value.
+            projectNameText = store.loadProjectName(projectURL: projectURL)
+            tableView.reloadRows(
+                at: [IndexPath(row: ProjectRow.name.rawValue, section: Section.project.rawValue)],
+                with: .none
+            )
+        }
     }
 
     private func projectDescriptionPreviewText() -> String {

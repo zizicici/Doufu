@@ -33,6 +33,7 @@
 29. 已完成项目磁盘结构 v4（`Projects/{uuid}/App/` + `AppData/`）。
 30. 已完成聊天数据 SQLite 存储（线程、消息、助理、会话记忆）。
 31. 已完成聊天模块 UI 重组至 `Features/Chat/` 目录。
+32. 已完成 `ProjectLifecycleCoordinator`：项目生命周期统一入口（create / delete / close / rename），修复删除执行中项目文件丢失、discard 后 session 泄漏、rename 后 session context 不同步三处 Bug。
 
 ## 已完成阶段回顾
 

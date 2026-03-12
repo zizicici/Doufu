@@ -47,22 +47,6 @@ final class ProjectFileBrowserViewController: UITableViewController {
         let cleanupURLs: [URL]
     }
 
-    private struct ProjectBackupMetadata: Codable {
-        struct ProjectInfo: Codable {
-            let id: String
-            let name: String
-            let description: String
-            let createdAt: Date
-            let updatedAt: Date
-            let toolPermissionOverride: String?
-        }
-
-        let backupVersion: Int
-        let exportedAt: Date
-        let project: ProjectInfo
-        let projectModelSelection: ModelSelection?
-    }
-
     private enum ExportError: LocalizedError {
         case missingProjectRoot
 
@@ -184,8 +168,8 @@ final class ProjectFileBrowserViewController: UITableViewController {
     }
 
     private func isSafeChildURL(_ url: URL) -> Bool {
-        let rootPath = rootURL.standardizedFileURL.path
-        let childPath = url.standardizedFileURL.path
+        let rootPath = rootURL.standardizedFileURL.resolvingSymlinksInPath().path
+        let childPath = url.standardizedFileURL.resolvingSymlinksInPath().path
         let prefix = rootPath.hasSuffix("/") ? rootPath : rootPath + "/"
         return childPath.hasPrefix(prefix)
     }
@@ -364,40 +348,10 @@ final class ProjectFileBrowserViewController: UITableViewController {
             )
         }
 
-        let metadata = makeProjectBackupMetadata(projectRootURL: projectRootURL)
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        encoder.dateEncodingStrategy = .iso8601
-        let metadataData = try encoder.encode(metadata)
-        try metadataData.write(
-            to: exportFolderURL.appendingPathComponent("ProjectMetadata.json"),
-            options: .atomic
-        )
-
         let zipURL = archiveURL(suffix: "project-backup")
         try? fileManager.removeItem(at: zipURL)
         try zipDirectory(at: exportFolderURL, to: zipURL)
         return ExportPayload(zipURL: zipURL, cleanupURLs: [zipURL, stagingRootURL])
-    }
-
-    private func makeProjectBackupMetadata(projectRootURL: URL) -> ProjectBackupMetadata {
-        let projectID = projectRootURL.lastPathComponent
-        let metadataSnapshot = AppProjectStore.shared.loadProjectMetadata(projectURL: projectRootURL)
-        let projectInfo = ProjectBackupMetadata.ProjectInfo(
-            id: metadataSnapshot?.id ?? projectID,
-            name: metadataSnapshot?.name ?? projectName,
-            description: metadataSnapshot?.description ?? "",
-            createdAt: metadataSnapshot?.createdAt ?? Date(),
-            updatedAt: metadataSnapshot?.updatedAt ?? Date(),
-            toolPermissionOverride: metadataSnapshot?.toolPermissionOverride?.rawValue
-        )
-        let modelSelection = LLMProviderSettingsStore.shared.loadProjectModelSelection(projectID: projectID)
-        return ProjectBackupMetadata(
-            backupVersion: 1,
-            exportedAt: Date(),
-            project: projectInfo,
-            projectModelSelection: modelSelection
-        )
     }
 
     private func copyItemIfPresent(at sourceURL: URL, to destinationURL: URL) throws {
@@ -657,8 +611,8 @@ private final class ProjectFileContentViewController: UIViewController {
     }
 
     private func isSafeFileURL(_ url: URL) -> Bool {
-        let rootPath = rootURL.standardizedFileURL.path
-        let filePath = url.standardizedFileURL.path
+        let rootPath = rootURL.standardizedFileURL.resolvingSymlinksInPath().path
+        let filePath = url.standardizedFileURL.resolvingSymlinksInPath().path
         let prefix = rootPath.hasSuffix("/") ? rootPath : rootPath + "/"
         return filePath.hasPrefix(prefix)
     }

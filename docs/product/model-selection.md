@@ -174,9 +174,9 @@ Thread 仍然只保存一条当前显式选择，不再保存“切到别的 Pro
 当前代码里，三层 `ModelSelection` 的数据结构和继承规则保持一致；这里的差异只发生在 Workspace 冷启动进入 Chat 前的“入口预检范围”，不是三层结构不一致。
 
 1. Workspace 点击 Chat 时，会先读取 `appDefaultSelection` 与 `projectDefaultSelection` 做入口判断。
-2. 当前 `ModelSelectionStateStore.currentThreadSelection(projectID:)` 在没有明确 `threadID` 时不会恢复 persisted thread override，所以冷启动入口阶段不会预先带入 Thread 层。
-3. `ChatSession` 恢复当前线程后，Thread override 会继续按和 App / Project 相同的 `ModelSelection(provider, model, reasoning, thinking)` 结构参与 resolver。
-4. 因此，当前实现的区别是“进入 Chat 前的预检时机”，不是“Thread 层字段或参数语义不同”。
+2. Thread 层会优先读取现有 `ChatSession` 的 `currentThreadID`；如果当前还没有 session，则回退到线程索引里持久化的 `currentThreadID`。
+3. 只要能确定当前线程，Workspace 冷启动阶段就会预先加载该 Thread 的 persisted override，并与 App / Project 一起参与 resolver。
+4. 如果项目还没有任何线程，Thread 层自然为空；因此当前实现的区别仍然只是“入口预检时机”，不是“Thread 层字段或参数语义不同”。
 
 ### 无可用 Provider 环境
 

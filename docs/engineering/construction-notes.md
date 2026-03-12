@@ -12,6 +12,7 @@
 1. 每个 Feature 独立目录，控制文件规模。
 2. ViewController 只处理 UI 组装和交互转发。
 3. 业务逻辑进入 Service / Repository。
+4. 项目生命周期操作（create / delete / close / rename）必须通过 `ProjectLifecycleCoordinator` 执行，不可直接调用 `AppProjectStore` 或 `ChatSessionManager`，以保证 session 状态一致性。
 4. 聊天模块位于 `Features/Chat/` 目录，主要文件：`ChatViewController`（UI + 胶水）、`ChatThreadSessionManager`（线程会话）、`ChatMessageStore`（消息状态机）、`ChatModelSelectionManager`（模型选择）、`ChatMenuBuilder`（菜单构建）。
 5. 设置页风格优先复用 `Features/Settings/Components` 中的通用 Cell。
 6. 所有用户可见文案必须接入 `Localizable.xcstrings`，禁止新增硬编码显示文本。

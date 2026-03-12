@@ -419,17 +419,10 @@ final class ChatViewController: UIViewController {
             projectURL: session.project.projectURL,
             projectName: session.project.name
         )
-        settingsController.onProjectUpdated = { [weak self] updatedProjectName in
-            guard let self else { return }
-            let updatedProject = AppProjectRecord(
-                id: self.session.project.id,
-                name: updatedProjectName,
-                projectURL: self.session.project.projectURL,
-                createdAt: self.session.project.createdAt,
-                updatedAt: Date()
-            )
-            self.session.updateProject(updatedProject)
-            self.session.onProjectFilesUpdated?()
+        settingsController.onProjectUpdated = { [weak self] _ in
+            // Rename + session sync already done by ProjectSettingsVC → coordinator.
+            // Only trigger file-update notification for downstream UI refresh.
+            self?.session.onProjectFilesUpdated?()
         }
         settingsController.onToolPermissionModeChanged = { [weak self] mode in
             self?.toolPermissionMode = mode

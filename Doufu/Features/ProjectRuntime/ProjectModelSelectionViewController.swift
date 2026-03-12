@@ -13,11 +13,13 @@ final class ProjectModelSelectionViewController: UIViewController {
 
     var onSelectionChanged: ((ModelSelection?) -> Void)?
 
+    private let projectID: String
     private let providerStore = LLMProviderSettingsStore.shared
     private let modelSelectionStore = ModelSelectionStateStore.shared
     private var currentSelection: ModelSelection?
 
     init(projectID: String, currentSelection: ModelSelection?) {
+        self.projectID = projectID
         self.currentSelection = currentSelection
         super.init(nibName: nil, bundle: nil)
     }
@@ -37,7 +39,7 @@ final class ProjectModelSelectionViewController: UIViewController {
         let controller = ModelConfigurationViewController(
             initialState: initialState,
             showsResetToDefaults: hasExplicitSelection,
-            projectUsageIdentifier: "project-default",
+            projectUsageIdentifier: projectID,
             inheritedState: buildInheritedState(),
             inheritedStateProvider: { [weak self] in
                 self?.buildInheritedState()
