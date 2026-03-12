@@ -33,10 +33,12 @@ final class HomeViewController: UIViewController {
     private var allProjects: [HomeProjectItem] = []
     private var filteredProjects: [HomeProjectItem] = []
     private let projectActivityStore = ProjectActivityStore.shared
+    private let projectChangeCenter = ProjectChangeCenter.shared
     private let coordinator = ProjectLifecycleCoordinator.shared
     private let projectTransitionDelegate = ProjectOpenTransitionDelegate()
     private var selectedCellIndexPath: IndexPath?
     private var projectActivityObserver: NSObjectProtocol?
+    private var projectChangeObserver: NSObjectProtocol?
 
     private lazy var collectionView: UICollectionView = {
         let layout = UICollectionViewFlowLayout()
@@ -94,12 +96,18 @@ final class HomeViewController: UIViewController {
         projectActivityObserver = projectActivityStore.addObserver { [weak self] _ in
             self?.reloadProjects()
         }
+        projectChangeObserver = projectChangeCenter.addObserver { [weak self] _ in
+            self?.reloadProjects()
+        }
         reloadProjects()
     }
 
     deinit {
         if let projectActivityObserver {
             NotificationCenter.default.removeObserver(projectActivityObserver)
+        }
+        if let projectChangeObserver {
+            NotificationCenter.default.removeObserver(projectChangeObserver)
         }
     }
 
@@ -149,7 +157,7 @@ final class HomeViewController: UIViewController {
             do {
                 let project = try await coordinator.createProject()
                 reloadProjects()
-                openProject(project, isNewlyCreated: true, cellIndexPath: nil)
+                openProject(project, cellIndexPath: nil)
             } catch {
                 showPlaceholderAlert(title: String(localized: "home.alert.create_failed.title"), message: error.localizedDescription)
             }
@@ -162,10 +170,18 @@ final class HomeViewController: UIViewController {
         navigationController?.pushViewController(controller, animated: true)
     }
 
+    private var reloadTask: Task<Void, Never>?
+
     private func reloadProjects() {
-        allProjects = loadProjectsFromDisk()
-        updateSearchBarVisibility()
-        applyFilter(using: searchController.searchBar.text)
+        reloadTask?.cancel()
+        reloadTask = Task { [weak self] in
+            guard let self else { return }
+            let items = await self.loadProjectItems()
+            guard !Task.isCancelled else { return }
+            self.allProjects = items
+            self.updateSearchBarVisibility()
+            self.applyFilter(using: self.searchController.searchBar.text)
+        }
     }
 
     private func updateSearchBarVisibility() {
@@ -188,44 +204,56 @@ final class HomeViewController: UIViewController {
         navigationItem.searchController = nil
     }
 
-    private func loadProjectsFromDisk() -> [HomeProjectItem] {
-        let fileManager = FileManager.default
-        guard let documentURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first else {
-            return []
-        }
-
-        let projectsRootURL = documentURL.appendingPathComponent("Projects", isDirectory: true)
-
-        // Load project records from DB
+    /// Loads project records from the database and checks file existence off
+    /// the main thread.  Activity state is queried on @MainActor afterwards.
+    private func loadProjectItems() async -> [HomeProjectItem] {
+        // Capture values needed off-main-thread.
         guard let dbPool = DatabaseManager.shared.dbPool else {
             assertionFailure("Database is unavailable before Home projects load")
             return []
         }
-        guard let dbProjects = try? dbPool.read({ db in
-            try DBProject.order(DBProject.Columns.sortOrder.asc, DBProject.Columns.updatedAt.desc).fetchAll(db)
-        }) else {
-            return []
+
+        struct ProjectDiskInfo: Sendable {
+            let id: String
+            let name: String
+            let summary: String
+            let createdAt: Date
+            let updatedAt: Date
+            let projectURL: URL
+            let previewImagePath: String?
+            let sortOrder: Int
         }
 
-        var projects: [HomeProjectItem] = []
-        for dbProject in dbProjects {
-            let projectURL = projectsRootURL.appendingPathComponent(dbProject.id, isDirectory: true)
-            // Verify directory still exists on disk
-            var isDir: ObjCBool = false
-            guard fileManager.fileExists(atPath: projectURL.path, isDirectory: &isDir), isDir.boolValue else {
-                continue
+        let noDescription = String(localized: "home.project.no_description")
+
+        let diskItems: [ProjectDiskInfo] = await Task.detached(priority: .userInitiated) {
+            let fileManager = FileManager.default
+            guard let documentURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first else {
+                return []
+            }
+            let projectsRootURL = documentURL.appendingPathComponent("Projects", isDirectory: true)
+
+            guard let dbProjects = try? dbPool.read({ db in
+                try DBProject.order(DBProject.Columns.sortOrder.asc, DBProject.Columns.updatedAt.desc).fetchAll(db)
+            }) else {
+                return []
             }
 
-            let name = dbProject.title.isEmpty ? dbProject.id : dbProject.title
-            let summary = dbProject.description.isEmpty
-                ? String(localized: "home.project.no_description")
-                : dbProject.description
-            let createdAt = DatabaseTimestamp.fromNanos(dbProject.createdAt)
-            let updatedAt = DatabaseTimestamp.fromNanos(dbProject.updatedAt)
-            let previewImagePath = findPreviewImagePath(in: projectURL)
+            var results: [ProjectDiskInfo] = []
+            for dbProject in dbProjects {
+                let projectURL = projectsRootURL.appendingPathComponent(dbProject.id, isDirectory: true)
+                var isDir: ObjCBool = false
+                guard fileManager.fileExists(atPath: projectURL.path, isDirectory: &isDir), isDir.boolValue else {
+                    continue
+                }
 
-            projects.append(
-                HomeProjectItem(
+                let name = dbProject.title.isEmpty ? dbProject.id : dbProject.title
+                let summary = dbProject.description.isEmpty ? noDescription : dbProject.description
+                let createdAt = Date(timeIntervalSince1970: Double(dbProject.createdAt) / 1_000_000_000)
+                let updatedAt = Date(timeIntervalSince1970: Double(dbProject.updatedAt) / 1_000_000_000)
+                let previewImagePath = Self.findPreviewImagePath(in: projectURL)
+
+                results.append(ProjectDiskInfo(
                     id: dbProject.id,
                     name: name,
                     summary: summary,
@@ -233,16 +261,29 @@ final class HomeViewController: UIViewController {
                     updatedAt: updatedAt,
                     projectURL: projectURL,
                     previewImagePath: previewImagePath,
-                    sortOrder: dbProject.sortOrder,
-                    activityState: projectActivityStore.state(for: dbProject.id)
-                )
+                    sortOrder: dbProject.sortOrder
+                ))
+            }
+            return results
+        }.value
+
+        // Back on MainActor — query activity state.
+        return diskItems.map { info in
+            HomeProjectItem(
+                id: info.id,
+                name: info.name,
+                summary: info.summary,
+                createdAt: info.createdAt,
+                updatedAt: info.updatedAt,
+                projectURL: info.projectURL,
+                previewImagePath: info.previewImagePath,
+                sortOrder: info.sortOrder,
+                activityState: projectActivityStore.state(for: info.id)
             )
         }
-
-        return projects
     }
 
-    private func findPreviewImagePath(in projectURL: URL) -> String? {
+    private nonisolated static func findPreviewImagePath(in projectURL: URL) -> String? {
         let fileManager = FileManager.default
         let candidates = ["preview.jpg", "preview.jpeg", "preview.png", "thumbnail.png", "snapshot.png"]
 
@@ -290,9 +331,6 @@ final class HomeViewController: UIViewController {
 
     private func openProjectSettings(_ project: HomeProjectItem) {
         let controller = ProjectSettingsViewController(projectURL: project.projectURL, projectName: project.name)
-        controller.onProjectUpdated = { [weak self] _ in
-            self?.reloadProjects()
-        }
 
         let navigationController = UINavigationController(rootViewController: controller)
         navigationController.modalPresentationStyle = .pageSheet
@@ -372,17 +410,14 @@ final class HomeViewController: UIViewController {
         case .idle, .building, .newVersionAvailable:
             initialRoute = .workspace
         }
-        openProject(record, isNewlyCreated: false, cellIndexPath: indexPath, initialRoute: initialRoute)
+        openProject(record, cellIndexPath: indexPath, initialRoute: initialRoute)
     }
 
     private func openProject(
         _ project: AppProjectRecord,
-        isNewlyCreated: Bool,
         cellIndexPath: IndexPath? = nil,
         initialRoute: ProjectWorkspaceViewController.InitialRoute = .workspace
     ) {
-        projectActivityStore.markProjectViewed(projectID: project.id)
-
         // Compute origin frame from the tapped cell
         if let indexPath = cellIndexPath,
            let cell = collectionView.cellForItem(at: indexPath) {
@@ -400,7 +435,6 @@ final class HomeViewController: UIViewController {
 
         let controller = ProjectWorkspaceViewController(
             project: project,
-            isNewlyCreated: isNewlyCreated,
             initialRoute: initialRoute
         )
         controller.modalPresentationStyle = .fullScreen

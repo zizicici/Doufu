@@ -46,12 +46,11 @@ final class ProjectWorkspaceViewController: UIViewController {
     }
 
     private(set) var project: AppProjectRecord
-    private let isNewlyCreated: Bool
     private let projectStore = AppProjectStore.shared
     private let projectActivityStore = ProjectActivityStore.shared
+    private let projectChangeCenter = ProjectChangeCenter.shared
     private let coordinator = ProjectLifecycleCoordinator.shared
     var onDismissed: (() -> Void)?
-    private var hasProjectBeenModified = false
     private var dismissInteractionController: ProjectDismissInteractionController?
     private let jsErrorHandlerName = "jsError"
     private var lastPresentedJSErrorSignature: String?
@@ -75,6 +74,8 @@ final class ProjectWorkspaceViewController: UIViewController {
     private let doufuBridge: DoufuBridge
     private var chatPresentationTask: Task<Void, Never>?
     private var pendingInitialRoute: InitialRoute
+    private var projectChangeObserver: NSObjectProtocol?
+    private var appDidBecomeActiveObserver: NSObjectProtocol?
 
     private lazy var webView: WKWebView = {
         let configuration = WKWebViewConfiguration()
@@ -222,9 +223,8 @@ final class ProjectWorkspaceViewController: UIViewController {
     private var projectName: String { project.name }
     private var projectURL: URL { project.projectURL }
 
-    init(project: AppProjectRecord, isNewlyCreated: Bool, initialRoute: InitialRoute = .workspace) {
+    init(project: AppProjectRecord, initialRoute: InitialRoute = .workspace) {
         self.project = project
-        self.isNewlyCreated = isNewlyCreated
         self.webServer = LocalWebServer(projectURL: project.appURL, projectID: project.id)
         self.doufuBridge = DoufuBridge(projectURL: project.appURL)
         self.pendingInitialRoute = initialRoute
@@ -238,6 +238,12 @@ final class ProjectWorkspaceViewController: UIViewController {
 
     deinit {
         autoCollapseWorkItem?.cancel()
+        if let projectChangeObserver {
+            NotificationCenter.default.removeObserver(projectChangeObserver)
+        }
+        if let appDidBecomeActiveObserver {
+            NotificationCenter.default.removeObserver(appDidBecomeActiveObserver)
+        }
         webServer.stop()
         doufuBridge.unregister(from: webView.configuration)
         webView.configuration.userContentController.removeScriptMessageHandler(forName: jsErrorHandlerName)
@@ -251,7 +257,16 @@ final class ProjectWorkspaceViewController: UIViewController {
         installWebLoadingCover()
         configureFloatingPanel()
         configureInteractiveDismiss()
-        projectActivityStore.markProjectViewed(projectID: project.id)
+        projectChangeObserver = projectChangeCenter.addObserver(projectID: project.id) { [weak self] change in
+            self?.handleProjectChange(change)
+        }
+        appDidBecomeActiveObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.consumeVisibleProjectUpdateIfNeeded()
+        }
         AppProjectStore.shared.ensureProjectMemoryDocument(at: project.appURL, projectName: projectName)
         loadProjectPage()
     }
@@ -266,6 +281,7 @@ final class ProjectWorkspaceViewController: UIViewController {
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        consumeVisibleProjectUpdateIfNeeded()
         guard pendingInitialRoute == .chat else { return }
         pendingInitialRoute = .workspace
         didTapChat()
@@ -853,15 +869,7 @@ final class ProjectWorkspaceViewController: UIViewController {
     }
 
     private func presentChatController(readOnly: Bool) {
-        projectActivityStore.markChatViewed(projectID: project.id)
         let session = coordinator.session(for: project)
-        session.onProjectFilesUpdated = { [weak self] in
-            guard let self else { return }
-            self.hasProjectBeenModified = true
-            self.projectActivityStore.markProjectViewed(projectID: self.project.id)
-            self.projectStore.touchProjectUpdatedAt(projectID: self.project.id)
-            self.webView.reload()
-        }
         let chatController = ChatViewController(session: session)
         chatController.isReadOnly = readOnly
         chatController.validationServerBaseURL = webServer.baseURL
@@ -885,26 +893,14 @@ final class ProjectWorkspaceViewController: UIViewController {
     @objc
     private func didTapSettings() {
         scheduleAutoCollapse()
+        if coordinator.isExecuting(projectID: project.id) {
+            presentExecutionBlockedAlert()
+            return
+        }
         let settingsController = ProjectSettingsViewController(
             projectURL: projectURL,
             projectName: projectName
         )
-        settingsController.onProjectUpdated = { [weak self] updatedProjectName in
-            guard let self else { return }
-            // Rename DB write + session sync already done by
-            // ProjectSettingsVC → coordinator.renameProject.
-            // Only update local UI state here.
-            self.project = AppProjectRecord(
-                id: self.project.id,
-                name: updatedProjectName,
-                projectURL: self.project.projectURL,
-                createdAt: self.project.createdAt,
-                updatedAt: Date()
-            )
-            self.title = updatedProjectName
-            self.hasProjectBeenModified = true
-            self.webView.reload()
-        }
         let navigationController = UINavigationController(rootViewController: settingsController)
         navigationController.modalPresentationStyle = .pageSheet
         if let sheet = navigationController.sheetPresentationController {
@@ -918,6 +914,10 @@ final class ProjectWorkspaceViewController: UIViewController {
     @objc
     private func didTapFiles() {
         scheduleAutoCollapse()
+        if coordinator.isExecuting(projectID: project.id) {
+            presentExecutionBlockedAlert()
+            return
+        }
         let controller = ProjectFileBrowserViewController(
             projectName: projectName,
             rootURL: project.appURL,
@@ -929,17 +929,64 @@ final class ProjectWorkspaceViewController: UIViewController {
             sheet.detents = [.medium(), .large()]
             sheet.prefersGrabberVisible = true
         }
+        navigationController.presentationController?.delegate = self
         present(navigationController, animated: true)
     }
 
     @objc
     private func didTapExit() {
         scheduleAutoCollapse()
-        if isNewlyCreated && !hasProjectBeenModified {
-            presentUnsavedNewProjectAlert()
+        dismiss(animated: true)
+    }
+
+    private func presentExecutionBlockedAlert() {
+        let alert = UIAlertController(
+            title: String(localized: "workspace.alert.execution_blocked.title"),
+            message: String(localized: "workspace.alert.execution_blocked.message"),
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
+        present(alert, animated: true)
+    }
+
+    private func handleProjectChange(_ change: ProjectChangeCenter.Change) {
+        refreshProjectRecordFromStore()
+
+        switch change.kind {
+        case .filesChanged, .checkpointRestored:
+            webView.reload()
+            consumeVisibleProjectUpdateIfNeeded()
+        case .renamed:
+            webView.reload()
+        case .descriptionChanged, .toolPermissionChanged, .modelSelectionChanged:
+            break
+        }
+    }
+
+    private func consumeVisibleProjectUpdateIfNeeded() {
+        guard isActivelyViewingWorkspace else { return }
+        projectActivityStore.markProjectViewed(projectID: project.id)
+    }
+
+    private var isActivelyViewingWorkspace: Bool {
+        isViewLoaded
+            && view.window != nil
+            && presentedViewController == nil
+            && UIApplication.shared.applicationState == .active
+    }
+
+    private func refreshProjectRecordFromStore() {
+        guard let metadata = projectStore.loadProjectMetadata(projectURL: projectURL) else {
             return
         }
-        dismiss(animated: true)
+        project = AppProjectRecord(
+            id: project.id,
+            name: metadata.name,
+            projectURL: project.projectURL,
+            createdAt: project.createdAt,
+            updatedAt: metadata.updatedAt
+        )
+        title = project.name
     }
 
     private func showLoadError(_ message: String) {
@@ -950,39 +997,6 @@ final class ProjectWorkspaceViewController: UIViewController {
         )
         alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
         present(alert, animated: true)
-    }
-
-    private func presentUnsavedNewProjectAlert() {
-        let alert = UIAlertController(
-            title: String(localized: "workspace.alert.save_new_project.title"),
-            message: String(localized: "workspace.alert.save_new_project.message"),
-            preferredStyle: .alert
-        )
-        alert.addAction(UIAlertAction(title: String(localized: "common.action.cancel"), style: .cancel))
-        alert.addAction(UIAlertAction(title: String(localized: "workspace.action.save_and_exit"), style: .default, handler: { [weak self] _ in
-            self?.dismiss(animated: true)
-        }))
-        alert.addAction(UIAlertAction(title: String(localized: "workspace.action.discard"), style: .destructive, handler: { [weak self] _ in
-            self?.discardProjectAndExit()
-        }))
-        present(alert, animated: true)
-    }
-
-    private func discardProjectAndExit() {
-        Task {
-            do {
-                try await coordinator.deleteProject(projectID: project.id, projectURL: projectURL)
-                dismiss(animated: true)
-            } catch {
-                let alert = UIAlertController(
-                    title: String(localized: "workspace.alert.delete_failed.title"),
-                    message: error.localizedDescription,
-                    preferredStyle: .alert
-                )
-                alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
-                present(alert, animated: true)
-            }
-        }
     }
 
     private func jsErrorBridgeScriptSource() -> String {
@@ -1100,6 +1114,7 @@ extension ProjectWorkspaceViewController: UIAdaptivePresentationControllerDelega
         if presentationController.presentedViewController === chatNavigationController {
             chatNavigationController = nil
         }
+        consumeVisibleProjectUpdateIfNeeded()
     }
 }
 

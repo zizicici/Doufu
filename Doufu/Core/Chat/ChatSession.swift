@@ -59,6 +59,7 @@ final class ChatSession {
     private let threadManager: ChatThreadManager
     private let modelSelection: ChatModelSelectionManager
     private let taskCoordinator: ChatTaskCoordinator
+    private let projectChangeCenter = ProjectChangeCenter.shared
 
     weak var delegate: ChatSessionDelegate?
 
@@ -68,8 +69,7 @@ final class ChatSession {
     private weak var activeConfirmationHandler: ToolConfirmationPresenter?
     private var pendingToolConfirmation: PendingToolConfirmation?
     private var pendingConfirmationPresentationTask: Task<Void, Never>?
-
-    var onProjectFilesUpdated: (() -> Void)?
+    private var projectChangeObserver: NSObjectProtocol?
 
     /// When true, ``coordinatorDidFinishExecution()`` will **not** self-clean
     /// the session from the manager.  Set by ``ProjectLifecycleCoordinator``
@@ -126,6 +126,15 @@ final class ChatSession {
         messageStore.mutationDelegate = self
         threadManager.delegate = self
         modelSelection.delegate = self
+        projectChangeObserver = projectChangeCenter.addObserver(projectID: project.id) { [weak self] change in
+            self?.handleProjectChange(change)
+        }
+    }
+
+    deinit {
+        if let projectChangeObserver {
+            NotificationCenter.default.removeObserver(projectChangeObserver)
+        }
     }
 
     // MARK: - UI Observer
@@ -143,6 +152,28 @@ final class ChatSession {
 
     func updateProject(_ updatedProject: AppProjectRecord) {
         self.project = updatedProject
+    }
+
+    private func handleProjectChange(_ change: ProjectChangeCenter.Change) {
+        switch change.kind {
+        case .checkpointRestored:
+            resetConversationForCheckpointRestore()
+        case .filesChanged, .renamed, .descriptionChanged, .toolPermissionChanged, .modelSelectionChanged:
+            break
+        }
+    }
+
+    private func resetConversationForCheckpointRestore() {
+        guard !isExecuting, currentThreadID != nil else { return }
+
+        let previousThreadID = currentThreadID
+        createNewThread()
+        guard currentThreadID != nil, currentThreadID != previousThreadID else { return }
+
+        messageStore.appendMessage(
+            role: .system,
+            text: String(localized: "chat.system.checkpoint_restored.new_thread")
+        )
     }
 
     // MARK: - Execution State
@@ -495,7 +526,7 @@ extension ChatSession: ChatTaskCoordinatorDelegate {
         threadManager.touchCurrentThread()
 
         if !result.changedPaths.isEmpty {
-            onProjectFilesUpdated?()
+            ProjectChangeCenter.shared.notifyFilesChanged(projectID: projectID)
         }
     }
 
@@ -514,12 +545,10 @@ extension ChatSession: ChatTaskCoordinatorDelegate {
         messageStore.finishExecution()
         delegate?.sessionDidFinishExecution()
 
-        // If no UI is observing (workspace was dismissed during execution),
-        // clean up this session from the manager to prevent a memory leak.
+        // If no chat UI is observing, clean up this session from the manager.
         // Skip when the coordinator has explicitly suppressed auto-cleanup
         // (e.g. during a managed deleteProject flow).
         if delegate == nil && !suppressAutoEndSession {
-            onProjectFilesUpdated = nil
             ChatSessionManager.shared.endSession(projectID: projectID)
         }
     }

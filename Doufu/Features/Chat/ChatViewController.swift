@@ -13,11 +13,13 @@ final class ChatViewController: UIViewController {
     var isReadOnly = false
 
     private let session: ChatSession
+    private let projectChangeCenter = ProjectChangeCenter.shared
     private var toolPermissionMode: ToolPermissionMode = .standard
     private var initialLoadTask: Task<Void, Never>?
     private var appearReloadTask: Task<Void, Never>?
     private var toolConfirmationContinuation: CheckedContinuation<ToolConfirmationDecision, Never>?
     private weak var toolConfirmationAlertController: UIAlertController?
+    private var projectChangeObserver: NSObjectProtocol?
 
     /// Server base URL for code validation (uses localhost instead of file://).
     var validationServerBaseURL: URL?
@@ -123,6 +125,9 @@ final class ChatViewController: UIViewController {
     }
 
     deinit {
+        if let projectChangeObserver {
+            NotificationCenter.default.removeObserver(projectChangeObserver)
+        }
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -146,6 +151,9 @@ final class ChatViewController: UIViewController {
             name: UIApplication.didBecomeActiveNotification,
             object: nil
         )
+        projectChangeObserver = projectChangeCenter.addObserver(projectID: session.projectID) { [weak self] change in
+            self?.handleProjectChange(change)
+        }
 
         configureNavigation()
         configureLayout()
@@ -195,6 +203,7 @@ final class ChatViewController: UIViewController {
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         session.resumePendingToolConfirmationIfPossible()
+        ProjectActivityStore.shared.markChatViewed(projectID: session.projectID)
     }
 
     override func viewDidLayoutSubviews() {
@@ -453,14 +462,6 @@ final class ChatViewController: UIViewController {
             projectURL: session.project.projectURL,
             projectName: session.project.name
         )
-        settingsController.onProjectUpdated = { [weak self] _ in
-            // Rename + session sync already done by ProjectSettingsVC → coordinator.
-            // Only trigger file-update notification for downstream UI refresh.
-            self?.session.onProjectFilesUpdated?()
-        }
-        settingsController.onToolPermissionModeChanged = { [weak self] mode in
-            self?.toolPermissionMode = mode
-        }
         let navigationController = UINavigationController(rootViewController: settingsController)
         navigationController.modalPresentationStyle = .pageSheet
         if let sheet = navigationController.sheetPresentationController {
@@ -475,6 +476,34 @@ final class ChatViewController: UIViewController {
         let alert = UIAlertController(title: nil, message: message, preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
         present(alert, animated: true)
+    }
+
+    private func handleProjectChange(_ change: ProjectChangeCenter.Change) {
+        switch change.kind {
+        case .renamed:
+            refreshSessionProjectRecord()
+        case .toolPermissionChanged:
+            toolPermissionMode = AppProjectStore.shared.loadToolPermissionMode(projectURL: session.project.projectURL)
+            refreshSendButton()
+        case .filesChanged, .checkpointRestored, .descriptionChanged, .modelSelectionChanged:
+            break
+        }
+    }
+
+    private func refreshSessionProjectRecord() {
+        guard let metadata = AppProjectStore.shared.loadProjectMetadata(projectURL: session.project.projectURL) else {
+            return
+        }
+        session.updateProject(
+            AppProjectRecord(
+                id: session.project.id,
+                name: metadata.name,
+                projectURL: session.project.projectURL,
+                createdAt: session.project.createdAt,
+                updatedAt: metadata.updatedAt
+            )
+        )
+        refreshNavigationItems()
     }
 
     private func presentChatStorageError(_ error: Error) {

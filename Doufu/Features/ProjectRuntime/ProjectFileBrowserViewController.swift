@@ -414,9 +414,13 @@ final class ProjectFileBrowserViewController: UITableViewController {
 private final class ProjectFileContentViewController: UIViewController {
     private let fileURL: URL
     private let rootURL: URL
-    private let projectStore = AppProjectStore.shared
     private var originalText: String = ""
     private var canEditFile = false
+    private var isSaving = false {
+        didSet {
+            updateSaveButtonState()
+        }
+    }
     private var isDirty = false {
         didSet {
             updateSaveButtonState()
@@ -515,35 +519,56 @@ private final class ProjectFileContentViewController: UIViewController {
             return
         }
 
-        do {
-            let data = try Data(contentsOf: fileURL)
-            guard let text = String(data: data, encoding: .utf8) else {
-                setEditorText(String(localized: "file_viewer.error.non_utf8"))
-                canEditFile = false
-                setEditorEditable(false)
-                isDirty = false
-                return
+        // Disable editing while loading to prevent user input from being
+        // silently overwritten when the async read completes.
+        setEditorEditable(false)
+
+        let url = fileURL
+        Task { [weak self] in
+            let result: Result<String, Error> = await Task.detached(priority: .userInitiated) {
+                do {
+                    let data = try Data(contentsOf: url)
+                    guard let text = String(data: data, encoding: .utf8) else {
+                        return .failure(NSError(
+                            domain: "Doufu", code: -1,
+                            userInfo: [NSLocalizedDescriptionKey: "non-utf8"]
+                        ))
+                    }
+                    return .success(text)
+                } catch {
+                    return .failure(error)
+                }
+            }.value
+
+            guard let self else { return }
+            switch result {
+            case .success(let text):
+                self.originalText = text
+                self.setEditorText(text)
+                self.canEditFile = true
+                self.setEditorEditable(true)
+                self.isDirty = false
+            case .failure(let error):
+                let isNonUTF8 = (error as NSError).domain == "Doufu" && (error as NSError).code == -1
+                if isNonUTF8 {
+                    self.setEditorText(String(localized: "file_viewer.error.non_utf8"))
+                } else {
+                    self.setEditorText(
+                        String(
+                            format: String(localized: "file_viewer.error.read_failed.message_format"),
+                            error.localizedDescription
+                        )
+                    )
+                }
+                self.canEditFile = false
+                self.setEditorEditable(false)
+                self.isDirty = false
             }
-            originalText = text
-            setEditorText(text)
-            canEditFile = true
-            setEditorEditable(true)
-            isDirty = false
-        } catch {
-            setEditorText(
-                String(
-                    format: String(localized: "file_viewer.error.read_failed.message_format"),
-                    error.localizedDescription
-                )
-            )
-            canEditFile = false
-            setEditorEditable(false)
-            isDirty = false
         }
     }
 
     private func updateSaveButtonState() {
-        saveBarButtonItem.isEnabled = canEditFile && isDirty
+        saveBarButtonItem.isEnabled = canEditFile && isDirty && !isSaving
     }
 
     private func currentEditorText() -> String {
@@ -584,7 +609,7 @@ private final class ProjectFileContentViewController: UIViewController {
 
     @objc
     private func didTapSave() {
-        guard canEditFile else {
+        guard canEditFile, !isSaving else {
             return
         }
 
@@ -594,19 +619,43 @@ private final class ProjectFileContentViewController: UIViewController {
             return
         }
 
-        do {
-            try currentText.write(to: fileURL, atomically: true, encoding: .utf8)
-            originalText = currentText
-            isDirty = false
-            projectStore.touchProjectUpdatedAt(projectID: rootURL.deletingLastPathComponent().lastPathComponent)
-        } catch {
-            let alert = UIAlertController(
-                title: String(localized: "file_viewer.alert.save_failed.title"),
-                message: error.localizedDescription,
-                preferredStyle: .alert
-            )
-            alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
-            present(alert, animated: true)
+        let url = fileURL
+        let textToWrite = currentText
+        isSaving = true
+
+        let projectID = rootURL.deletingLastPathComponent().lastPathComponent
+
+        Task { [weak self] in
+            let writeError: Error? = await Task.detached(priority: .userInitiated) {
+                do {
+                    try textToWrite.write(to: url, atomically: true, encoding: .utf8)
+                    return nil
+                } catch {
+                    return error
+                }
+            }.value
+
+            if writeError == nil {
+                ProjectChangeCenter.shared.notifyFilesChanged(projectID: projectID)
+            }
+
+            guard let self else { return }
+            self.isSaving = false
+
+            if let writeError {
+                let alert = UIAlertController(
+                    title: String(localized: "file_viewer.alert.save_failed.title"),
+                    message: writeError.localizedDescription,
+                    preferredStyle: .alert
+                )
+                alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
+                self.present(alert, animated: true)
+            } else {
+                self.originalText = textToWrite
+                // Re-derive dirty state from current editor content,
+                // which may have changed while the write was in flight.
+                self.updateDirtyStateFromEditor()
+            }
         }
     }
 

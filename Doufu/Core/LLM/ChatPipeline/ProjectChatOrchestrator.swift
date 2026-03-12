@@ -394,7 +394,6 @@ final class ProjectChatOrchestrator {
         }
 
         if !allChangedPaths.isEmpty {
-            AppProjectStore.shared.touchProjectUpdatedAt(projectID: projectIdentifier)
             createCheckpointAfterAgentLoop(workspaceURL: workspaceURL, userMessage: trimmedMessage)
         }
 

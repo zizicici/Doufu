@@ -29,8 +29,14 @@
 3. `Doufu/Core/Projects/`
    - `AppProjectStore`：项目元数据 CRUD 通过 GRDB（`project` + `permission` 表），创建项目目录与模板文件、读写项目元数据与权限。
    - `ProjectLifecycleCoordinator`：项目生命周期统一入口（create / delete / close / rename）；协调 `AppProjectStore` 与 `ChatSessionManager`，确保 ChatSession 状态与项目变更一致。
+   - `ProjectChangeCenter`：project-scoped 变更事件中心，统一广播 `filesChanged`、`checkpointRestored`、`renamed`、`descriptionChanged`、`toolPermissionChanged`、`modelSelectionChanged`；其中 `filesChanged` / `checkpointRestored` 同步维护 `updatedAt`。
+   - `ProjectActivityStore`：project-scoped 活动状态源，维护 `idle / building / newVersionAvailable / needsConfirmation / error`，供 Home / Workspace / Chat 共享消费。
    - `ProjectGitService`：项目级 Git 初始化、agent loop 前自动保存、检查点创建、历史恢复与 undo helper。
-4. `Doufu/Core/LLM/`
+4. `Doufu/Core/Chat/`
+   - `ChatSessionManager`：project-scoped ChatSession 注册表，允许 Workspace 关闭后会话在当前进程内继续执行。
+   - `ChatSession`：项目级长生命周期聊天运行时，持有线程/消息状态、执行协调、pending tool confirmation continuation，并消费 `ProjectChangeCenter` 事件。
+   - `ChatTaskCoordinator`：单次请求执行协调器；桥接 `ProjectChatOrchestrator`、`ActiveTaskManager`、`PiPProgressManager` 与 `ProjectActivityStore`。
+5. `Doufu/Core/LLM/`
    - `ProjectChatService`：聊天服务对外入口与数据模型定义。
    - `LLMModelRegistry`：统一模型能力解析（capabilities + token budgets）。
    - `ChatDataStore`：`final class`，通过 GRDB `DatabasePool` 同步读写聊天数据（线程、消息、助理、会话记忆）。
@@ -58,9 +64,9 @@
      - `WebToolProvider`：Web 搜索与网页抓取
      - `CodeValidator`：隐藏 WKWebView 代码验证
      - `ProjectPathResolver`：项目路径安全解析
-5. `Doufu/Features/Home/` + `Doufu/HomeViewController.swift`
-   - 首页画廊与排序页。
-6. `Doufu/Features/Chat/`
+6. `Doufu/Features/Home/` + `Doufu/HomeViewController.swift`
+   - 首页画廊与排序页，消费 `ProjectActivityStore` 展示项目状态标签。
+7. `Doufu/Features/Chat/`
    - `ChatViewController`：聊天页 UI 布局与胶水代码（线程切换、输入处理、coordinator delegate 转发）。
    - `ChatThreadSessionManager`：线程会话管理。
    - `ChatMessageStore`：消息数组管理与 FlowState 状态机（idle / progress / streaming），通过 delegate 回调驱动 UI。
@@ -72,14 +78,15 @@
    - `ModelConfigurationViewController`：共享模型配置页（App / Project / Thread）。
    - `ThreadManagementViewController`：线程管理页。
    - `MessageDetailViewController`：消息详情页。
-7. `Doufu/Features/ProjectRuntime/`
-   - `ProjectWorkspaceViewController`：项目运行页与悬浮面板。
+   - 聊天页负责在重新出现时恢复 pending tool confirmation 展示，并在 checkpoint restore 后与新的 thread 上下文对齐。
+8. `Doufu/Features/ProjectRuntime/`
+   - `ProjectWorkspaceViewController`：项目运行页与悬浮面板，订阅 `ProjectChangeCenter` 刷新预览，并仅在真正可见时消费 `newVersionAvailable`。
    - `ProjectFileBrowserViewController`：文件树浏览与内容编辑。
    - `ProjectSettingsViewController`：项目设置与 checkpoint history 入口。
    - `ProjectTokenUsageViewController`：项目级 token 使用量。
    - `ProjectModelSelectionViewController`：项目级模型选择。
    - `ProjectOpenTransition`：项目打开转场动画。
-8. `Doufu/Features/Settings/`
+9. `Doufu/Features/Settings/`
    - `SettingsViewController`：全局设置（General / LLM Providers / Project 三组）。
    - `ManageProvidersViewController`：Provider 列表管理。
    - `AddProviderViewController`：新增 Provider。
@@ -91,15 +98,14 @@
    - `LLMQuickSetupViewController`：首次使用快速设置。
    - `TokenUsageViewController`：全局 token usage Dashboard。
    - `SettingsPickerViewController`：通用选项选择器。
-9. `Doufu/Features/Settings/Components/`
+10. `Doufu/Features/Settings/Components/`
    - 设置风格复用 Cell 组件。
-10. `Doufu/Core/`（其他）
+11. `Doufu/Core/`（其他）
     - `UIColor+Doufu`：自定义颜色扩展。
     - `WKWebView+Doufu`：WKWebView 扩展。
     - `LocalWebServer`：本地 Web 服务，含 CDN 资源代理缓存。
     - `DoufuBridge`：JS 桥接。
     - `ActiveTaskManager`：活跃任务追踪。
-    - `ChatTaskCoordinator`：聊天任务协调。
     - `PiPProgressManager`：画中画进度管理。
 
 ## 核心数据模型
@@ -213,6 +219,27 @@
    - `xhigh` 被拒时回退到 `high`。
    - `json_schema` 被拒时回退为普通文本模式重试。
    - 取消信号可透传整个链路。
+
+## 项目变更与活动状态
+
+1. 统一变更入口
+   - 所有 project-scoped mutation 统一经 `ProjectChangeCenter` 广播，而不是由 VC 之间手工传闭包。
+   - 当前事件类型包括：`filesChanged`、`checkpointRestored`、`renamed`、`descriptionChanged`、`toolPermissionChanged`、`modelSelectionChanged`。
+2. 变更生产者
+   - `ChatSession`（agent 改文件）
+   - `ProjectFileBrowserViewController`（手动保存文件）
+   - `ProjectSettingsViewController`（描述、工具权限、checkpoint restore）
+   - `ProjectLifecycleCoordinator`（rename）
+   - `ModelSelectionStateStore`（项目默认模型变化）
+3. 变更消费者
+   - `HomeViewController`：刷新项目列表、更新时间与活动标签。
+   - `ProjectWorkspaceViewController`：刷新项目元数据、reload `WKWebView`，并仅在 workspace 真正可见时消费 `newVersionAvailable`。
+   - `ChatSession`：收到 `checkpointRestored` 后新建 thread，并插入系统消息，避免旧聊天上下文继续作用于已恢复的代码状态。
+4. 活动状态机
+   - `ChatTaskCoordinator` 在任务开始、完成、取消、失败时更新 `ProjectActivityStore`。
+   - `needsConfirmation` 表示工具确认被挂起，用户回到聊天页后可继续同一次确认。
+   - `error` 不会在“准备打开聊天页”时提前清空；只有后续运行或显式状态变更才会覆盖它。
+   - `newVersionAvailable` 只有在用户真正看到该项目运行页后才会被消费，避免后台存活的 workspace 提前吞掉首页标签。
 
 ## 多 Provider 请求适配
 

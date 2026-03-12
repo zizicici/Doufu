@@ -87,9 +87,9 @@ final class ProjectActivityStore {
 
     func markChatViewed(projectID: String) {
         switch state(for: projectID) {
-        case .newVersionAvailable, .needsConfirmation, .error:
+        case .needsConfirmation:
             setState(.idle, for: projectID)
-        case .idle, .building:
+        case .idle, .building, .newVersionAvailable, .error:
             break
         }
     }

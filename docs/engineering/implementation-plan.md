@@ -34,6 +34,7 @@
 30. 已完成聊天数据 SQLite 存储（线程、消息、助理、会话记忆）。
 31. 已完成聊天模块 UI 重组至 `Features/Chat/` 目录。
 32. 已完成 `ProjectLifecycleCoordinator`：项目生命周期统一入口（create / delete / close / rename），修复删除执行中项目文件丢失、discard 后 session 泄漏、rename 后 session context 不同步三处 Bug。
+33. 已完成 project 状态收口：引入 `ProjectChangeCenter` 统一项目变更广播，引入 `ProjectActivityStore` 统一项目活动状态（building / newVersionAvailable / needsConfirmation / error）。
 
 ## 已完成阶段回顾
 
@@ -70,6 +71,10 @@
     - 移除所有 JSON 文件存储（manifest.json, threads_index, thread_messages, project_config, thread_selections）和 UserDefaults 存储（providers, token usage）。
     - 项目磁盘结构升级到 v4：`Documents/Projects/{uuid}/App/` + `AppData/`。
     - 聊天 UI 文件重组到 `Features/Chat/` 目录。
+11. Phase I.5：Project 状态收口
+   - 从跨 VC 闭包回调切换为 `ProjectChangeCenter` project-scoped 事件流。
+   - 引入 `ProjectActivityStore`，统一首页、运行页、聊天页的执行状态语义。
+   - checkpoint restore 与活跃聊天会话联动，恢复后自动开启新 thread。
 
 ## 下一阶段计划
 

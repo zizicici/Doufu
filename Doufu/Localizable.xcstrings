@@ -1884,6 +1884,35 @@
         }
       }
     },
+    "chat.system.checkpoint_restored.new_thread" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Checkpoint restored. Started a new chat thread so the conversation matches the restored project state."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已恢复检查点。已开启新的聊天线程，使对话上下文与恢复后的项目状态保持一致。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已還原檢查點。已開啟新的聊天線程，使對話上下文與還原後的專案狀態保持一致。"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已還原檢查點。已開啟新的聊天線程，使對話上下文與還原後的專案狀態保持一致。"
+          }
+        }
+      }
+    },
     "chat.system.no_default_model" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -12323,93 +12352,6 @@
         }
       }
     },
-    "workspace.action.discard" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Don't Save"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "不保存"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "不保存"
-          }
-        },
-        "zh-HK" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "不保存"
-          }
-        }
-      }
-    },
-    "workspace.action.save_and_exit" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Save and Exit"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "保存并退出"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "保存並退出"
-          }
-        },
-        "zh-HK" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "保存並退出"
-          }
-        }
-      }
-    },
-    "workspace.alert.delete_failed.title" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Delete Failed"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "删除失败"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "刪除失敗"
-          }
-        },
-        "zh-HK" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "刪除失敗"
-          }
-        }
-      }
-    },
     "workspace.alert.exit_project.message" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -12497,6 +12439,64 @@
         }
       }
     },
+    "workspace.alert.execution_blocked.message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Please wait until the current task finishes before accessing files or settings."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请等待当前任务完成后再访问文件或设置。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請等待當前任務完成後再存取檔案或設定。"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請等待當前任務完成後再存取檔案或設定。"
+          }
+        }
+      }
+    },
+    "workspace.alert.execution_blocked.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Task in Progress"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "任务进行中"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "任務進行中"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "任務進行中"
+          }
+        }
+      }
+    },
     "workspace.alert.load_failed.title" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -12522,64 +12522,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "加載失敗"
-          }
-        }
-      }
-    },
-    "workspace.alert.save_new_project.message" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "This new project has no changes yet. You can save it, or exit without saving."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "这个新项目还没有任何修改。你可以选择保存，或不保存直接退出。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "這個新項目還沒有任何修改。你可以選擇保存，或不保存直接退出。"
-          }
-        },
-        "zh-HK" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "這個新項目還沒有任何修改。你可以選擇保存，或不保存直接退出。"
-          }
-        }
-      }
-    },
-    "workspace.alert.save_new_project.title" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Save New Project?"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "保存新项目？"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "保存新項目？"
-          }
-        },
-        "zh-HK" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "保存新項目？"
           }
         }
       }

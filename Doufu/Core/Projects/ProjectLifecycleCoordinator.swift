@@ -6,9 +6,8 @@
 import Foundation
 
 /// Unified entry point for all project lifecycle operations (create, delete,
-/// close, rename).  Ensures ChatSession state is always consistent with
-/// project mutations — prevents bugs such as deleting a project while its
-/// session is executing, or renaming without updating the session context.
+/// close, rename). Ensures ChatSession state stays consistent with project
+/// mutations.
 @MainActor
 final class ProjectLifecycleCoordinator {
 
@@ -68,19 +67,17 @@ final class ProjectLifecycleCoordinator {
         }
 
         // Success: clean up the session.
-        sessionManager.existingSession(projectID: projectID)?.onProjectFilesUpdated = nil
         sessionManager.endSession(projectID: projectID)
         ProjectActivityStore.shared.clear(projectID: projectID)
     }
 
     // MARK: - Close
 
-    /// Called when the workspace is dismissed.  Clears project-file callbacks
-    /// and ends the session unless an LLM task is still running (in which case
-    /// the session self-cleans via ``ChatSession/coordinatorDidFinishExecution``).
+    /// Called when the workspace is dismissed. Ends the session unless an LLM
+    /// task is still running (in which case the session self-cleans via
+    /// ``ChatSession/coordinatorDidFinishExecution()``).
     func closeProject(projectID: String) {
         guard let session = sessionManager.existingSession(projectID: projectID) else { return }
-        session.onProjectFilesUpdated = nil
         if !session.isExecuting {
             sessionManager.endSession(projectID: projectID)
         }
@@ -105,5 +102,7 @@ final class ProjectLifecycleCoordinator {
             )
             session.updateProject(updatedProject)
         }
+
+        ProjectChangeCenter.shared.notifyProjectRenamed(projectID: projectID)
     }
 }

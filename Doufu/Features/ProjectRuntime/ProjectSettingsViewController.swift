@@ -10,9 +10,6 @@ import UIKit
 @MainActor
 final class ProjectSettingsViewController: UITableViewController {
 
-    var onProjectUpdated: ((String) -> Void)?
-    var onToolPermissionModeChanged: ((ToolPermissionMode) -> Void)?
-
     private enum Section: Int, CaseIterable {
         case project
         case chat
@@ -46,6 +43,7 @@ final class ProjectSettingsViewController: UITableViewController {
     private var toolPermissionOverride: ToolPermissionMode?
     private var projectModelSelection: ModelSelection?
     private var modelSelectionObserver: NSObjectProtocol?
+    private var projectChangeObserver: NSObjectProtocol?
 
     init(projectURL: URL, projectName: String) {
         self.projectURL = projectURL
@@ -66,6 +64,9 @@ final class ProjectSettingsViewController: UITableViewController {
         if let modelSelectionObserver {
             NotificationCenter.default.removeObserver(modelSelectionObserver)
         }
+        if let projectChangeObserver {
+            NotificationCenter.default.removeObserver(projectChangeObserver)
+        }
     }
 
     override func viewDidLoad() {
@@ -81,9 +82,17 @@ final class ProjectSettingsViewController: UITableViewController {
         modelSelectionObserver = modelSelectionStore.addObserver { [weak self] change in
             self?.handleModelSelectionChange(change)
         }
+        projectChangeObserver = ProjectChangeCenter.shared.addObserver(projectID: projectID) { [weak self] change in
+            self?.handleProjectChange(change)
+        }
 
         projectModelSelection = modelSelectionStore.loadProjectDefaultSelection(projectID: projectID)
         tableView.reloadSections(IndexSet(integer: Section.chat.rawValue), with: .none)
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        refreshProjectSnapshotFromStore()
     }
 
     override func numberOfSections(in tableView: UITableView) -> Int {
@@ -277,7 +286,6 @@ final class ProjectSettingsViewController: UITableViewController {
         }
         do {
             try ProjectLifecycleCoordinator.shared.renameProject(projectURL: projectURL, newName: name)
-            onProjectUpdated?(name)
         } catch {
             // Rename failed — revert text field to persisted name and reload
             // the cell so the visible text matches the persisted value.
@@ -366,8 +374,7 @@ final class ProjectSettingsViewController: UITableViewController {
     private func applyToolPermissionOverride(_ mode: ToolPermissionMode?) {
         toolPermissionOverride = mode
         store.saveToolPermissionMode(projectURL: projectURL, mode: mode)
-        let effective = mode ?? store.loadAppToolPermissionMode()
-        onToolPermissionModeChanged?(effective)
+        ProjectChangeCenter.shared.notifyToolPermissionChanged(projectID: projectID)
         tableView.reloadSections(IndexSet(integer: Section.chat.rawValue), with: .none)
     }
 
@@ -426,19 +433,28 @@ final class ProjectSettingsViewController: UITableViewController {
         tableView.reloadSections(IndexSet(integer: Section.chat.rawValue), with: .none)
     }
 
+    private func handleProjectChange(_ change: ProjectChangeCenter.Change) {
+        guard change.kind == .checkpointRestored else { return }
+        refreshProjectSnapshotFromStore()
+    }
+
+    private func refreshProjectSnapshotFromStore() {
+        projectNameText = store.loadProjectName(projectURL: projectURL)
+        projectDescriptionText = store.loadProjectDescription(projectURL: projectURL)
+        toolPermissionOverride = store.loadProjectToolPermissionOverride(projectURL: projectURL)
+        tableView.reloadSections(
+            IndexSet([Section.project.rawValue, Section.chat.rawValue]),
+            with: .none
+        )
+    }
+
     // MARK: - Actions
 
     private func openCheckpointsPage() {
-        let controller = ProjectCheckpointsViewController(repositoryURL: repositoryURL)
-        controller.onCheckpointRestored = { [weak self] in
-            guard let self else { return }
-            self.store.touchProjectUpdatedAt(projectID: self.projectID)
-            let latestProjectName = self.store.loadProjectName(projectURL: self.projectURL)
-            self.projectNameText = latestProjectName
-            self.projectDescriptionText = self.store.loadProjectDescription(projectURL: self.projectURL)
-            self.onProjectUpdated?(latestProjectName)
-            self.tableView.reloadData()
-        }
+        let controller = ProjectCheckpointsViewController(
+            repositoryURL: repositoryURL,
+            projectID: projectID
+        )
         navigationController?.pushViewController(controller, animated: true)
     }
 
@@ -532,6 +548,7 @@ private final class ProjectDescriptionEditorViewController: UIViewController, UI
 
         do {
             try store.updateProjectDescription(projectURL: projectURL, description: description)
+            ProjectChangeCenter.shared.notifyProjectDescriptionChanged(projectID: projectURL.lastPathComponent)
             onDescriptionSaved?(normalizedDescription)
             navigationController?.popViewController(animated: true)
         } catch {
@@ -558,10 +575,8 @@ private final class ProjectDescriptionEditorViewController: UIViewController, UI
 // MARK: - Checkpoint History
 
 private final class ProjectCheckpointsViewController: UITableViewController {
-
-    var onCheckpointRestored: (() -> Void)?
-
     private let repositoryURL: URL
+    private let projectID: String
     private let gitService = ProjectGitService.shared
     private var checkpoints: [ProjectGitService.CheckpointRecord] = []
     private var currentCheckpointID: String?
@@ -573,8 +588,9 @@ private final class ProjectCheckpointsViewController: UITableViewController {
         return formatter
     }()
 
-    init(repositoryURL: URL) {
+    init(repositoryURL: URL, projectID: String) {
         self.repositoryURL = repositoryURL
+        self.projectID = projectID
         super.init(style: .insetGrouped)
     }
 
@@ -648,35 +664,75 @@ private final class ProjectCheckpointsViewController: UITableViewController {
         present(alert, animated: true)
     }
 
+    private var isRestoring = false
+    private var reloadTask: Task<Void, Never>?
+
     private func reloadCheckpoints() {
-        checkpoints = (try? gitService.listCheckpoints(repositoryURL: repositoryURL)) ?? []
-        currentCheckpointID = gitService.currentCheckpointID(repositoryURL: repositoryURL)
-        tableView.reloadData()
+        reloadTask?.cancel()
+        let repositoryURL = self.repositoryURL
+        let gitService = self.gitService
+        reloadTask = Task { [weak self] in
+            let (checkpoints, currentID) = await Task.detached(priority: .userInitiated) {
+                let list = (try? gitService.listCheckpoints(repositoryURL: repositoryURL)) ?? []
+                let current = gitService.currentCheckpointID(repositoryURL: repositoryURL)
+                return (list, current)
+            }.value
+            guard !Task.isCancelled, let self else { return }
+            self.checkpoints = checkpoints
+            self.currentCheckpointID = currentID
+            self.tableView.reloadData()
+        }
     }
 
     private func restoreCheckpoint(_ checkpoint: ProjectGitService.CheckpointRecord) {
-        do {
-            try gitService.restore(repositoryURL: repositoryURL, checkpointID: checkpoint.id)
-            onCheckpointRestored?()
-            reloadCheckpoints()
+        guard !isRestoring else { return }
+        isRestoring = true
+        tableView.isUserInteractionEnabled = false
 
-            let alert = UIAlertController(
-                title: String(localized: "checkpoint_list.alert.restored.title"),
-                message: String(localized: "checkpoint_list.alert.restored.message"),
-                preferredStyle: .alert
-            )
-            alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default) { [weak self] _ in
-                self?.navigationController?.popViewController(animated: true)
-            })
-            present(alert, animated: true)
-        } catch {
-            let alert = UIAlertController(
-                title: String(localized: "checkpoint_list.alert.restore_failed.title"),
-                message: error.localizedDescription,
-                preferredStyle: .alert
-            )
-            alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
-            present(alert, animated: true)
+        let repositoryURL = self.repositoryURL
+        let gitService = self.gitService
+        let projectID = self.projectID
+        let checkpointID = checkpoint.id
+
+        Task { [weak self] in
+            let error: Error? = await Task.detached(priority: .userInitiated) {
+                do {
+                    try gitService.restore(repositoryURL: repositoryURL, checkpointID: checkpointID)
+                    return nil
+                } catch {
+                    return error
+                }
+            }.value
+
+            if error == nil {
+                ProjectChangeCenter.shared.notifyCheckpointRestored(projectID: projectID)
+            }
+
+            guard let self else { return }
+            self.isRestoring = false
+            self.tableView.isUserInteractionEnabled = true
+
+            if let error {
+                let alert = UIAlertController(
+                    title: String(localized: "checkpoint_list.alert.restore_failed.title"),
+                    message: error.localizedDescription,
+                    preferredStyle: .alert
+                )
+                alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
+                self.present(alert, animated: true)
+            } else {
+                self.reloadCheckpoints()
+
+                let alert = UIAlertController(
+                    title: String(localized: "checkpoint_list.alert.restored.title"),
+                    message: String(localized: "checkpoint_list.alert.restored.message"),
+                    preferredStyle: .alert
+                )
+                alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default) { [weak self] _ in
+                    self?.navigationController?.popViewController(animated: true)
+                })
+                self.present(alert, animated: true)
+            }
         }
     }
 }
