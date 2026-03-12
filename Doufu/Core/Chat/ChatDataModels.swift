@@ -95,6 +95,36 @@ enum ProjectChatThreadStoreError: LocalizedError {
     }
 }
 
+enum ChatProviderError: LocalizedError {
+    case noAvailableProvider
+    case noThreadAvailable
+
+    var errorDescription: String? {
+        switch self {
+        case .noAvailableProvider:
+            return String(localized: "chat.error.no_provider")
+        case .noThreadAvailable:
+            return String(localized: "chat.error.no_thread")
+        }
+    }
+}
+
+/// Mutable draft used by model-configuration UI and selection managers.
+/// Mirrors the fields of ``ModelSelection`` but is not persisted directly.
+struct ModelSelectionDraft: Equatable {
+    var selectedProviderID: String
+    var selectedModelRecordID: String
+    var selectedReasoningEffort: ProjectChatService.ReasoningEffort?
+    var selectedThinkingEnabled: Bool?
+
+    static let empty = ModelSelectionDraft(
+        selectedProviderID: "",
+        selectedModelRecordID: "",
+        selectedReasoningEffort: nil,
+        selectedThinkingEnabled: nil
+    )
+}
+
 struct ModelSelection: Codable, Equatable {
     var providerID: String
     var modelRecordID: String

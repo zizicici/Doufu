@@ -78,22 +78,22 @@ final class ProjectModelSelectionViewController: UIViewController {
         refreshStatusPrompt()
     }
 
-    private func buildSelectionState() -> ModelConfigurationViewController.SelectionState {
+    private func buildSelectionState() -> ModelSelectionDraft {
         if let stored = currentSelection {
             return selectionState(from: stored)
         }
         return buildInheritedState()
     }
 
-    private func buildInheritedState() -> ModelConfigurationViewController.SelectionState {
+    private func buildInheritedState() -> ModelSelectionDraft {
         if let appDefault = modelSelectionStore.loadAppDefaultSelection() {
             return selectionState(from: appDefault)
         }
         return .empty
     }
 
-    private func selectionState(from selection: ModelSelection) -> ModelConfigurationViewController.SelectionState {
-        ModelConfigurationViewController.SelectionState(
+    private func selectionState(from selection: ModelSelection) -> ModelSelectionDraft {
+        ModelSelectionDraft(
             selectedProviderID: selection.providerID,
             selectedModelRecordID: selection.modelRecordID,
             selectedReasoningEffort: selection.reasoningEffort,
@@ -102,7 +102,7 @@ final class ProjectModelSelectionViewController: UIViewController {
     }
 
     private func normalizedSelection(
-        from state: ModelConfigurationViewController.SelectionState
+        from state: ModelSelectionDraft
     ) -> ModelSelection? {
         ModelSelectionResolver.sanitizeSelection(
             providerID: state.selectedProviderID,

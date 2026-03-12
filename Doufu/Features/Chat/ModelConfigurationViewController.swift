@@ -9,19 +9,7 @@ import UIKit
 
 @MainActor
 final class ModelConfigurationViewController: UITableViewController {
-    struct SelectionState: Equatable {
-        var selectedProviderID: String
-        var selectedModelRecordID: String
-        var selectedReasoningEffort: ProjectChatService.ReasoningEffort?
-        var selectedThinkingEnabled: Bool?
-
-        static let empty = SelectionState(
-            selectedProviderID: "",
-            selectedModelRecordID: "",
-            selectedReasoningEffort: nil,
-            selectedThinkingEnabled: nil
-        )
-    }
+    typealias SelectionState = ModelSelectionDraft
 
     var onSelectionStateChanged: ((SelectionState) -> SelectionApplyOutcome)?
     var onResetToDefaults: (() -> SelectionState)?

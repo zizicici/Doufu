@@ -21,22 +21,24 @@ final class ChatDataService {
 
     // MARK: - Thread Operations
 
-    func loadThreadIndex() throws -> ProjectChatThreadIndex {
+    /// Pure read — returns `nil` when no threads exist yet.
+    func loadThreadIndex() throws -> ProjectChatThreadIndex? {
+        try dataStore.loadIndex(projectID: projectID)
+    }
+
+    /// Loads the thread index, creating an initial thread if none exist.
+    func loadOrCreateThreadIndex() throws -> ProjectChatThreadIndex {
         try dataStore.loadOrCreateIndex(projectID: projectID)
     }
 
     func switchThread(threadID: String) throws -> (
         thread: ProjectChatThreadRecord,
         messages: [ChatMessage],
-        memory: SessionMemory?,
-        modelSelection: ModelSelection?
+        memory: SessionMemory?
     ) {
         let thread = try dataStore.switchCurrentThread(projectID: projectID, threadID: threadID)
         let persisted = try dataStore.loadMessages(projectID: projectID, threadID: threadID)
         let memory = try dataStore.loadSessionMemory(projectID: projectID, threadID: threadID)
-        let modelSelection = LLMProviderSettingsStore.shared.loadThreadModelSelection(
-            projectID: projectID, threadID: threadID
-        )
 
         let messages = persisted.compactMap { persistedMessage -> ChatMessage? in
             let normalizedRole = persistedMessage.role.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -82,7 +84,7 @@ final class ChatDataService {
         // know how many rows already exist in DB for this thread.
         persistedCountByThread[threadID] = messages.count
 
-        return (thread, messages, memory, modelSelection)
+        return (thread, messages, memory)
     }
 
     func createThread(title: String?) throws -> ProjectChatThreadRecord {
@@ -167,5 +169,17 @@ final class ChatDataService {
 
     func touchThread(threadID: String) throws {
         try dataStore.touchThread(projectID: projectID, threadID: threadID)
+    }
+
+    func renameThread(threadID: String, newTitle: String) throws {
+        try dataStore.renameThread(projectID: projectID, threadID: threadID, newTitle: newTitle)
+    }
+
+    func deleteThread(threadID: String) throws {
+        try dataStore.deleteThread(projectID: projectID, threadID: threadID)
+    }
+
+    func reorderThreads(orderedIDs: [String]) throws {
+        try dataStore.reorderThreads(projectID: projectID, orderedIDs: orderedIDs)
     }
 }

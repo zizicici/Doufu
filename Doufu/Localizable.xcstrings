@@ -1786,6 +1786,17 @@
         }
       }
     },
+    "chat.storage.alert.title" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Chat Storage Error"
+          }
+        }
+      }
+    },
     "chat.streaming.char_count_format" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2884,6 +2895,50 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "當前目錄為空"
+          }
+        }
+      }
+    },
+    "file_browser.export.code" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Export Code"
+          }
+        }
+      }
+    },
+    "file_browser.export.error.missing_project_root" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "This project backup is only available from a project workspace."
+          }
+        }
+      }
+    },
+    "file_browser.export.project_backup" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Export Project Backup"
+          }
+        }
+      }
+    },
+    "file_browser.export.title" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Export Project"
           }
         }
       }
@@ -5348,6 +5403,50 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "使用 App 預設"
+          }
+        }
+      }
+    },
+    "project_settings.description_editor.save_failed.title" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Failed to Save Description"
+          }
+        }
+      }
+    },
+    "project_settings.description_editor.title" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Project Description"
+          }
+        }
+      }
+    },
+    "project_settings.field.description_empty" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "No description"
+          }
+        }
+      }
+    },
+    "project_settings.field.description_title" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Description"
           }
         }
       }

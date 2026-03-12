@@ -41,6 +41,22 @@ final class ChatDataStore {
 
     // MARK: - Thread Index
 
+    /// Pure read — returns `nil` when no threads exist for the project.
+    func loadIndex(projectID: String) throws -> ProjectChatThreadIndex? {
+        let threads = try dbPool.read { db in
+            try DBChatThread
+                .filter(DBChatThread.Columns.projectID == projectID)
+                .order(DBChatThread.Columns.sortOrder)
+                .fetchAll(db)
+        }
+
+        guard !threads.isEmpty else { return nil }
+
+        let threadRecords = threads.map { $0.toThreadRecord() }
+        let currentThreadID = threads.first(where: { $0.isCurrent })?.id ?? threads[0].id
+        return ProjectChatThreadIndex(currentThreadID: currentThreadID, threads: threadRecords)
+    }
+
     func loadOrCreateIndex(projectID: String) throws -> ProjectChatThreadIndex {
         let threads = try dbPool.read { db in
             try DBChatThread

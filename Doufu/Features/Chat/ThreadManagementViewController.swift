@@ -7,16 +7,21 @@
 
 import UIKit
 
+@MainActor
+protocol ThreadManagementViewControllerDelegate: AnyObject {
+    func threadManagementDidChange()
+}
+
 final class ThreadManagementViewController: UITableViewController {
 
-    var onChanged: (() -> Void)?
+    weak var delegate: ThreadManagementViewControllerDelegate?
 
-    private let projectID: String
+    private let session: ChatSession
     private var threads: [ProjectChatThreadRecord] = []
     private var currentThreadID: String = ""
 
-    init(projectID: String) {
-        self.projectID = projectID
+    init(session: ChatSession) {
+        self.session = session
         super.init(style: .insetGrouped)
     }
 
@@ -41,13 +46,8 @@ final class ThreadManagementViewController: UITableViewController {
     }
 
     private func reloadThreads() {
-        do {
-            let index = try ChatDataStore.shared.loadOrCreateIndex(projectID: projectID)
-            currentThreadID = index.currentThreadID
-            threads = index.threads
-        } catch {
-            threads = []
-        }
+        threads = session.threadList
+        currentThreadID = session.currentThreadID ?? ""
         tableView.reloadData()
     }
 
@@ -57,8 +57,8 @@ final class ThreadManagementViewController: UITableViewController {
         if !editing && isEditing {
             // Exiting editing mode — save reorder
             let orderedIDs = threads.map(\.id)
-            try? ChatDataStore.shared.reorderThreads(projectID: projectID, orderedIDs: orderedIDs)
-            onChanged?()
+            try? session.reorderThreads(orderedIDs: orderedIDs)
+            delegate?.threadManagementDidChange()
         }
         super.setEditing(editing, animated: animated)
     }
@@ -136,9 +136,9 @@ final class ThreadManagementViewController: UITableViewController {
     private func performDelete(at indexPath: IndexPath) {
         let thread = threads[indexPath.row]
         do {
-            try ChatDataStore.shared.deleteThread(projectID: projectID, threadID: thread.id)
+            try session.deleteThread(threadID: thread.id)
             reloadThreads()
-            onChanged?()
+            delegate?.threadManagementDidChange()
         } catch {
             let errorAlert = UIAlertController(title: nil, message: error.localizedDescription, preferredStyle: .alert)
             errorAlert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
@@ -171,10 +171,9 @@ final class ThreadManagementViewController: UITableViewController {
                   let newTitle = alert?.textFields?.first?.text?.trimmingCharacters(in: .whitespacesAndNewlines),
                   !newTitle.isEmpty else { return }
             do {
-                try ChatDataStore.shared.renameThread(projectID: self.projectID, threadID: thread.id, newTitle: newTitle)
-                self.threads[indexPath.row].title = newTitle
-                self.tableView.reloadRows(at: [indexPath], with: .automatic)
-                self.onChanged?()
+                try self.session.renameThread(threadID: thread.id, newTitle: newTitle)
+                self.reloadThreads()
+                self.delegate?.threadManagementDidChange()
             } catch {
                 let errorAlert = UIAlertController(title: nil, message: error.localizedDescription, preferredStyle: .alert)
                 errorAlert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))

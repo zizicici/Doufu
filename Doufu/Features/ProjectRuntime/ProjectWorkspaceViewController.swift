@@ -25,6 +25,11 @@ class WK2WebView: WKWebView {
 
 final class ProjectWorkspaceViewController: UIViewController {
 
+    private struct ChatEntryState {
+        let appDefaultSelection: ModelSelection?
+        let selectionResolution: ModelSelectionResolution
+    }
+
     private enum PanelSide {
         case left
         case right
@@ -237,6 +242,7 @@ final class ProjectWorkspaceViewController: UIViewController {
         installWebLoadingCover()
         configureFloatingPanel()
         configureInteractiveDismiss()
+        AppProjectStore.shared.ensureProjectMemoryDocument(at: project.appURL, projectName: projectName)
         loadProjectPage()
     }
 
@@ -251,7 +257,7 @@ final class ProjectWorkspaceViewController: UIViewController {
                 // Clear the closure to avoid holding references to this VC's
                 // resources (webView, projectStore) after dismissal.
                 session.onProjectFilesUpdated = nil
-                if !session.taskCoordinator.isExecuting {
+                if !session.isExecuting {
                     ChatSessionManager.shared.endSession(projectID: project.id)
                 }
                 // If executing, the session self-cleans via
@@ -712,17 +718,22 @@ final class ProjectWorkspaceViewController: UIViewController {
     }
 
     private func handleChatTap() async {
-        let selectionResolution = await resolveChatSelection()
+        let entryState = await resolveChatEntryState()
         guard presentedViewController == nil else { return }
+
+        if entryState.appDefaultSelection == nil {
+            presentMissingAppDefaultModelAlert()
+            return
+        }
 
         if let chatNavigationController {
             if let chatVC = chatNavigationController.viewControllers.first as? ChatViewController {
-                if chatVC.isReadOnly, selectionResolution.hasUsableProviderEnvironment {
+                if chatVC.isReadOnly, entryState.selectionResolution.hasUsableProviderEnvironment {
                     self.chatNavigationController = nil
                     presentChatController(readOnly: false)
                     return
                 }
-                if !chatVC.isReadOnly, !selectionResolution.hasUsableProviderEnvironment {
+                if !chatVC.isReadOnly, !entryState.selectionResolution.hasUsableProviderEnvironment {
                     self.chatNavigationController = nil
                     presentLLMSetupAlert(hasConfiguredProviders: hasConfiguredProviders())
                     return
@@ -732,7 +743,7 @@ final class ProjectWorkspaceViewController: UIViewController {
             return
         }
 
-        if !selectionResolution.hasUsableProviderEnvironment {
+        if !entryState.selectionResolution.hasUsableProviderEnvironment {
             presentLLMSetupAlert(hasConfiguredProviders: hasConfiguredProviders())
             return
         }
@@ -740,20 +751,50 @@ final class ProjectWorkspaceViewController: UIViewController {
         presentChatController(readOnly: false)
     }
 
-    private func resolveChatSelection() async -> ModelSelectionResolution {
+    private func resolveChatEntryState() async -> ChatEntryState {
         let store = LLMProviderSettingsStore.shared
         let credentials = ProviderCredentialResolver.resolveAvailableCredentials(providerStore: store)
         let projectDefault = await ModelSelectionStateStore.projectDefaultSelection(projectID: project.id)
         let threadSelection = await ModelSelectionStateStore.currentThreadSelection(projectID: project.id)
         let appDefault = await ModelSelectionStateStore.appDefaultSelection()
 
-        return ModelSelectionResolver.resolve(
-            appDefault: appDefault,
-            projectDefault: projectDefault,
-            threadSelection: threadSelection,
-            availableCredentials: credentials,
-            providerStore: store
+        return ChatEntryState(
+            appDefaultSelection: appDefault,
+            selectionResolution: ModelSelectionResolver.resolve(
+                appDefault: appDefault,
+                projectDefault: projectDefault,
+                threadSelection: threadSelection,
+                availableCredentials: credentials,
+                providerStore: store
+            )
         )
+    }
+
+    private func presentMissingAppDefaultModelAlert() {
+        guard !(presentedViewController is UIAlertController) else { return }
+
+        let alert = UIAlertController(
+            title: String(localized: "chat.alert.no_default_model.title"),
+            message: String(localized: "chat.alert.no_default_model.message"),
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(
+            title: String(localized: "chat.setup_alert.action.setup"),
+            style: .default
+        ) { [weak self] _ in
+            self?.presentLLMQuickSetup()
+        })
+        alert.addAction(UIAlertAction(
+            title: String(localized: "chat.setup_alert.action.read_only"),
+            style: .default
+        ) { [weak self] _ in
+            self?.presentChatController(readOnly: true)
+        })
+        alert.addAction(UIAlertAction(
+            title: String(localized: "common.action.cancel"),
+            style: .cancel
+        ))
+        present(alert, animated: true)
     }
 
     private func presentLLMSetupAlert(hasConfiguredProviders: Bool) {

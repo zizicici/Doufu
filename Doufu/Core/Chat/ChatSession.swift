@@ -19,6 +19,15 @@ protocol ChatSessionDelegate: AnyObject {
     func sessionDidEncounterError(_ error: Error)
 }
 
+/// Data needed by ModelConfigurationViewController, assembled by ChatSession.
+@MainActor
+struct ModelConfigurationContext {
+    let initialState: ModelSelectionDraft
+    let showsResetToDefaults: Bool
+    let inheritedState: ModelSelectionDraft
+    let inheritedStateProvider: () -> ModelSelectionDraft
+}
+
 /// Long-lived per-project chat session that owns all execution infrastructure.
 /// Survives UI dismissal so that in-flight LLM requests complete and persist.
 @MainActor
@@ -26,11 +35,11 @@ final class ChatSession {
 
     let projectID: String
     private(set) var project: AppProjectRecord
-    let dataService: ChatDataService
-    let messageStore: ChatMessageStore
-    let threadManager: ChatThreadManager
-    let modelSelection: ChatModelSelectionManager
-    let taskCoordinator: ChatTaskCoordinator
+    private let dataService: ChatDataService
+    private let messageStore: ChatMessageStore
+    private let threadManager: ChatThreadManager
+    private let modelSelection: ChatModelSelectionManager
+    private let taskCoordinator: ChatTaskCoordinator
 
     weak var delegate: ChatSessionDelegate?
 
@@ -47,6 +56,10 @@ final class ChatSession {
     /// When true, the next `messageStoreDidMutateMessages` must flush
     /// immediately rather than scheduling a debounced write.
     private var needsImmediatePersistence = false
+
+    /// Model selection reload task management (migrated from ChatViewController).
+    private var modelSelectionReloadTask: Task<Void, Never>?
+    private var pendingModelSelectionReload = false
 
     init(project: AppProjectRecord) {
         self.project = project
@@ -72,8 +85,6 @@ final class ChatSession {
 
         let threadManager = ChatThreadManager(
             dataService: dataService,
-            messageStore: messageStore,
-            modelSelection: modelSelection,
             isExecutingProvider: { taskCoordinator.isExecuting }
         )
         self.threadManager = threadManager
@@ -107,6 +118,107 @@ final class ChatSession {
         self.project = updatedProject
     }
 
+    // MARK: - Execution State
+
+    var isExecuting: Bool { taskCoordinator.isExecuting }
+
+    func cancelExecution() { taskCoordinator.cancel() }
+
+    // MARK: - Thread State (for UI)
+
+    var currentThreadTitle: String? { threadManager.currentThread?.title }
+    var currentThreadID: String? { threadManager.currentThread?.id }
+    var hasThread: Bool { threadManager.currentThread != nil }
+    var threadList: [ProjectChatThreadRecord] { threadManager.threadIndex?.threads ?? [] }
+
+    func switchThread(threadID: String) {
+        threadManager.handleSwitchThread(threadID: threadID)
+    }
+
+    func createNewThread() {
+        threadManager.createAndSwitchThread()
+    }
+
+    // MARK: - Model Selection State (for UI)
+
+    var canSend: Bool { modelSelection.canSend }
+    var hasConfiguredProviders: Bool { modelSelection.hasConfiguredProviders }
+    var statusPrompt: String? { modelSelection.currentStatusPrompt() }
+    var modelButtonTitle: String { modelSelection.currentModelMenuButtonTitle() }
+
+    func sendBlockedMessage() -> String? {
+        modelSelection.sendBlockedMessage()
+    }
+
+    /// Prepares the data needed by ModelConfigurationViewController.
+    /// Returns `nil` when no providers are configured — the caller should
+    /// show an error instead.
+    func prepareModelConfiguration() -> ModelConfigurationContext? {
+        let credentials = modelSelection.resolveProviderCredentials()
+        modelSelection.refreshWithResolvedCredentials(credentials)
+        guard modelSelection.hasConfiguredProviders else {
+            Task { [weak self] in
+                await self?.reloadModelSelectionContext()
+            }
+            return nil
+        }
+
+        return ModelConfigurationContext(
+            initialState: modelSelection.selectionSnapshot,
+            showsResetToDefaults: modelSelection.hasThreadOverride,
+            inheritedState: modelSelection.inheritedSnapshot,
+            inheritedStateProvider: { [weak modelSelection] in
+                modelSelection?.inheritedSnapshot ?? .empty
+            }
+        )
+    }
+
+    func applyModelSelection(_ state: ModelSelectionDraft) -> SelectionApplyOutcome {
+        modelSelection.applySelectionState(state)
+    }
+
+    func resetModelSelectionToDefaults() -> ModelSelectionDraft {
+        modelSelection.resetToDefaults()
+        return modelSelection.selectionSnapshot
+    }
+
+    // MARK: - Model Selection Reload
+
+    func reloadModelSelectionContext() async {
+        if let reloadTask = modelSelectionReloadTask {
+            pendingModelSelectionReload = true
+            await reloadTask.value
+            return
+        }
+
+        let reloadTask = Task { [weak self] in
+            guard let self else { return }
+            repeat {
+                self.pendingModelSelectionReload = false
+                await self.modelSelection.reloadModelSelectionContext()
+            } while self.pendingModelSelectionReload && !Task.isCancelled
+            self.modelSelectionReloadTask = nil
+        }
+        modelSelectionReloadTask = reloadTask
+        await reloadTask.value
+    }
+
+    func cancelModelRefresh() {
+        modelSelection.cancelRefreshTask()
+        modelSelectionReloadTask?.cancel()
+        modelSelectionReloadTask = nil
+        pendingModelSelectionReload = false
+    }
+
+    // MARK: - Messages (for UI)
+
+    var messages: [ChatMessage] { messageStore.messages }
+
+    @discardableResult
+    func appendUserMessage(_ text: String) -> Int? {
+        messageStore.appendMessage(role: .user, text: text)
+    }
+
     // MARK: - Execution
 
     /// Builds and executes an LLM chat request from the current session state.
@@ -119,7 +231,18 @@ final class ChatSession {
         validationBridge: DoufuBridge?
     ) {
         guard !taskCoordinator.isExecuting else { return }
-        guard threadManager.currentThread != nil else { return }
+
+        // Auto-create initial thread on first send.
+        if threadManager.currentThread == nil {
+            do {
+                try threadManager.createInitialThread()
+                delegate?.sessionDidSwitchThread()
+            } catch {
+                delegate?.sessionDidEncounterError(error)
+                return
+            }
+        }
+
         guard modelSelection.canSend,
               let baseCredential = modelSelection.providerCredential
         else { return }
@@ -147,6 +270,21 @@ final class ChatSession {
             validationBridge: validationBridge
         )
         taskCoordinator.execute(request)
+    }
+
+    // MARK: - Thread Management
+
+    func renameThread(threadID: String, newTitle: String) throws {
+        try threadManager.renameThread(threadID: threadID, newTitle: newTitle)
+    }
+
+    func deleteThread(threadID: String) throws {
+        guard !taskCoordinator.isExecuting else { return }
+        try threadManager.deleteThread(threadID: threadID)
+    }
+
+    func reorderThreads(orderedIDs: [String]) throws {
+        try threadManager.reorderThreads(orderedIDs: orderedIDs)
     }
 
     // MARK: - Initial Load
@@ -200,6 +338,9 @@ extension ChatSession: ChatTaskCoordinatorDelegate {
         guard threadManager.currentThread != nil else { return }
 
         threadManager.updateSessionMemory(result.updatedMemory)
+        if let threadID = threadManager.currentThread?.id {
+            try? dataService.persistSessionMemory(threadManager.sessionMemory, threadID: threadID)
+        }
 
         var assistantText = result.assistantMessage
         if !result.changedPaths.isEmpty {
@@ -278,6 +419,21 @@ extension ChatSession: ChatMessageStoreMutationDelegate {
         }
     }
 
+    /// Persists all current-thread state: messages, session memory, and
+    /// model selection.  Called before thread switches to guarantee nothing
+    /// is lost.
+    private func persistFullState() {
+        guard let threadID = threadManager.currentThread?.id else { return }
+        flushPendingPersistence()
+        do {
+            try dataService.persistMessages(messageStore.messages, threadID: threadID)
+            try dataService.persistSessionMemory(threadManager.sessionMemory, threadID: threadID)
+        } catch {
+            delegate?.sessionDidEncounterError(error)
+        }
+        modelSelection.persistCurrentModelSelection()
+    }
+
     /// Flush any pending debounced persistence immediately.
     /// Must be called before thread switches or session teardown to avoid
     /// data loss.
@@ -301,11 +457,13 @@ extension ChatSession: ChatMessageStoreMutationDelegate {
 // MARK: - ChatThreadManagerDelegate
 
 extension ChatSession: ChatThreadManagerDelegate {
-    func threadManagerWillPersistCurrentState() {
-        // Cancel any pending debounced write — the thread manager
-        // is about to perform a full persistence itself.
-        persistenceDebounceTask?.cancel()
-        persistenceDebounceTask = nil
+    func threadManagerWillSwitchThread() {
+        persistFullState()
+    }
+
+    func threadManagerDidLoadThread(messages: [ChatMessage], memory: SessionMemory?) {
+        modelSelection.reloadModelSelectionContext(triggerModelRefresh: false)
+        messageStore.replaceMessages(messages)
     }
 
     func threadManagerDidSwitchThread() {

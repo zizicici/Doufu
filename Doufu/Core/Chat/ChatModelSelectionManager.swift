@@ -33,6 +33,10 @@ final class ChatModelSelectionManager {
     private var modelRefreshTask: Task<Void, Never>?
     private var modelSelectionObserver: NSObjectProtocol?
     private var currentSelections = ModelSelectionStateStore.Snapshot()
+    /// Set when `reloadModelSelectionContext` normalizes a stale thread
+    /// override.  The corrected value is flushed on the next
+    /// `persistCurrentModelSelection` call rather than writing immediately.
+    private var hasDeferredNormalizationWrite = false
 
     private var appDefault: ModelSelection? {
         currentSelections.appDefault
@@ -104,11 +108,7 @@ final class ChatModelSelectionManager {
             let normalizedThreadOverride = normalizePersistedThreadOverride(loadedThreadOverride)
             snapshot.threadSelection = normalizedThreadOverride
             if loadedThreadOverride != normalizedThreadOverride {
-                modelSelectionStore.setThreadSelection(
-                    normalizedThreadOverride,
-                    projectID: projectID,
-                    threadID: threadID
-                )
+                hasDeferredNormalizationWrite = true
             }
         } else {
             snapshot.threadSelection = nil
@@ -442,12 +442,21 @@ final class ChatModelSelectionManager {
     }
 
     func persistCurrentModelSelection() {
-        guard let snapshot = buildCurrentModelSelection() else { return }
-        modelSelectionStore.setThreadSelection(
-            snapshot.selection,
-            projectID: projectID,
-            threadID: snapshot.threadID
-        )
+        let wasDeferredNormalization = hasDeferredNormalizationWrite
+        hasDeferredNormalizationWrite = false
+
+        guard let threadID = currentThreadIDProvider() else { return }
+
+        if let snapshot = buildCurrentModelSelection() {
+            modelSelectionStore.setThreadSelection(
+                snapshot.selection,
+                projectID: projectID,
+                threadID: snapshot.threadID
+            )
+        } else if wasDeferredNormalization {
+            // Override was normalized to nil — delete the stale DB record.
+            modelSelectionStore.setThreadSelection(nil, projectID: projectID, threadID: threadID)
+        }
     }
 
     func persistCurrentModelSelectionAsync() async {
@@ -461,7 +470,7 @@ final class ChatModelSelectionManager {
 
     /// The resolved state ignoring the thread override — represents what
     /// the thread would inherit from project/app defaults.
-    var inheritedSnapshot: ModelConfigurationViewController.SelectionState {
+    var inheritedSnapshot: ModelSelectionDraft {
         let inheritedResolution = ModelSelectionResolver.resolve(
             appDefault: appDefault,
             projectDefault: projectDefault,
@@ -469,7 +478,7 @@ final class ChatModelSelectionManager {
             availableCredentials: availableProviderCredentials,
             providerStore: providerStore
         )
-        return ModelConfigurationViewController.SelectionState(
+        return ModelSelectionDraft(
             selectedProviderID: inheritedResolution.providerID ?? "",
             selectedModelRecordID: inheritedResolution.modelRecordID ?? "",
             selectedReasoningEffort: inheritedResolution.reasoningEffort,
@@ -477,9 +486,9 @@ final class ChatModelSelectionManager {
         )
     }
 
-    var selectionSnapshot: ModelConfigurationViewController.SelectionState {
+    var selectionSnapshot: ModelSelectionDraft {
         if let threadOverride {
-            return ModelConfigurationViewController.SelectionState(
+            return ModelSelectionDraft(
                 selectedProviderID: threadOverride.providerID,
                 selectedModelRecordID: threadOverride.modelRecordID,
                 selectedReasoningEffort: threadOverride.reasoningEffort,
@@ -487,7 +496,7 @@ final class ChatModelSelectionManager {
             )
         }
 
-        return ModelConfigurationViewController.SelectionState(
+        return ModelSelectionDraft(
             selectedProviderID: resolution.providerID ?? "",
             selectedModelRecordID: resolution.modelRecordID ?? "",
             selectedReasoningEffort: resolution.reasoningEffort,
@@ -496,7 +505,7 @@ final class ChatModelSelectionManager {
     }
 
     @discardableResult
-    func applySelectionState(_ state: ModelConfigurationViewController.SelectionState) -> SelectionApplyOutcome {
+    func applySelectionState(_ state: ModelSelectionDraft) -> SelectionApplyOutcome {
         let normalizedSelection = normalizeDraftState(state)
         let hasThreadOverride = applyThreadOverride(normalizedSelection, persist: true)
         return SelectionApplyOutcome(hasExplicitSelection: hasThreadOverride)
@@ -618,7 +627,7 @@ final class ChatModelSelectionManager {
     }
 
     private func normalizeDraftState(
-        _ state: ModelConfigurationViewController.SelectionState
+        _ state: ModelSelectionDraft
     ) -> ModelSelection? {
         ModelSelectionResolver.sanitizeSelection(
             providerID: state.selectedProviderID,
@@ -694,20 +703,6 @@ final class ChatModelSelectionManager {
                 return false
             }
             return changedThreadID == currentThreadIDProvider()
-        }
-    }
-}
-
-enum ChatProviderError: LocalizedError {
-    case noAvailableProvider
-    case noThreadAvailable
-
-    var errorDescription: String? {
-        switch self {
-        case .noAvailableProvider:
-            return String(localized: "chat.error.no_provider")
-        case .noThreadAvailable:
-            return String(localized: "chat.error.no_thread")
         }
     }
 }

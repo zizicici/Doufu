@@ -56,7 +56,7 @@ final class DefaultModelSelectionViewController: UIViewController {
         refreshStatusPrompt(for: modelSelectionStore.loadAppDefaultSelection())
     }
 
-    private func buildSelectionState() -> ModelConfigurationViewController.SelectionState {
+    private func buildSelectionState() -> ModelSelectionDraft {
         if let stored = modelSelectionStore.loadAppDefaultSelection() {
             return selectionState(from: stored)
         }
@@ -65,7 +65,7 @@ final class DefaultModelSelectionViewController: UIViewController {
         let fallbackModelID = providers.first.flatMap {
             providerStore.availableModels(forProviderID: $0.id).first?.id
         } ?? ""
-        return ModelConfigurationViewController.SelectionState(
+        return ModelSelectionDraft(
             selectedProviderID: fallbackProviderID,
             selectedModelRecordID: fallbackModelID,
             selectedReasoningEffort: nil,
@@ -73,8 +73,8 @@ final class DefaultModelSelectionViewController: UIViewController {
         )
     }
 
-    private func selectionState(from selection: ModelSelection) -> ModelConfigurationViewController.SelectionState {
-        ModelConfigurationViewController.SelectionState(
+    private func selectionState(from selection: ModelSelection) -> ModelSelectionDraft {
+        ModelSelectionDraft(
             selectedProviderID: selection.providerID,
             selectedModelRecordID: selection.modelRecordID,
             selectedReasoningEffort: selection.reasoningEffort,
@@ -83,7 +83,7 @@ final class DefaultModelSelectionViewController: UIViewController {
     }
 
     private func normalizedSelection(
-        from state: ModelConfigurationViewController.SelectionState
+        from state: ModelSelectionDraft
     ) -> ModelSelection? {
         ModelSelectionResolver.sanitizeSelection(
             providerID: state.selectedProviderID,

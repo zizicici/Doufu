@@ -16,8 +16,6 @@ final class ChatViewController: UIViewController {
     private var toolPermissionMode: ToolPermissionMode = .standard
     private var initialLoadTask: Task<Void, Never>?
     private var appearReloadTask: Task<Void, Never>?
-    private var modelSelectionReloadTask: Task<Void, Never>?
-    private var pendingModelSelectionReload = false
 
     /// Server base URL for code validation (uses localhost instead of file://).
     var validationServerBaseURL: URL?
@@ -27,17 +25,6 @@ final class ChatViewController: UIViewController {
     private let inputMinHeight: CGFloat = 38
     private let inputMaxHeight: CGFloat = 120
     private var inputHeightConstraint: NSLayoutConstraint?
-
-    // MARK: - Convenience Accessors
-
-    private var messageStore: ChatMessageStore { session.messageStore }
-    private var modelSelection: ChatModelSelectionManager { session.modelSelection }
-    private var threadManager: ChatThreadManager { session.threadManager }
-    private var taskCoordinator: ChatTaskCoordinator { session.taskCoordinator }
-    private var project: AppProjectRecord { session.project }
-    private var projectIdentifier: String { session.projectID }
-    private var projectName: String { session.project.name }
-    private var workspaceURL: URL { session.project.appURL }
 
     // MARK: - UI Elements
 
@@ -144,8 +131,7 @@ final class ChatViewController: UIViewController {
 
         configureNavigation()
         configureLayout()
-        ensureProjectMemoryDocumentIfNeeded()
-        toolPermissionMode = AppProjectStore.shared.loadToolPermissionMode(projectURL: project.projectURL)
+        toolPermissionMode = AppProjectStore.shared.loadToolPermissionMode(projectURL: session.project.projectURL)
         if isReadOnly {
             inputContainer.isHidden = true
         }
@@ -155,7 +141,7 @@ final class ChatViewController: UIViewController {
         initialLoadTask = Task { [weak self] in
             guard let self else { return }
             defer { self.initialLoadTask = nil }
-            await self.reloadModelSelectionContext()
+            await self.session.reloadModelSelectionContext()
             do {
                 try self.session.restoreThreadStateIfNeeded()
             } catch {
@@ -170,7 +156,7 @@ final class ChatViewController: UIViewController {
         session.setUIObserver(self)
 
         // Re-read permission mode in case it was changed from settings.
-        toolPermissionMode = AppProjectStore.shared.loadToolPermissionMode(projectURL: project.projectURL)
+        toolPermissionMode = AppProjectStore.shared.loadToolPermissionMode(projectURL: session.project.projectURL)
 
         // Sync tableView with messageStore in case messages were added
         // while the VC was dismissed (e.g., execution continued in background).
@@ -184,7 +170,7 @@ final class ChatViewController: UIViewController {
             if let initialLoadTask = self.initialLoadTask {
                 await initialLoadTask.value
             }
-            await self.reloadModelSelectionContext()
+            await self.session.reloadModelSelectionContext()
         }
     }
 
@@ -201,34 +187,8 @@ final class ChatViewController: UIViewController {
             initialLoadTask = nil
             appearReloadTask?.cancel()
             appearReloadTask = nil
-            modelSelectionReloadTask?.cancel()
-            modelSelectionReloadTask = nil
-            pendingModelSelectionReload = false
-            modelSelection.cancelRefreshTask()
+            session.cancelModelRefresh()
         }
-    }
-
-    private func reloadModelSelectionContext() async {
-        if let reloadTask = modelSelectionReloadTask {
-            pendingModelSelectionReload = true
-            await reloadTask.value
-            return
-        }
-
-        let reloadTask = Task { [weak self] in
-            guard let self else { return }
-            await self.runModelSelectionReloadLoop()
-        }
-        modelSelectionReloadTask = reloadTask
-        await reloadTask.value
-    }
-
-    private func runModelSelectionReloadLoop() async {
-        repeat {
-            pendingModelSelectionReload = false
-            await modelSelection.reloadModelSelectionContext()
-        } while pendingModelSelectionReload && !Task.isCancelled
-        modelSelectionReloadTask = nil
     }
 
     // MARK: - Navigation
@@ -239,25 +199,25 @@ final class ChatViewController: UIViewController {
     }
 
     func refreshNavigationItems() {
-        let isExecuting = taskCoordinator.isExecuting
-        threadBarButtonItem.title = threadManager.currentThread?.title ?? String(localized: "chat.thread.button_title")
-        threadBarButtonItem.menu = isExecuting ? nil : ChatMenuBuilder.threadMenu(
-            threads: threadManager.threadIndex?.threads ?? [],
-            currentThreadID: threadManager.currentThread?.id,
-            onSwitch: { [weak self] threadID in self?.threadManager.handleSwitchThread(threadID: threadID) },
-            onCreate: { [weak self] in self?.threadManager.createAndSwitchThread() },
+        let executing = session.isExecuting
+        threadBarButtonItem.title = session.currentThreadTitle ?? String(localized: "chat.thread.button_title")
+        threadBarButtonItem.menu = executing ? nil : ChatMenuBuilder.threadMenu(
+            threads: session.threadList,
+            currentThreadID: session.currentThreadID,
+            onSwitch: { [weak self] threadID in self?.session.switchThread(threadID: threadID) },
+            onCreate: { [weak self] in self?.session.createNewThread() },
             onManage: { [weak self] in self?.presentThreadManagement() }
         )
-        threadBarButtonItem.isEnabled = !isExecuting
+        threadBarButtonItem.isEnabled = !executing
         navigationItem.leftBarButtonItem = threadBarButtonItem
-        navigationItem.prompt = modelSelection.currentStatusPrompt()
+        navigationItem.prompt = session.statusPrompt
         modelBarButtonItem.image = UIImage(systemName: "theatermask.and.paintbrush")
-        modelBarButtonItem.accessibilityLabel = modelSelection.currentModelMenuButtonTitle()
+        modelBarButtonItem.accessibilityLabel = session.modelButtonTitle
         modelBarButtonItem.menu = nil
-        modelBarButtonItem.isEnabled = !isExecuting && modelSelection.hasConfiguredProviders
+        modelBarButtonItem.isEnabled = !executing && session.hasConfiguredProviders
         usageBarButtonItem.isEnabled = true
         moreBarButtonItem.menu = ChatMenuBuilder.moreMenu(
-            isExecuting: isExecuting,
+            isExecuting: executing,
             onFiles: { [weak self] in self?.presentProjectFiles() },
             onSettings: { [weak self] in self?.presentProjectSettings() },
             onClose: { [weak self] in self?.didTapClose() }
@@ -311,37 +271,10 @@ final class ChatViewController: UIViewController {
         ])
     }
 
-    // MARK: - Project Setup
-
-    private func ensureProjectMemoryDocumentIfNeeded() {
-        let memoryURL = workspaceURL.appendingPathComponent("DOUFU.MD")
-        guard !FileManager.default.fileExists(atPath: memoryURL.path) else {
-            return
-        }
-        let fallback = """
-        # DOUFU.MD
-
-        ## Project Overview
-        - Name: \(projectName)
-        - Runtime: Static html/css/js in WKWebView
-        - Directory layout: `App/` (code + git) | `AppData/` (user data)
-        - All code lives in `App/`. This file is inside `App/`.
-
-        ## Notes
-        - Keep this file updated with architecture and important feature notes.
-        - Keep AGENTS.md aligned with current UX constraints.
-        """
-        try? fallback.write(to: memoryURL, atomically: true, encoding: .utf8)
-    }
-
     private func presentThreadManagement() {
-        guard !taskCoordinator.isExecuting else { return }
-        let vc = ThreadManagementViewController(projectID: project.id)
-        vc.onChanged = { [weak self] in
-            guard let self else { return }
-            threadManager.reloadIndex()
-            refreshNavigationItems()
-        }
+        guard !session.isExecuting else { return }
+        let vc = ThreadManagementViewController(session: session)
+        vc.delegate = self
         let nav = UINavigationController(rootViewController: vc)
         present(nav, animated: true)
     }
@@ -370,8 +303,8 @@ final class ChatViewController: UIViewController {
 
     private func refreshSendButton() {
         let hasText = !currentInputText().isEmpty
-        let hasThread = threadManager.currentThread != nil
-        if taskCoordinator.isExecuting {
+        let executing = session.isExecuting
+        if executing {
             sendButton.isEnabled = true
             var configuration = sendButton.configuration ?? UIButton.Configuration.filled()
             configuration.image = UIImage(systemName: "stop")
@@ -381,7 +314,7 @@ final class ChatViewController: UIViewController {
             sendButton.configuration = configuration
             sendButton.accessibilityLabel = String(localized: "chat.action.cancel")
         } else {
-            sendButton.isEnabled = hasText && modelSelection.canSend && hasThread
+            sendButton.isEnabled = hasText && session.canSend
             var configuration = sendButton.configuration ?? UIButton.Configuration.filled()
             configuration.image = UIImage(systemName: "arrow.up")
             configuration.baseBackgroundColor = .systemBlue
@@ -390,8 +323,8 @@ final class ChatViewController: UIViewController {
             sendButton.configuration = configuration
             sendButton.accessibilityLabel = String(localized: "chat.action.send")
         }
-        inputTextView.isEditable = !taskCoordinator.isExecuting
-        inputTextView.alpha = taskCoordinator.isExecuting ? 0.72 : 1.0
+        inputTextView.isEditable = !executing
+        inputTextView.alpha = executing ? 0.72 : 1.0
         refreshNavigationItems()
     }
 
@@ -405,13 +338,13 @@ final class ChatViewController: UIViewController {
     }
 
     func scrollToBottomIfNeeded(force: Bool = false) {
-        guard !messageStore.messages.isEmpty else {
+        guard !session.messages.isEmpty else {
             return
         }
         guard force || isNearBottom else {
             return
         }
-        let lastRow = messageStore.messages.count - 1
+        let lastRow = session.messages.count - 1
         let indexPath = IndexPath(row: lastRow, section: 0)
         tableView.scrollToRow(at: indexPath, at: .bottom, animated: !force)
     }
@@ -420,38 +353,27 @@ final class ChatViewController: UIViewController {
 
     @objc
     private func didTapModelSettings() {
-        guard !taskCoordinator.isExecuting else {
+        guard !session.isExecuting else { return }
+
+        guard let context = session.prepareModelConfiguration() else {
+            presentTransientError(ChatProviderError.noAvailableProvider.localizedDescription)
             return
         }
 
-        let availableProviderCredentials = modelSelection.resolveProviderCredentials()
-        modelSelection.refreshWithResolvedCredentials(availableProviderCredentials)
-        guard modelSelection.hasConfiguredProviders else {
-            Task { [weak self] in
-                await self?.reloadModelSelectionContext()
-            }
-            messageStore.appendMessage(role: .system, text: ChatProviderError.noAvailableProvider.localizedDescription)
-            return
-        }
-
-        let selectionState = modelSelection.selectionSnapshot
         let controller = ModelConfigurationViewController(
-            initialState: selectionState,
-            showsResetToDefaults: modelSelection.hasThreadOverride,
-            projectUsageIdentifier: projectIdentifier,
-            inheritedState: modelSelection.inheritedSnapshot,
-            inheritedStateProvider: { [weak self] in
-                self?.modelSelection.inheritedSnapshot
-            },
+            initialState: context.initialState,
+            showsResetToDefaults: context.showsResetToDefaults,
+            projectUsageIdentifier: session.projectID,
+            inheritedState: context.inheritedState,
+            inheritedStateProvider: context.inheritedStateProvider,
             inheritTitle: String(localized: "model_config.inherit.use_project_default")
         )
         controller.onSelectionStateChanged = { [weak self] state in
-            self?.modelSelection.applySelectionState(state) ?? SelectionApplyOutcome(hasExplicitSelection: false)
+            self?.session.applyModelSelection(state) ?? SelectionApplyOutcome(hasExplicitSelection: false)
         }
         controller.onResetToDefaults = { [weak self] in
-            guard let self else { return selectionState }
-            self.modelSelection.resetToDefaults()
-            return self.modelSelection.selectionSnapshot
+            guard let self else { return context.initialState }
+            return self.session.resetModelSelectionToDefaults()
         }
 
         let navigationController = UINavigationController(rootViewController: controller)
@@ -466,7 +388,7 @@ final class ChatViewController: UIViewController {
     @objc
     private func didTapProjectUsage() {
         let controller = ProjectTokenUsageViewController(
-            projectUsageIdentifier: projectIdentifier
+            projectUsageIdentifier: session.projectID
         )
         let navigationController = UINavigationController(rootViewController: controller)
         navigationController.modalPresentationStyle = .pageSheet
@@ -479,9 +401,9 @@ final class ChatViewController: UIViewController {
 
     private func presentProjectFiles() {
         let controller = ProjectFileBrowserViewController(
-            projectName: projectName,
-            rootURL: workspaceURL,
-            projectRootURL: project.projectURL
+            projectName: session.project.name,
+            rootURL: session.project.appURL,
+            projectRootURL: session.project.projectURL
         )
         let navigationController = UINavigationController(rootViewController: controller)
         navigationController.modalPresentationStyle = .pageSheet
@@ -494,8 +416,8 @@ final class ChatViewController: UIViewController {
 
     private func presentProjectSettings() {
         let settingsController = ProjectSettingsViewController(
-            projectURL: project.projectURL,
-            projectName: projectName
+            projectURL: session.project.projectURL,
+            projectName: session.project.name
         )
         settingsController.onProjectUpdated = { [weak self] updatedProjectName in
             guard let self else { return }
@@ -519,6 +441,13 @@ final class ChatViewController: UIViewController {
             sheet.prefersGrabberVisible = true
         }
         present(navigationController, animated: true)
+    }
+
+    private func presentTransientError(_ message: String) {
+        guard !(presentedViewController is UIAlertController) else { return }
+        let alert = UIAlertController(title: nil, message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
+        present(alert, animated: true)
     }
 
     private func presentChatStorageError(_ error: Error) {
@@ -546,8 +475,8 @@ final class ChatViewController: UIViewController {
 
     @objc
     private func didTapSend() {
-        if taskCoordinator.isExecuting {
-            taskCoordinator.cancel()
+        if session.isExecuting {
+            session.cancelExecution()
             return
         }
 
@@ -555,13 +484,9 @@ final class ChatViewController: UIViewController {
         guard !userInput.isEmpty else {
             return
         }
-        guard threadManager.currentThread != nil else {
-            messageStore.appendMessage(role: .system, text: ChatProviderError.noThreadAvailable.localizedDescription)
-            return
-        }
-        guard modelSelection.canSend else {
-            if let blockedMessage = modelSelection.sendBlockedMessage() {
-                messageStore.appendMessage(role: .system, text: blockedMessage)
+        guard session.canSend else {
+            if let blockedMessage = session.sendBlockedMessage() {
+                presentTransientError(blockedMessage)
             }
             return
         }
@@ -569,7 +494,7 @@ final class ChatViewController: UIViewController {
         inputTextView.text = ""
         refreshInputPlaceholder()
         updateInputTextViewHeight()
-        messageStore.appendMessage(role: .user, text: userInput)
+        session.appendUserMessage(userInput)
         inputTextView.resignFirstResponder()
 
         session.sendMessage(
@@ -639,11 +564,19 @@ extension ChatViewController: ChatSessionDelegate {
     }
 }
 
+// MARK: - ThreadManagementViewControllerDelegate
+
+extension ChatViewController: ThreadManagementViewControllerDelegate {
+    func threadManagementDidChange() {
+        refreshNavigationItems()
+    }
+}
+
 // MARK: - UITableViewDataSource
 
 extension ChatViewController: UITableViewDataSource {
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        messageStore.messages.count
+        session.messages.count
     }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
@@ -656,7 +589,7 @@ extension ChatViewController: UITableViewDataSource {
             return UITableViewCell()
         }
 
-        let message = messageStore.messages[indexPath.row]
+        let message = session.messages[indexPath.row]
         cell.configure(message: message, now: Date())
 
         if message.isProgress {
