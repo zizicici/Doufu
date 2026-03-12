@@ -142,21 +142,6 @@ struct ModelSelection: Codable, Equatable {
     var reasoningEffort: ProjectChatService.ReasoningEffort?
     var thinkingEnabled: Bool?
 
-    private enum CodingKeys: String, CodingKey {
-        case providerID
-        case modelRecordID
-        case reasoningEffort
-        case thinkingEnabled
-    }
-
-    private enum LegacyCodingKeys: String, CodingKey {
-        case selectedProviderID
-        case selectedModelIDByProviderID
-        case selectedReasoningEffortsByModelID
-        case selectedAnthropicThinkingEnabledByModelID
-        case selectedGeminiThinkingEnabledByModelID
-    }
-
     init(
         providerID: String,
         modelRecordID: String,
@@ -167,36 +152,5 @@ struct ModelSelection: Codable, Equatable {
         self.modelRecordID = modelRecordID
         self.reasoningEffort = reasoningEffort
         self.thinkingEnabled = thinkingEnabled
-    }
-
-    init(from decoder: Decoder) throws {
-        if let container = try? decoder.container(keyedBy: CodingKeys.self),
-           let providerID = try? container.decode(String.self, forKey: .providerID),
-           let modelRecordID = try? container.decode(String.self, forKey: .modelRecordID) {
-            self.providerID = providerID
-            self.modelRecordID = modelRecordID
-            self.reasoningEffort = try container.decodeIfPresent(ProjectChatService.ReasoningEffort.self, forKey: .reasoningEffort)
-            self.thinkingEnabled = try container.decodeIfPresent(Bool.self, forKey: .thinkingEnabled)
-            return
-        }
-
-        let container = try? decoder.container(keyedBy: LegacyCodingKeys.self)
-        let providerID = (try? container?.decode(String.self, forKey: .selectedProviderID)) ?? ""
-        let selectedModelIDByProviderID = (try? container?.decodeIfPresent([String: String].self, forKey: .selectedModelIDByProviderID)) ?? [:]
-        let trimmedProviderID = providerID.trimmingCharacters(in: .whitespacesAndNewlines)
-        let rawModelRecordID = selectedModelIDByProviderID[trimmedProviderID] ?? ""
-        let trimmedModelRecordID = rawModelRecordID.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        let modelKey = trimmedModelRecordID.lowercased()
-        let selectedReasoningEffortsByModelID = (try? container?.decodeIfPresent([String: String].self, forKey: .selectedReasoningEffortsByModelID)) ?? [:]
-        let selectedAnthropicThinkingEnabledByModelID = (try? container?.decodeIfPresent([String: Bool].self, forKey: .selectedAnthropicThinkingEnabledByModelID)) ?? [:]
-        let selectedGeminiThinkingEnabledByModelID = (try? container?.decodeIfPresent([String: Bool].self, forKey: .selectedGeminiThinkingEnabledByModelID)) ?? [:]
-
-        self.providerID = trimmedProviderID
-        self.modelRecordID = trimmedModelRecordID
-        self.reasoningEffort = selectedReasoningEffortsByModelID[modelKey]
-            .flatMap(ProjectChatService.ReasoningEffort.init(rawValue:))
-        self.thinkingEnabled = selectedAnthropicThinkingEnabledByModelID[modelKey]
-            ?? selectedGeminiThinkingEnabledByModelID[modelKey]
     }
 }

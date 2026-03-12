@@ -457,6 +457,5 @@ final class ProjectGitService {
 
     private let defaultGitignore = """
     .DS_Store
-    .doufu_snapshots/
     """
 }

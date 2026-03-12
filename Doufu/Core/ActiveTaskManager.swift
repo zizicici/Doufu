@@ -29,14 +29,4 @@ final class ActiveTaskManager {
             UIApplication.shared.isIdleTimerDisabled = false
         }
     }
-
-    // MARK: - Legacy (no sessionID)
-
-    func taskDidStart() {
-        taskDidStart(sessionID: "_legacy")
-    }
-
-    func taskDidEnd() {
-        taskDidEnd(sessionID: "_legacy")
-    }
 }

@@ -259,7 +259,6 @@ final class ProjectWorkspaceViewController: UIViewController {
         ) { [weak self] _ in
             self?.consumeVisibleProjectUpdateIfNeeded()
         }
-        AppProjectStore.shared.ensureProjectMemoryDocument(at: project.appURL, projectName: projectName)
         loadProjectPage()
     }
 
@@ -1013,11 +1012,7 @@ final class ProjectWorkspaceViewController: UIViewController {
                 return
             }
             let previewURL = self.projectURL.appendingPathComponent("preview.jpg")
-            let legacyPNGURL = self.projectURL.appendingPathComponent("preview.png")
             try? imageData.write(to: previewURL, options: .atomic)
-            if FileManager.default.fileExists(atPath: legacyPNGURL.path) {
-                try? FileManager.default.removeItem(at: legacyPNGURL)
-            }
         }
     }
 }

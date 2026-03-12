@@ -341,7 +341,7 @@ final class ProjectFileBrowserViewController: UITableViewController {
             at: projectRootURL.appendingPathComponent("AppData", isDirectory: true),
             to: exportFolderURL.appendingPathComponent("AppData", isDirectory: true)
         )
-        for fileName in ["preview.jpg", "preview.jpeg", "preview.png", "thumbnail.png", "snapshot.png"] {
+        for fileName in ["preview.jpg", "preview.jpeg"] {
             try copyItemIfPresent(
                 at: projectRootURL.appendingPathComponent(fileName),
                 to: exportFolderURL.appendingPathComponent(fileName)

@@ -187,7 +187,7 @@ final class PiPProgressManager: NSObject {
             if let nextEntry = taskEntries.values.first(where: { !$0.isFinished }) {
                 displaySession(nextEntry)
             } else {
-                taskDidComplete()
+                finishPiP(statusText: String(localized: "pip.status.completed"))
             }
         }
     }
@@ -200,7 +200,7 @@ final class PiPProgressManager: NSObject {
             if let nextEntry = taskEntries.values.first(where: { !$0.isFinished }) {
                 displaySession(nextEntry)
             } else {
-                taskDidFail(message)
+                finishPiP(statusText: message ?? String(localized: "pip.status.failed"))
             }
         }
     }
@@ -213,8 +213,35 @@ final class PiPProgressManager: NSObject {
             if let nextEntry = taskEntries.values.first(where: { !$0.isFinished }) {
                 displaySession(nextEntry)
             } else {
-                taskDidCancel()
+                isFinished = true
+                finishedStatusText = String(localized: "pip.status.cancelled")
+                if isActive {
+                    stopAudioPlayer()
+                    stopRefreshTimer()
+                    freezeElapsedTime()
+                    pushFrame()
+                    playChime()
+                } else {
+                    taskStartDate = nil
+                    tearDown()
+                }
             }
+        }
+    }
+
+    private func finishPiP(statusText: String) {
+        hasActiveTask = false
+        guard isActive else { return }
+        if isPiPShowing {
+            isFinished = true
+            finishedStatusText = statusText
+            stopAudioPlayer()
+            stopRefreshTimer()
+            freezeElapsedTime()
+            pushFrame()
+            playChime()
+        } else {
+            tearDown()
         }
     }
 
@@ -234,101 +261,6 @@ final class PiPProgressManager: NSObject {
             preparePiPController()
         } else {
             pushFrame()
-        }
-    }
-
-    // MARK: - Legacy Task Lifecycle (single-session)
-
-    func taskDidStart(projectName: String, projectURL: URL) {
-        guard isEnabled, AVPictureInPictureController.isPictureInPictureSupported() else {
-            return
-        }
-
-        // Clean up any previous finished state.
-        if isActive {
-            tearDown()
-        }
-
-        self.projectName = projectName
-        // Load static preview as initial fallback; live snapshots replace it.
-        self.projectSnapshot = loadProjectSnapshot(from: projectURL)
-        hasActiveTask = true
-        isFinished = false
-        finishedStatusText = nil
-        taskStartDate = Date()
-        currentStatusText = String(localized: "pip.status.working")
-        currentElapsedText = formattedElapsed(0)
-
-        preparePiPController()
-    }
-
-    func updateStatus(_ text: String) {
-        guard hasActiveTask else { return }
-        currentStatusText = text
-        needsUserAction = false
-        if isActive {
-            pushFrame()
-        }
-    }
-
-    /// Call when the task is waiting for user confirmation (e.g. tool authorization).
-    func setNeedsUserAction() {
-        guard hasActiveTask else { return }
-        needsUserAction = true
-        if isActive {
-            pushFrame()
-        }
-    }
-
-    /// Call when the task completes successfully.
-    func taskDidComplete() {
-        hasActiveTask = false
-        guard isActive else { return }
-        if isPiPShowing {
-            isFinished = true
-            finishedStatusText = String(localized: "pip.status.completed")
-            stopAudioPlayer()
-            stopRefreshTimer()
-            freezeElapsedTime()
-            pushFrame()
-            playChime()
-        } else {
-            tearDown()
-        }
-    }
-
-    /// Call when the task fails with an error.
-    func taskDidFail(_ message: String? = nil) {
-        hasActiveTask = false
-        guard isActive else { return }
-        if isPiPShowing {
-            isFinished = true
-            finishedStatusText = message ?? String(localized: "pip.status.failed")
-            stopAudioPlayer()
-            stopRefreshTimer()
-            freezeElapsedTime()
-            pushFrame()
-            playChime()
-        } else {
-            tearDown()
-        }
-    }
-
-    /// Call when the task is cancelled.
-    func taskDidCancel() {
-        let wasActive = isActive
-        hasActiveTask = false
-        isFinished = true
-        finishedStatusText = String(localized: "pip.status.cancelled")
-        if wasActive {
-            stopAudioPlayer()
-            stopRefreshTimer()
-            freezeElapsedTime()
-            pushFrame()
-            playChime()
-        } else {
-            taskStartDate = nil
-            tearDown()
         }
     }
 

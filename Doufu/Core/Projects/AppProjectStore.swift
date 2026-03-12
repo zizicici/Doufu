@@ -328,27 +328,6 @@ final class AppProjectStore {
         try db.execute(sql: "DELETE FROM project WHERE id = ?", arguments: [projectID])
     }
 
-    /// Ensures a DOUFU.MD file exists in the given App directory.
-    /// New projects already get one at creation; this covers legacy projects
-    /// that predate the template.
-    func ensureProjectMemoryDocument(at appURL: URL, projectName: String) {
-        let memoryURL = appURL.appendingPathComponent("DOUFU.MD")
-        guard !FileManager.default.fileExists(atPath: memoryURL.path) else { return }
-        let fallback = """
-        # DOUFU.MD
-
-        ## Project Overview
-        - Name: \(projectName)
-        - Runtime: Static html/css/js in WKWebView
-        - Directory layout: `App/` (code + git) | `AppData/` (user data)
-        - All code lives in `App/`. This file is inside `App/`.
-
-        ## Notes
-        - Keep this file updated with architecture and important feature notes.
-        - Keep AGENTS.md aligned with current UX constraints.
-        """
-        try? fallback.write(to: memoryURL, atomically: true, encoding: .utf8)
-    }
 
     private func writeBlankWebsiteFiles(
         projectID: String,
