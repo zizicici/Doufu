@@ -46,9 +46,11 @@ final class ChatThreadManager {
         if let index = try dataService.loadThreadIndex() {
             threadIndex = index
             try switchToThread(threadID: index.currentThreadID)
+        } else {
+            // Ensure chat always has a concrete thread once the page is opened,
+            // so thread management actions are meaningful immediately.
+            try createInitialThread()
         }
-        // No threads exist — remain in nil state.
-        // A thread will be created on demand (first send or explicit new thread).
     }
 
     func handleSwitchThread(threadID: String) {
