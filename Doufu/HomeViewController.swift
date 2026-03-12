@@ -365,10 +365,22 @@ final class HomeViewController: UIViewController {
             createdAt: project.createdAt,
             updatedAt: project.updatedAt
         )
-        openProject(record, isNewlyCreated: false, cellIndexPath: indexPath)
+        let initialRoute: ProjectWorkspaceViewController.InitialRoute
+        switch project.activityState {
+        case .needsConfirmation, .error:
+            initialRoute = .chat
+        case .idle, .building, .newVersionAvailable:
+            initialRoute = .workspace
+        }
+        openProject(record, isNewlyCreated: false, cellIndexPath: indexPath, initialRoute: initialRoute)
     }
 
-    private func openProject(_ project: AppProjectRecord, isNewlyCreated: Bool, cellIndexPath: IndexPath? = nil) {
+    private func openProject(
+        _ project: AppProjectRecord,
+        isNewlyCreated: Bool,
+        cellIndexPath: IndexPath? = nil,
+        initialRoute: ProjectWorkspaceViewController.InitialRoute = .workspace
+    ) {
         projectActivityStore.markProjectViewed(projectID: project.id)
 
         // Compute origin frame from the tapped cell
@@ -388,7 +400,8 @@ final class HomeViewController: UIViewController {
 
         let controller = ProjectWorkspaceViewController(
             project: project,
-            isNewlyCreated: isNewlyCreated
+            isNewlyCreated: isNewlyCreated,
+            initialRoute: initialRoute
         )
         controller.modalPresentationStyle = .fullScreen
         controller.transitioningDelegate = projectTransitionDelegate
@@ -622,6 +635,16 @@ private final class ProjectCardCell: UICollectionViewCell {
         case .newVersionAvailable:
             activityBadgeLabel.text = String(localized: "home.project.activity.new_version")
             activityBadgeLabel.backgroundColor = UIColor.systemGreen.withAlphaComponent(0.96)
+            activityBadgeLabel.textColor = .white
+            activityBadgeLabel.isHidden = false
+        case .needsConfirmation:
+            activityBadgeLabel.text = String(localized: "home.project.activity.needs_confirmation")
+            activityBadgeLabel.backgroundColor = UIColor.systemBlue.withAlphaComponent(0.96)
+            activityBadgeLabel.textColor = .white
+            activityBadgeLabel.isHidden = false
+        case .error:
+            activityBadgeLabel.text = String(localized: "home.project.activity.error")
+            activityBadgeLabel.backgroundColor = UIColor.systemRed.withAlphaComponent(0.96)
             activityBadgeLabel.textColor = .white
             activityBadgeLabel.isHidden = false
         }

@@ -40,6 +40,11 @@ final class ProjectWorkspaceViewController: UIViewController {
         case collapsed(PanelSide)
     }
 
+    enum InitialRoute: Equatable {
+        case workspace
+        case chat
+    }
+
     private(set) var project: AppProjectRecord
     private let isNewlyCreated: Bool
     private let projectStore = AppProjectStore.shared
@@ -69,6 +74,7 @@ final class ProjectWorkspaceViewController: UIViewController {
     private let webServer: LocalWebServer
     private let doufuBridge: DoufuBridge
     private var chatPresentationTask: Task<Void, Never>?
+    private var pendingInitialRoute: InitialRoute
 
     private lazy var webView: WKWebView = {
         let configuration = WKWebViewConfiguration()
@@ -216,11 +222,12 @@ final class ProjectWorkspaceViewController: UIViewController {
     private var projectName: String { project.name }
     private var projectURL: URL { project.projectURL }
 
-    init(project: AppProjectRecord, isNewlyCreated: Bool) {
+    init(project: AppProjectRecord, isNewlyCreated: Bool, initialRoute: InitialRoute = .workspace) {
         self.project = project
         self.isNewlyCreated = isNewlyCreated
         self.webServer = LocalWebServer(projectURL: project.appURL, projectID: project.id)
         self.doufuBridge = DoufuBridge(projectURL: project.appURL)
+        self.pendingInitialRoute = initialRoute
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -255,6 +262,13 @@ final class ProjectWorkspaceViewController: UIViewController {
             coordinator.closeProject(projectID: project.id)
             onDismissed?()
         }
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        guard pendingInitialRoute == .chat else { return }
+        pendingInitialRoute = .workspace
+        didTapChat()
     }
 
     override func viewDidLayoutSubviews() {
@@ -839,6 +853,7 @@ final class ProjectWorkspaceViewController: UIViewController {
     }
 
     private func presentChatController(readOnly: Bool) {
+        projectActivityStore.markChatViewed(projectID: project.id)
         let session = coordinator.session(for: project)
         session.onProjectFilesUpdated = { [weak self] in
             guard let self else { return }

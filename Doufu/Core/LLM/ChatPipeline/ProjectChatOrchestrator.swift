@@ -339,6 +339,7 @@ final class ProjectChatOrchestrator {
             state.toolActivityLog.append(toolDescription)
 
             let result = await toolProvider.execute(toolCall: toolCall, onProgress: onProgress)
+            try Task.checkCancellation()
 
             if let onProgress {
                 if let event = result.completionEvent {

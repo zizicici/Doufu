@@ -33,6 +33,25 @@ struct ModelConfigurationContext {
 @MainActor
 final class ChatSession {
 
+    private final class PendingToolConfirmation {
+        let toolName: String
+        let tier: ToolPermissionTier
+        let description: String
+        let continuation: CheckedContinuation<Bool, Never>
+
+        init(
+            toolName: String,
+            tier: ToolPermissionTier,
+            description: String,
+            continuation: CheckedContinuation<Bool, Never>
+        ) {
+            self.toolName = toolName
+            self.tier = tier
+            self.description = description
+            self.continuation = continuation
+        }
+    }
+
     let projectID: String
     private(set) var project: AppProjectRecord
     private let dataService: ChatDataService
@@ -44,9 +63,11 @@ final class ChatSession {
     weak var delegate: ChatSessionDelegate?
 
     /// Set via ``setUIObserver(_:)`` when the VC appears; cleared when it disappears.
-    /// When nil, the session uses a fallback that auto-allows autoAllow tier
-    /// and rejects everything else.
-    private weak var activeConfirmationHandler: ToolConfirmationHandler?
+    /// When nil, confirmations fall back to a session-level pending state that
+    /// can be resumed the next time chat UI becomes available.
+    private weak var activeConfirmationHandler: ToolConfirmationPresenter?
+    private var pendingToolConfirmation: PendingToolConfirmation?
+    private var pendingConfirmationPresentationTask: Task<Void, Never>?
 
     var onProjectFilesUpdated: (() -> Void)?
 
@@ -112,7 +133,7 @@ final class ChatSession {
     /// Sets (or clears) the UI observer that receives both session lifecycle
     /// events and message-store UI updates.  Call from `viewDidLoad` /
     /// `viewWillAppear` with `self`, and from `viewDidDisappear` with `nil`.
-    func setUIObserver(_ observer: (ChatSessionDelegate & ChatMessageStoreDelegate & ToolConfirmationHandler)?) {
+    func setUIObserver(_ observer: (ChatSessionDelegate & ChatMessageStoreDelegate & ToolConfirmationPresenter)?) {
         delegate = observer
         activeConfirmationHandler = observer
         messageStore.delegate = observer
@@ -128,11 +149,15 @@ final class ChatSession {
 
     var isExecuting: Bool { taskCoordinator.isExecuting }
 
-    func cancelExecution() { taskCoordinator.cancel() }
+    func cancelExecution() {
+        activeConfirmationHandler?.cancelPendingToolConfirmationPresentation()
+        cancelPendingToolConfirmationIfNeeded()
+        taskCoordinator.cancel()
+    }
 
     /// Cancels the current execution and suspends until the task fully completes.
     func cancelAndAwaitCompletion() async {
-        taskCoordinator.cancel()
+        cancelExecution()
         await taskCoordinator.awaitCompletion()
     }
 
@@ -220,6 +245,83 @@ final class ChatSession {
         modelSelectionReloadTask?.cancel()
         modelSelectionReloadTask = nil
         pendingModelSelectionReload = false
+    }
+
+    // MARK: - Pending Tool Confirmation
+
+    func resumePendingToolConfirmationIfPossible() {
+        guard pendingConfirmationPresentationTask == nil,
+              let handler = activeConfirmationHandler,
+              pendingToolConfirmation != nil
+        else { return }
+
+        pendingConfirmationPresentationTask = Task { @MainActor [weak self, weak handler] in
+            guard let self else { return }
+            guard let handler, let pending = self.pendingToolConfirmation else {
+                self.pendingConfirmationPresentationTask = nil
+                return
+            }
+
+            let decision = await handler.presentToolConfirmation(
+                toolName: pending.toolName,
+                tier: pending.tier,
+                description: pending.description
+            )
+            self.pendingConfirmationPresentationTask = nil
+            self.handlePendingToolConfirmationDecision(decision)
+        }
+    }
+
+    private func suspendUntilToolConfirmationResolved(
+        toolName: String,
+        tier: ToolPermissionTier,
+        description: String
+    ) async -> Bool {
+        guard pendingToolConfirmation == nil else {
+            assertionFailure("Tool confirmation was already pending for project \(projectID)")
+            return false
+        }
+
+        ProjectActivityStore.shared.setNeedsConfirmation(projectID: projectID)
+        PiPProgressManager.shared.setNeedsUserAction(sessionID: projectID)
+
+        return await withCheckedContinuation { continuation in
+            pendingToolConfirmation = PendingToolConfirmation(
+                toolName: toolName,
+                tier: tier,
+                description: description,
+                continuation: continuation
+            )
+            resumePendingToolConfirmationIfPossible()
+        }
+    }
+
+    private func handlePendingToolConfirmationDecision(_ decision: ToolConfirmationDecision) {
+        guard let pending = pendingToolConfirmation else { return }
+
+        switch decision {
+        case .approved:
+            pendingToolConfirmation = nil
+            ProjectActivityStore.shared.taskDidStart(projectID: projectID)
+            PiPProgressManager.shared.clearNeedsUserAction(sessionID: projectID)
+            pending.continuation.resume(returning: true)
+        case .denied:
+            pendingToolConfirmation = nil
+            ProjectActivityStore.shared.taskDidStart(projectID: projectID)
+            PiPProgressManager.shared.clearNeedsUserAction(sessionID: projectID)
+            pending.continuation.resume(returning: false)
+        case .deferred:
+            ProjectActivityStore.shared.setNeedsConfirmation(projectID: projectID)
+            PiPProgressManager.shared.setNeedsUserAction(sessionID: projectID)
+        }
+    }
+
+    private func cancelPendingToolConfirmationIfNeeded() {
+        pendingConfirmationPresentationTask = nil
+        guard let pending = pendingToolConfirmation else { return }
+        pendingToolConfirmation = nil
+        PiPProgressManager.shared.clearNeedsUserAction(sessionID: projectID)
+        pending.continuation.resume(returning: false)
     }
 
     // MARK: - Messages (for UI)
@@ -318,20 +420,38 @@ extension ChatSession: ToolConfirmationHandler {
         tier: ToolPermissionTier,
         description: String
     ) async -> Bool {
-        if let handler = activeConfirmationHandler {
-            return await handler.confirmToolAction(
-                toolName: toolName,
-                tier: tier,
-                description: description
-            )
-        }
-        // Fallback when UI is dismissed: auto-allow safe actions, reject the rest
         switch tier {
         case .autoAllow:
             return true
         case .confirmOnce, .alwaysConfirm:
+            break
+        }
+
+        if let handler = activeConfirmationHandler {
+            let decision = await handler.presentToolConfirmation(
+                toolName: toolName,
+                tier: tier,
+                description: description
+            )
+            switch decision {
+            case .approved:
+                return true
+            case .denied:
+                return false
+            case .deferred:
+                break
+            }
+        }
+
+        if Task.isCancelled {
             return false
         }
+
+        return await suspendUntilToolConfirmationResolved(
+            toolName: toolName,
+            tier: tier,
+            description: description
+        )
     }
 }
 

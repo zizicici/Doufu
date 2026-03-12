@@ -14,6 +14,8 @@ final class ProjectActivityStore {
         case idle
         case building
         case newVersionAvailable
+        case needsConfirmation
+        case error
     }
 
     struct Change: Equatable {
@@ -51,7 +53,15 @@ final class ProjectActivityStore {
     }
 
     func taskDidComplete(projectID: String, hasNewVersion: Bool) {
-        setState(hasNewVersion ? .newVersionAvailable : .idle, for: projectID)
+        let currentState = state(for: projectID)
+        if hasNewVersion {
+            setState(.newVersionAvailable, for: projectID)
+            return
+        }
+        if currentState == .needsConfirmation {
+            return
+        }
+        setState(.idle, for: projectID)
     }
 
     func taskDidCancel(projectID: String) {
@@ -59,12 +69,29 @@ final class ProjectActivityStore {
     }
 
     func taskDidFail(projectID: String) {
-        setState(.idle, for: projectID)
+        let currentState = state(for: projectID)
+        if currentState == .needsConfirmation {
+            return
+        }
+        setState(.error, for: projectID)
+    }
+
+    func setNeedsConfirmation(projectID: String) {
+        setState(.needsConfirmation, for: projectID)
     }
 
     func markProjectViewed(projectID: String) {
         guard state(for: projectID) == .newVersionAvailable else { return }
         setState(.idle, for: projectID)
+    }
+
+    func markChatViewed(projectID: String) {
+        switch state(for: projectID) {
+        case .newVersionAvailable, .needsConfirmation, .error:
+            setState(.idle, for: projectID)
+        case .idle, .building:
+            break
+        }
     }
 
     func clear(projectID: String) {

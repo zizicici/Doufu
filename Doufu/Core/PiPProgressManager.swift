@@ -163,6 +163,14 @@ final class PiPProgressManager: NSObject {
         }
     }
 
+    func clearNeedsUserAction(sessionID: String) {
+        taskEntries[sessionID]?.needsUserAction = false
+        if displayedSessionID == sessionID {
+            needsUserAction = false
+            if isActive { pushFrame() }
+        }
+    }
+
     func taskDidComplete(sessionID: String) {
         taskEntries.removeValue(forKey: sessionID)
         if taskEntries.isEmpty { hasActiveTask = false }

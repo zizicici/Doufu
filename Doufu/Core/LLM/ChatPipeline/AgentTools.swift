@@ -100,6 +100,24 @@ protocol ToolConfirmationHandler: AnyObject {
     ) async -> Bool
 }
 
+enum ToolConfirmationDecision {
+    case approved
+    case denied
+    case deferred
+}
+
+protocol ToolConfirmationPresenter: AnyObject {
+    /// Present a user-facing confirmation UI for a tool action.
+    @MainActor func presentToolConfirmation(
+        toolName: String,
+        tier: ToolPermissionTier,
+        description: String
+    ) async -> ToolConfirmationDecision
+
+    /// Dismiss any in-flight confirmation UI and defer it back to the session.
+    @MainActor func cancelPendingToolConfirmationPresentation()
+}
+
 final class AgentToolProvider {
     private let workspaceURL: URL
     private let configuration: ProjectChatConfiguration

@@ -16,6 +16,8 @@ final class ChatViewController: UIViewController {
     private var toolPermissionMode: ToolPermissionMode = .standard
     private var initialLoadTask: Task<Void, Never>?
     private var appearReloadTask: Task<Void, Never>?
+    private var toolConfirmationContinuation: CheckedContinuation<ToolConfirmationDecision, Never>?
+    private weak var toolConfirmationAlertController: UIAlertController?
 
     /// Server base URL for code validation (uses localhost instead of file://).
     var validationServerBaseURL: URL?
@@ -120,6 +122,10 @@ final class ChatViewController: UIViewController {
         fatalError("init(coder:) has not been implemented")
     }
 
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
     // MARK: - View Lifecycle
 
     override func viewDidLoad() {
@@ -128,6 +134,18 @@ final class ChatViewController: UIViewController {
         view.backgroundColor = .doufuBackground
 
         session.setUIObserver(self)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(appWillResignActive),
+            name: UIApplication.willResignActiveNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(appDidBecomeActive),
+            name: UIApplication.didBecomeActiveNotification,
+            object: nil
+        )
 
         configureNavigation()
         configureLayout()
@@ -174,6 +192,11 @@ final class ChatViewController: UIViewController {
         }
     }
 
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        session.resumePendingToolConfirmationIfPossible()
+    }
+
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         updateInputTextViewHeight()
@@ -182,6 +205,7 @@ final class ChatViewController: UIViewController {
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
         if view.window == nil {
+            cancelPendingToolConfirmationPresentation()
             session.setUIObserver(nil)
             initialLoadTask?.cancel()
             initialLoadTask = nil
@@ -189,6 +213,16 @@ final class ChatViewController: UIViewController {
             appearReloadTask = nil
             session.cancelModelRefresh()
         }
+    }
+
+    @objc private func appWillResignActive() {
+        guard isViewLoaded, view.window != nil else { return }
+        cancelPendingToolConfirmationPresentation()
+    }
+
+    @objc private func appDidBecomeActive() {
+        guard isViewLoaded, view.window != nil else { return }
+        session.resumePendingToolConfirmationIfPossible()
     }
 
     // MARK: - Navigation
@@ -617,56 +651,81 @@ extension ChatViewController: UITextViewDelegate {
     }
 }
 
-// MARK: - ToolConfirmationHandler
+// MARK: - ToolConfirmationPresenter
 
-extension ChatViewController: ToolConfirmationHandler {
-    func confirmToolAction(
+extension ChatViewController: ToolConfirmationPresenter {
+    func presentToolConfirmation(
         toolName: String,
         tier: ToolPermissionTier,
         description: String
-    ) async -> Bool {
-        PiPProgressManager.shared.setNeedsUserAction()
-        return await withCheckedContinuation { continuation in
-            let title: String
-            let allowStyle: UIAlertAction.Style
-            switch tier {
-            case .autoAllow:
-                continuation.resume(returning: true)
-                return
-            case .confirmOnce:
-                title = String(localized: "tool.confirm.title")
-                allowStyle = .default
-            case .alwaysConfirm:
-                title = String(localized: "tool.confirm.title.destructive")
-                allowStyle = .destructive
-            }
+    ) async -> ToolConfirmationDecision {
+        switch tier {
+        case .autoAllow:
+            return .approved
+        case .confirmOnce, .alwaysConfirm:
+            break
+        }
 
-            // If the VC is no longer in the window hierarchy, presenting
-            // will silently fail and the continuation will never resume.
-            // Reject the action to avoid a permanent hang.
-            guard self.view.window != nil else {
-                continuation.resume(returning: false)
-                return
-            }
+        PiPProgressManager.shared.setNeedsUserAction(sessionID: session.projectID)
+
+        guard toolConfirmationContinuation == nil,
+              isViewLoaded,
+              view.window != nil,
+              UIApplication.shared.applicationState == .active,
+              presentedViewController == nil
+        else {
+            return .deferred
+        }
+
+        let title: String
+        let allowStyle: UIAlertAction.Style
+        switch tier {
+        case .autoAllow:
+            return .approved
+        case .confirmOnce:
+            title = String(localized: "tool.confirm.title")
+            allowStyle = .default
+        case .alwaysConfirm:
+            title = String(localized: "tool.confirm.title.destructive")
+            allowStyle = .destructive
+        }
+
+        return await withCheckedContinuation { continuation in
+            toolConfirmationContinuation = continuation
 
             let alert = UIAlertController(
                 title: title,
                 message: description,
                 preferredStyle: .alert
             )
+            toolConfirmationAlertController = alert
+
             alert.addAction(UIAlertAction(
                 title: String(localized: "tool.confirm.allow"),
                 style: allowStyle
-            ) { _ in
-                continuation.resume(returning: true)
+            ) { [weak self] _ in
+                self?.finishToolConfirmationPresentation(.approved)
             })
             alert.addAction(UIAlertAction(
                 title: String(localized: "tool.confirm.deny"),
                 style: .cancel
-            ) { _ in
-                continuation.resume(returning: false)
+            ) { [weak self] _ in
+                self?.finishToolConfirmationPresentation(.denied)
             })
             self.present(alert, animated: true)
         }
+    }
+
+    func cancelPendingToolConfirmationPresentation() {
+        guard toolConfirmationContinuation != nil else { return }
+        toolConfirmationAlertController?.dismiss(animated: false)
+        finishToolConfirmationPresentation(.deferred)
+    }
+
+    private func finishToolConfirmationPresentation(_ decision: ToolConfirmationDecision) {
+        toolConfirmationAlertController = nil
+        let continuation = toolConfirmationContinuation
+        toolConfirmationContinuation = nil
+        continuation?.resume(returning: decision)
     }
 }
