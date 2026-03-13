@@ -341,7 +341,7 @@ final class OpenAIProvider: LLMProviderAdapter {
         case "response.output_text.delta":
             guard let delta = eventObject["delta"] as? String, !delta.isEmpty else { return }
             streamedText.append(delta)
-            if let onStreamedText { await onStreamedText(streamedText) }
+            if let onStreamedText { onStreamedText(streamedText) }
 
         // Function call started
         case "response.function_call_arguments.delta":
@@ -393,7 +393,7 @@ final class OpenAIProvider: LLMProviderAdapter {
                let text = extractText(fromResponseObject: responseObject),
                !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 streamedText = text
-                if let onStreamedText { await onStreamedText(text) }
+                if let onStreamedText { onStreamedText(text) }
             }
             // Extract any function calls from the completed response if we missed them
             if toolCalls.isEmpty, let outputItems = responseObject["output"] as? [[String: Any]] {
@@ -574,7 +574,7 @@ final class OpenAIProvider: LLMProviderAdapter {
         case "response.output_text.delta":
             guard let delta = eventObject["delta"] as? String, !delta.isEmpty else { return }
             streamedText.append(delta)
-            if let onStreamedText { await onStreamedText(streamedText) }
+            if let onStreamedText { onStreamedText(streamedText) }
 
         case "response.output_text.done":
             guard streamedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -582,7 +582,7 @@ final class OpenAIProvider: LLMProviderAdapter {
                   !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             else { return }
             completedResponseText = text
-            if let onStreamedText { await onStreamedText(text) }
+            if let onStreamedText { onStreamedText(text) }
 
         case "response.output_item.done", "response.output_item.added":
             guard streamedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -591,7 +591,7 @@ final class OpenAIProvider: LLMProviderAdapter {
                   !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             else { return }
             completedResponseText = text
-            if let onStreamedText { await onStreamedText(text) }
+            if let onStreamedText { onStreamedText(text) }
 
         case "response.completed":
             guard let responseObject = eventObject["response"] as? [String: Any] else { return }
@@ -602,7 +602,7 @@ final class OpenAIProvider: LLMProviderAdapter {
                !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 completedResponseText = text
                 if streamedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, let onStreamedText {
-                    await onStreamedText(text)
+                    onStreamedText(text)
                 }
             }
             if let responseData = try? JSONSerialization.data(withJSONObject: responseObject),
@@ -615,7 +615,7 @@ final class OpenAIProvider: LLMProviderAdapter {
                     }
                     if streamedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                        let onStreamedText, let finalText = completedResponseText {
-                        await onStreamedText(finalText)
+                        onStreamedText(finalText)
                     }
                 }
             }

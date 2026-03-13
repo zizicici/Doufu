@@ -107,7 +107,7 @@ final class ProjectChatOrchestrator {
         let toolProvider = AgentToolProvider(workspaceURL: workspaceURL, configuration: configuration)
         toolProvider.confirmationHandler = confirmationHandler
         toolProvider.permissionMode = permissionMode
-        toolProvider.codeValidator = await CodeValidator()
+        toolProvider.codeValidator = CodeValidator()
         toolProvider.validationServerBaseURL = validationServerBaseURL
         toolProvider.validationBridge = validationBridge
 
@@ -126,7 +126,7 @@ final class ProjectChatOrchestrator {
         state = AgentLoopState(conversation: conversation)
 
         if let onProgress {
-            await onProgress(.text(String(localized: "orchestrator.thinking")))
+            onProgress(.text(String(localized: "orchestrator.thinking")))
         }
 
         let budgetWarningThreshold = Int(Double(configuration.maxAgentIterations) * 0.8)
@@ -170,7 +170,7 @@ final class ProjectChatOrchestrator {
             let responseText = response.textContent.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
 
             if let thinking = response.thinkingContent, !thinking.isEmpty, let onProgress {
-                await onProgress(.thinking(content: thinking))
+                onProgress(.thinking(content: thinking))
             }
 
             // No tool calls — final or truncated response
@@ -179,7 +179,7 @@ final class ProjectChatOrchestrator {
                     state.accumulatedText += (state.accumulatedText.isEmpty ? "" : "\n\n") + responseText
                 }
                 if let onStreamedText {
-                    await onStreamedText(responseText)
+                    onStreamedText(responseText)
                 }
 
                 // Auto-continue on max_tokens truncation
@@ -210,7 +210,7 @@ final class ProjectChatOrchestrator {
             if !responseText.isEmpty {
                 state.accumulatedText += (state.accumulatedText.isEmpty ? "" : "\n\n") + responseText
                 if let onStreamedText {
-                    await onStreamedText(responseText)
+                    onStreamedText(responseText)
                 }
             }
 
@@ -380,7 +380,7 @@ final class ProjectChatOrchestrator {
                     let entry = buildToolActivityEntry(toolCall: toolCall, description: desc, result: result)
                     state.toolActivityEntries.append(entry)
                     if let onToolCompleted {
-                        await onToolCompleted(entry)
+                        onToolCompleted(entry)
                     }
                     collectToolResult(result, into: &state)
                     let truncatedOutput = truncateToolResult(result.output)
@@ -422,7 +422,7 @@ final class ProjectChatOrchestrator {
                 state.toolActivityLog.append(toolDescription)
 
                 if let onToolStarted {
-                    await onToolStarted(toolDescription)
+                    onToolStarted(toolDescription)
                 }
 
                 let result = await toolProvider.execute(toolCall: toolCall, onProgress: onProgress)
@@ -431,7 +431,7 @@ final class ProjectChatOrchestrator {
                 let entry = buildToolActivityEntry(toolCall: toolCall, description: toolDescription, result: result)
                 state.toolActivityEntries.append(entry)
                 if let onToolCompleted {
-                    await onToolCompleted(entry)
+                    onToolCompleted(entry)
                 }
                 collectToolResult(result, into: &state)
                 let truncatedOutput = truncateToolResult(result.output)
@@ -477,7 +477,7 @@ final class ProjectChatOrchestrator {
         let finalMessage = cleanedFinalMessage.isEmpty ? String(localized: "orchestrator.done") : cleanedFinalMessage
 
         if let onStreamedText, cleanedFinalMessage != rawFinalMessage {
-            await onStreamedText(finalMessage)
+            onStreamedText(finalMessage)
         }
 
         if !allChangedPaths.isEmpty {
@@ -925,10 +925,10 @@ final class ProjectChatOrchestrator {
 
         if let onProgress {
             if effectiveCalls.count == 1 {
-                await onProgress(.text(describeToolCall(effectiveCalls[0])))
+                onProgress(.text(describeToolCall(effectiveCalls[0])))
             } else {
                 let descriptions = effectiveCalls.map { describeToolCall($0) }
-                await onProgress(.parallelBatch(count: effectiveCalls.count, descriptions: descriptions))
+                onProgress(.parallelBatch(count: effectiveCalls.count, descriptions: descriptions))
             }
         }
 

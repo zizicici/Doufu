@@ -14,7 +14,7 @@ final class ChatDataService {
     let projectID: String
     private let dataStore: ChatDataStore
 
-    init(projectID: String, dataStore: ChatDataStore = .shared) {
+    init(projectID: String, dataStore: ChatDataStore) {
         self.projectID = projectID
         self.dataStore = dataStore
     }

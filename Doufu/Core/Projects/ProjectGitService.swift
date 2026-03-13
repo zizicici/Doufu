@@ -8,7 +8,7 @@
 import Foundation
 import SwiftGitX
 
-final class ProjectGitService {
+nonisolated final class ProjectGitService {
     static let shared = ProjectGitService()
 
     private let checkpointPrefix = "[doufu-checkpoint]"
@@ -79,7 +79,7 @@ final class ProjectGitService {
         }
 
         // Reset to the parent of the checkpoint — the state before the agent ran.
-        guard let parent = checkpointCommit.parents.first else {
+        guard let parent = try checkpointCommit.parents.first else {
             return false
         }
 
@@ -345,7 +345,7 @@ final class ProjectGitService {
         guard let commit = head.target as? Commit else {
             return nil
         }
-        let tree = commit.tree
+        let tree = try commit.tree
 
         // Navigate the tree to find the file
         let components = relativePath.components(separatedBy: "/").filter { !$0.isEmpty }

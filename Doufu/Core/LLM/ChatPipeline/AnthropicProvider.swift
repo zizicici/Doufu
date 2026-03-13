@@ -124,7 +124,7 @@ final class AnthropicProvider: LLMProviderAdapter {
         onStreamedText: (@MainActor (String) -> Void)?,
         onUsage: ((Int?, Int?) -> Void)?
     ) async throws -> String {
-        try await LLMProviderHelpers.withStreamTimeout(seconds: timeoutSeconds + configuration.streamCompletionGraceSeconds) { [self] in
+        try await LLMProviderHelpers.withStreamTimeout(seconds: timeoutSeconds + configuration.streamCompletionGraceSeconds) {
             var streamedText = ""
             var inputTokens: Int?
             var outputTokens: Int?
@@ -155,7 +155,7 @@ final class AnthropicProvider: LLMProviderAdapter {
                     else { continue }
                     if deltaType == "text_delta", let text = delta["text"] as? String, !text.isEmpty {
                         streamedText.append(text)
-                        if let onStreamedText { await onStreamedText(streamedText) }
+                        if let onStreamedText { onStreamedText(streamedText) }
                     }
 
                 case "message_delta":
@@ -291,7 +291,7 @@ final class AnthropicProvider: LLMProviderAdapter {
         onStreamedText: (@MainActor (String) -> Void)?,
         onUsage: ((Int?, Int?) -> Void)?
     ) async throws -> AgentLLMResponse {
-        try await LLMProviderHelpers.withStreamTimeout(seconds: timeoutSeconds + configuration.streamCompletionGraceSeconds) { [self] in
+        try await LLMProviderHelpers.withStreamTimeout(seconds: timeoutSeconds + configuration.streamCompletionGraceSeconds) {
             var streamedText = ""
             var thinkingText = ""
             var toolCalls: [AgentToolCall] = []
@@ -352,7 +352,7 @@ final class AnthropicProvider: LLMProviderAdapter {
                         thinkingText.append(text)
                     } else if deltaType == "text_delta", let text = delta["text"] as? String, !text.isEmpty {
                         streamedText.append(text)
-                        if let onStreamedText { await onStreamedText(streamedText) }
+                        if let onStreamedText { onStreamedText(streamedText) }
                     } else if deltaType == "input_json_delta", let partialJSON = delta["partial_json"] as? String {
                         if var pending = pendingToolBlocks[index] {
                             pending.inputJSON += partialJSON

@@ -5,7 +5,7 @@
 
 import Foundation
 
-enum DatabaseTimestamp {
+nonisolated enum DatabaseTimestamp {
     static func toNanos(_ date: Date) -> Int64 {
         Int64(date.timeIntervalSince1970 * 1_000_000_000)
     }

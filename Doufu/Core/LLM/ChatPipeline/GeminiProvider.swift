@@ -104,7 +104,7 @@ final class GeminiProvider: LLMProviderAdapter {
                 throw ProjectChatService.ServiceError.invalidResponse
             }
 
-            if let onStreamedText { await onStreamedText(finalResponseText) }
+            if let onStreamedText { onStreamedText(finalResponseText) }
 
             onUsage?(decoded.usageMetadata?.promptTokenCount, geminiOutputTokenCount(from: decoded.usageMetadata))
             return finalResponseText
@@ -252,7 +252,7 @@ final class GeminiProvider: LLMProviderAdapter {
         }
 
         if let onStreamedText, !textContent.isEmpty {
-            await onStreamedText(textContent)
+            onStreamedText(textContent)
         }
 
         let stopReason: AgentStopReason

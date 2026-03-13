@@ -8,7 +8,7 @@ import GRDB
 
 // MARK: - Provider Extra JSON
 
-struct DBProviderExtra: Codable {
+nonisolated struct DBProviderExtra: Codable {
     var chatGPTAccountID: String?
     var modelID: String?
 }
@@ -35,7 +35,7 @@ struct DBModelSelectionExtra: Codable {
 
 // MARK: - Model Capabilities JSON
 
-struct DBModelCapabilities: Codable {
+nonisolated struct DBModelCapabilities: Codable {
     var reasoningEfforts: [String]
     var thinkingSupported: Bool
     var thinkingCanDisable: Bool

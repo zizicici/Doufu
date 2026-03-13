@@ -286,7 +286,7 @@ final class DoufuBridge: NSObject {
 
 /// A thin non-isolated wrapper so that `WKScriptMessageHandler` doesn't
 /// retain the `@MainActor` bridge directly.
-private final class DoufuBridgeMessageHandler: NSObject, WKScriptMessageHandler {
+private nonisolated final class DoufuBridgeMessageHandler: NSObject, WKScriptMessageHandler {
     private weak var bridge: DoufuBridge?
 
     init(bridge: DoufuBridge) {
@@ -294,13 +294,14 @@ private final class DoufuBridgeMessageHandler: NSObject, WKScriptMessageHandler 
         super.init()
     }
 
-    nonisolated func userContentController(
+    func userContentController(
         _ userContentController: WKUserContentController,
         didReceive message: WKScriptMessage
     ) {
-        let body = message.body
-        Task { @MainActor [weak bridge] in
-            bridge?.handleStorageUpdate(body)
+        // WebKit guarantees this delegate is called on the main thread.
+        let body = MainActor.assumeIsolated { message.body }
+        Task { @MainActor [weak self] in
+            self?.bridge?.handleStorageUpdate(body)
         }
     }
 }

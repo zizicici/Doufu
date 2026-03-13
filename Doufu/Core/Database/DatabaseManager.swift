@@ -6,7 +6,7 @@
 import Foundation
 import GRDB
 
-final class DatabaseManager {
+nonisolated final class DatabaseManager {
     static let shared = DatabaseManager()
 
     private(set) var dbPool: DatabasePool!

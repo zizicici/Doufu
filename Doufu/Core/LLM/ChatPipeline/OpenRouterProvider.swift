@@ -105,7 +105,7 @@ final class OpenRouterProvider: LLMProviderAdapter {
         let timeoutSeconds = LLMProviderHelpers.timeoutSeconds(for: effort, configuration: configuration)
         let sendReasoning = !credential.profile.reasoningEfforts.isEmpty
 
-        var messages = buildToolUseMessages(systemInstruction: systemInstruction, from: conversationItems)
+        let messages = buildToolUseMessages(systemInstruction: systemInstruction, from: conversationItems)
         let toolDefinitions = tools.map { tool in
             OpenRouterToolDefinition(name: tool.name, description: tool.description, parameters: tool.parameters)
         }
@@ -224,7 +224,7 @@ final class OpenRouterProvider: LLMProviderAdapter {
                    let delta = choice["delta"] as? [String: Any],
                    let content = delta["content"] as? String, !content.isEmpty {
                     streamedText.append(content)
-                    if let onStreamedText { await onStreamedText(streamedText) }
+                    if let onStreamedText { onStreamedText(streamedText) }
                 }
 
                 // Parse usage
@@ -299,7 +299,7 @@ final class OpenRouterProvider: LLMProviderAdapter {
                 // Text content
                 if let content = delta["content"] as? String, !content.isEmpty {
                     streamedText.append(content)
-                    if let onStreamedText { await onStreamedText(streamedText) }
+                    if let onStreamedText { onStreamedText(streamedText) }
                 }
 
                 // Tool calls

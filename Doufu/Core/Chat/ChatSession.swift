@@ -92,7 +92,7 @@ final class ChatSession {
         self.project = project
         self.projectID = project.id
 
-        let dataService = ChatDataService(projectID: project.id)
+        let dataService = ChatDataService(projectID: project.id, dataStore: .shared)
         self.dataService = dataService
 
         let messageStore = ChatMessageStore()
@@ -107,7 +107,7 @@ final class ChatSession {
         )
         self.modelSelection = modelSelection
 
-        let taskCoordinator = ChatTaskCoordinator()
+        let taskCoordinator = ChatTaskCoordinator(orchestrator: ProjectChatOrchestrator(configuration: .default))
         self.taskCoordinator = taskCoordinator
 
         let threadManager = ChatThreadManager(
@@ -263,7 +263,7 @@ final class ChatSession {
             guard let self else { return }
             repeat {
                 self.pendingModelSelectionReload = false
-                await self.modelSelection.reloadModelSelectionContext()
+                self.modelSelection.reloadModelSelectionContext()
             } while self.pendingModelSelectionReload && !Task.isCancelled
             self.modelSelectionReloadTask = nil
         }

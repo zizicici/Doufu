@@ -615,23 +615,23 @@ final class AgentToolProvider {
         switch toolCall.name {
         case "read_file":
             let path = (args["path"] as? String) ?? "?"
-            if let onProgress { await onProgress(.readingFile(path: path)) }
+            if let onProgress { onProgress(.readingFile(path: path)) }
             return executeReadFile(args: args)
         case "write_file":
             let path = (args["path"] as? String) ?? "?"
             let isNew = !FileManager.default.fileExists(
                 atPath: resolveSafePath(path)?.path ?? ""
             )
-            if let onProgress { await onProgress(.writingFile(path: path, isNew: isNew)) }
+            if let onProgress { onProgress(.writingFile(path: path, isNew: isNew)) }
             return await executeWriteFile(args: args)
         case "edit_file":
             let path = (args["path"] as? String) ?? "?"
             let editCount = (args["edits"] as? [Any])?.count ?? 0
-            if let onProgress { await onProgress(.editingFile(path: path, editCount: editCount)) }
+            if let onProgress { onProgress(.editingFile(path: path, editCount: editCount)) }
             return await executeEditFile(args: args)
         case "delete_file":
             let path = (args["path"] as? String) ?? "?"
-            if let onProgress { await onProgress(.deletingFile(path: path)) }
+            if let onProgress { onProgress(.deletingFile(path: path)) }
             return await executeDeleteFile(args: args)
         case "move_file":
             return await executeMoveFile(args: args)
@@ -643,31 +643,31 @@ final class AgentToolProvider {
             return executeChangedFiles()
         case "list_directory":
             let path = (args["path"] as? String) ?? "."
-            if let onProgress { await onProgress(.listingDirectory(path: path)) }
+            if let onProgress { onProgress(.listingDirectory(path: path)) }
             return executeListDirectory(args: args)
         case "search_files":
             let query = (args["query"] as? String) ?? "?"
-            if let onProgress { await onProgress(.searching(description: String(format: String(localized: "tool.progress.search_files"), query))) }
+            if let onProgress { onProgress(.searching(description: String(format: String(localized: "tool.progress.search_files"), query))) }
             return executeSearchFiles(args: args)
         case "grep_files":
             let pattern = (args["pattern"] as? String) ?? "?"
-            if let onProgress { await onProgress(.searching(description: String(format: String(localized: "tool.progress.grep_files"), pattern))) }
+            if let onProgress { onProgress(.searching(description: String(format: String(localized: "tool.progress.grep_files"), pattern))) }
             return executeGrepFiles(args: args)
         case "glob_files":
             let pattern = (args["pattern"] as? String) ?? "?"
-            if let onProgress { await onProgress(.searching(description: String(format: String(localized: "tool.progress.glob_files"), pattern))) }
+            if let onProgress { onProgress(.searching(description: String(format: String(localized: "tool.progress.glob_files"), pattern))) }
             return executeGlobFiles(args: args)
         case "web_search":
             let query = (args["query"] as? String) ?? "?"
-            if let onProgress { await onProgress(.webActivity(description: String(format: String(localized: "tool.progress.web_search"), query))) }
+            if let onProgress { onProgress(.webActivity(description: String(format: String(localized: "tool.progress.web_search"), query))) }
             return await executeWebSearch(args: args)
         case "web_fetch":
             let url = (args["url"] as? String) ?? "?"
-            if let onProgress { await onProgress(.webActivity(description: String(format: String(localized: "tool.progress.web_fetch"), url))) }
+            if let onProgress { onProgress(.webActivity(description: String(format: String(localized: "tool.progress.web_fetch"), url))) }
             return await executeWebFetch(args: args)
         case "validate_code":
             let path = (args["path"] as? String) ?? "?"
-            if let onProgress { await onProgress(.validatingCode(path: path)) }
+            if let onProgress { onProgress(.validatingCode(path: path)) }
             return await executeValidateCode(args: args, onProgress: onProgress)
         default:
             return ToolExecutionResult(

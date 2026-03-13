@@ -103,7 +103,7 @@ final class ChatModelSelectionManager {
         let threadID = currentThreadIDProvider()
         var snapshot = modelSelectionStore.loadSnapshot(projectID: projectID, threadID: threadID)
 
-        if let threadID {
+        if currentThreadIDProvider() != nil {
             let loadedThreadOverride = snapshot.threadSelection
             let normalizedThreadOverride = normalizePersistedThreadOverride(loadedThreadOverride)
             snapshot.threadSelection = normalizedThreadOverride
@@ -461,7 +461,7 @@ final class ChatModelSelectionManager {
 
     func persistCurrentModelSelectionAsync() async {
         guard let snapshot = buildCurrentModelSelection() else { return }
-        await modelSelectionStore.setThreadSelectionAsync(
+        modelSelectionStore.setThreadSelectionAsync(
             snapshot.selection,
             projectID: projectID,
             threadID: snapshot.threadID
@@ -688,7 +688,7 @@ final class ChatModelSelectionManager {
             return
         }
         Task { [weak self] in
-            await self?.reloadModelSelectionContext(triggerModelRefresh: false)
+            self?.reloadModelSelectionContext(triggerModelRefresh: false)
         }
     }
 

@@ -409,7 +409,7 @@ final class ChatDataStore {
     // MARK: - Project Lifecycle
 
     func deleteProjectData(projectID: String) {
-        try? dbPool.write { db in
+        _ = try? dbPool.write { db in
             // CASCADE deletes assistant, message, session_memory
             try DBChatThread
                 .filter(DBChatThread.Columns.projectID == projectID)

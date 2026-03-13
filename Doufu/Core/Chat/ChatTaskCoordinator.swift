@@ -57,7 +57,7 @@ final class ChatTaskCoordinator {
     private var didCancelCurrentRequest = false
     private var didNotifiedCancel = false
 
-    init(orchestrator: ProjectChatOrchestrator = ProjectChatOrchestrator(configuration: .default)) {
+    init(orchestrator: ProjectChatOrchestrator) {
         self.orchestrator = orchestrator
     }
 

@@ -676,7 +676,7 @@ final class LLMProviderSettingsStore {
 
     func deleteProvider(id: String) throws {
         // FK cascade deletes llm_provider_model rows automatically
-        try dbPool.write { db in
+        _ = try dbPool.write { db in
             try DBProvider.deleteOne(db, key: id)
         }
         // Best-effort cleanup of both Keychain slots.  A failure in one

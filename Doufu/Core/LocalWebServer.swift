@@ -527,7 +527,7 @@ private final class CDNResourceCache: @unchecked Sendable {
         let statusCode: Int
     }
 
-    private struct Meta: Codable {
+    private nonisolated struct Meta: Codable {
         let contentType: String
         let statusCode: Int
         let url: String

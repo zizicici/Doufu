@@ -42,7 +42,7 @@ final class ProjectSortViewController: UITableViewController {
         )
         navigationItem.rightBarButtonItem = UIBarButtonItem(
             title: String(localized: "common.action.done"),
-            style: .done,
+            style: .prominent,
             target: self,
             action: #selector(didTapDone)
         )
