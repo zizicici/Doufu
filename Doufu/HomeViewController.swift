@@ -732,7 +732,7 @@ private final class ProjectCardCell: UICollectionViewCell {
             placeholderIconView.heightAnchor.constraint(equalToConstant: 24),
 
             activityBadgeLabel.topAnchor.constraint(equalTo: previewContainer.topAnchor, constant: 8),
-            activityBadgeLabel.trailingAnchor.constraint(equalTo: previewContainer.trailingAnchor, constant: -8),
+            activityBadgeLabel.centerXAnchor.constraint(equalTo: previewContainer.centerXAnchor),
 
             titleLabel.topAnchor.constraint(equalTo: previewShadowView.bottomAnchor, constant: 8),
             titleLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 8),
