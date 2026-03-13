@@ -56,6 +56,7 @@ final class ProjectFileBrowserViewController: UITableViewController {
     private var items: [Item] = []
     private let fileManager: FileManager
     private let archiveExportService = ProjectArchiveExportService.shared
+    private var exportTask: Task<Void, Never>?
 
     init(
         projectName: String,
@@ -75,6 +76,10 @@ final class ProjectFileBrowserViewController: UITableViewController {
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    deinit {
+        exportTask?.cancel()
     }
 
     override func viewDidLoad() {
@@ -272,7 +277,11 @@ final class ProjectFileBrowserViewController: UITableViewController {
     }
 
     private func export(_ kind: ExportKind) {
-        do {
+        exportTask?.cancel()
+        exportTask = Task { [weak self] in
+            guard let self else { return }
+            defer { self.exportTask = nil }
+
             let archiveKind: ProjectArchiveExportService.ArchiveKind = {
                 switch kind {
                 case .code:
@@ -281,28 +290,42 @@ final class ProjectFileBrowserViewController: UITableViewController {
                     return .doufull
                 }
             }()
-            let payload = try archiveExportService.exportArchive(
-                kind: archiveKind,
-                projectName: projectName,
-                appURL: rootURL,
-                projectRootURL: projectRootURL
-            )
-            let activity = UIActivityViewController(activityItems: [payload.archiveURL], applicationActivities: nil)
-            activity.popoverPresentationController?.barButtonItem = navigationItem.rightBarButtonItem
-            activity.completionWithItemsHandler = { _, _, _, _ in
-                for url in payload.cleanupURLs {
-                    try? FileManager.default.removeItem(at: url)
+
+            do {
+                let payload = try await self.archiveExportService.exportArchive(
+                    kind: archiveKind,
+                    projectName: self.projectName,
+                    appURL: self.rootURL,
+                    projectRootURL: self.projectRootURL
+                )
+                guard !Task.isCancelled else {
+                    self.cleanupExportArtifacts(payload)
+                    return
                 }
+
+                let activity = UIActivityViewController(activityItems: [payload.archiveURL], applicationActivities: nil)
+                activity.popoverPresentationController?.barButtonItem = self.navigationItem.rightBarButtonItem
+                activity.completionWithItemsHandler = { [weak self] _, _, _, _ in
+                    self?.cleanupExportArtifacts(payload)
+                }
+                self.present(activity, animated: true)
+            } catch is CancellationError {
+                return
+            } catch {
+                let alert = UIAlertController(
+                    title: String(localized: "file_browser.alert.zip_failed.title"),
+                    message: error.localizedDescription,
+                    preferredStyle: .alert
+                )
+                alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
+                self.present(alert, animated: true)
             }
-            present(activity, animated: true)
-        } catch {
-            let alert = UIAlertController(
-                title: String(localized: "file_browser.alert.zip_failed.title"),
-                message: error.localizedDescription,
-                preferredStyle: .alert
-            )
-            alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
-            present(alert, animated: true)
+        }
+    }
+
+    private func cleanupExportArtifacts(_ payload: ProjectArchiveExportService.ExportResult) {
+        for url in payload.cleanupURLs {
+            try? FileManager.default.removeItem(at: url)
         }
     }
 

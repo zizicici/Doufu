@@ -47,7 +47,7 @@
 			<key>CFBundleTypeName</key>
 			<string>Doufu Archive</string>
 			<key>LSHandlerRank</key>
-			<string>Alternate</string>
+			<string>Owner</string>
 			<key>LSItemContentTypes</key>
 			<array>
 				<string>com.zizicici.doufu.archive</string>
@@ -57,7 +57,7 @@
 			<key>CFBundleTypeName</key>
 			<string>Doufull Archive</string>
 			<key>LSHandlerRank</key>
-			<string>Alternate</string>
+			<string>Owner</string>
 			<key>LSItemContentTypes</key>
 			<array>
 				<string>com.zizicici.doufull.archive</string>

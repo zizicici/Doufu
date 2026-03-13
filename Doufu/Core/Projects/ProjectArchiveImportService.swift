@@ -1,13 +1,12 @@
 import Foundation
 import zlib
-import Darwin
 
 /// Imports `.doufu` / `.doufull` project archives.
 ///
 /// Archive semantics:
 /// - `.doufu`: ZIP containing `App/`
 /// - `.doufull`: ZIP containing `App/` + `AppData/`
-final class ProjectArchiveImportService {
+nonisolated final class ProjectArchiveImportService {
 
     static let shared = ProjectArchiveImportService()
 
@@ -40,17 +39,26 @@ final class ProjectArchiveImportService {
         var errorDescription: String? {
             switch self {
             case let .unsupportedExtension(ext):
-                return "Unsupported file extension: .\(ext)."
+                return String(
+                    format: String(localized: "import.error.unsupported_extension", defaultValue: "Unsupported file extension: .%@."),
+                    ext
+                )
             case .accessDenied:
-                return "Cannot access the selected file."
+                return String(localized: "import.error.access_denied", defaultValue: "Cannot access the selected file.")
             case .copyFailed:
-                return "Failed to read the selected archive."
+                return String(localized: "import.error.copy_failed", defaultValue: "Failed to read the selected archive.")
             case let .invalidZip(reason):
-                return "Invalid archive: \(reason)"
+                return String(
+                    format: String(localized: "import.error.invalid_zip", defaultValue: "Invalid archive: %@"),
+                    reason
+                )
             case .invalidStructure:
-                return "Archive structure is invalid."
+                return String(localized: "import.error.invalid_structure", defaultValue: "Archive structure is invalid.")
             case let .unsupportedZipFeature(feature):
-                return "Unsupported ZIP feature: \(feature)"
+                return String(
+                    format: String(localized: "import.error.unsupported_zip_feature", defaultValue: "Unsupported ZIP feature: %@"),
+                    feature
+                )
             case let .installationFailed(message):
                 return message
             }
@@ -95,7 +103,11 @@ final class ProjectArchiveImportService {
         }
 
         do {
-            try Self.copyCoordinatedFile(from: sourceURL, to: localArchiveURL)
+            try await Self.runDetachedCancellable(priority: .userInitiated) {
+                try Self.copyCoordinatedFile(from: sourceURL, to: localArchiveURL)
+            }
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
             throw Self.mapCopyError(error)
         }
@@ -146,8 +158,10 @@ final class ProjectArchiveImportService {
             try Task.checkCancellation()
 
             let requiresAppData = kind.requiresAppData
-            let appDestinationURL = project.appURL
-            let appDataDestinationURL = project.dataURL
+            let projectID = project.id
+            let projectURL = project.projectURL
+            let appDestinationURL = projectURL.appendingPathComponent("App", isDirectory: true)
+            let appDataDestinationURL = projectURL.appendingPathComponent("AppData", isDirectory: true)
             try await Self.runDetachedCancellable(priority: .userInitiated) {
                 try Self.installPayload(
                     payloadRoot: payloadRoot,
@@ -159,12 +173,14 @@ final class ProjectArchiveImportService {
 
             try Task.checkCancellation()
 
-            try ProjectGitService.shared.ensureRepository(at: project.appURL)
+            try ProjectGitService.shared.ensureRepository(at: appDestinationURL)
             _ = try? ProjectGitService.shared.createCheckpoint(
-                repositoryURL: project.appURL,
+                repositoryURL: appDestinationURL,
                 userMessage: Self.checkpointMessage(for: kind, sourceURL: sourceURL)
             )
-            ProjectChangeCenter.shared.notifyFilesChanged(projectID: project.id)
+            await MainActor.run {
+                ProjectChangeCenter.shared.notifyFilesChanged(projectID: projectID)
+            }
             return ImportResult(project: project, kind: kind)
         } catch is CancellationError {
             if let createdProject {
@@ -346,7 +362,7 @@ final class ProjectArchiveImportService {
 
 // MARK: - ZIP Extractor (streaming with limits + CRC)
 
-private enum ZIPArchiveExtractor {
+private nonisolated enum ZIPArchiveExtractor {
 
     struct Limits {
         let maxArchiveBytes: UInt64
@@ -527,6 +543,7 @@ private enum ZIPArchiveExtractor {
         entries.reserveCapacity(expectedCount)
 
         var totalUncompressed: UInt64 = 0
+        var seenPaths = Set<String>()
         var cursor = 0
 
         while cursor < data.count, entries.count < expectedCount {
@@ -584,6 +601,10 @@ private enum ZIPArchiveExtractor {
             let decodedPath = decodePath(from: pathData, flags: flags)
             let isDirectory = decodedPath.hasSuffix("/")
             let normalizedPath = isDirectory ? String(decodedPath.dropLast()) : decodedPath
+            if seenPaths.contains(normalizedPath) {
+                throw ProjectArchiveImportService.ImportError.invalidZip("duplicate entry path: \(normalizedPath)")
+            }
+            seenPaths.insert(normalizedPath)
 
             let nextCursor = fileNameEnd + extraLength + commentLength
             guard nextCursor <= data.count else {
@@ -886,7 +907,7 @@ private enum ZIPArchiveExtractor {
 }
 
 private extension Data {
-    func uint16LE(at offset: Int) throws -> UInt16 {
+    nonisolated func uint16LE(at offset: Int) throws -> UInt16 {
         guard offset >= 0, offset + 2 <= count else {
             throw ProjectArchiveImportService.ImportError.invalidZip("unexpected end of file")
         }
@@ -895,7 +916,7 @@ private extension Data {
         return b0 | b1
     }
 
-    func uint32LE(at offset: Int) throws -> UInt32 {
+    nonisolated func uint32LE(at offset: Int) throws -> UInt32 {
         guard offset >= 0, offset + 4 <= count else {
             throw ProjectArchiveImportService.ImportError.invalidZip("unexpected end of file")
         }

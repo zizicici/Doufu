@@ -38,11 +38,13 @@ final class HomeViewController: UIViewController {
     private let projectChangeCenter = ProjectChangeCenter.shared
     private let coordinator = ProjectLifecycleCoordinator.shared
     private let archiveImportService = ProjectArchiveImportService.shared
+    private let archiveExportService = ProjectArchiveExportService.shared
     private let projectTransitionDelegate = ProjectOpenTransitionDelegate()
     private var selectedCellIndexPath: IndexPath?
     private var projectActivityObserver: NSObjectProtocol?
     private var projectChangeObserver: NSObjectProtocol?
     private var importTask: Task<Void, Never>?
+    private var exportTask: Task<Void, Never>?
 
     private lazy var collectionView: UICollectionView = {
         let layout = UICollectionViewFlowLayout()
@@ -108,6 +110,7 @@ final class HomeViewController: UIViewController {
 
     deinit {
         importTask?.cancel()
+        exportTask?.cancel()
         if let projectActivityObserver {
             NotificationCenter.default.removeObserver(projectActivityObserver)
         }
@@ -202,7 +205,7 @@ final class HomeViewController: UIViewController {
         present(picker, animated: true)
     }
 
-    private func importProjectArchive(from url: URL) {
+    func importProjectArchive(from url: URL) {
         importTask?.cancel()
         importTask = Task { [weak self] in
             guard let self else { return }
@@ -221,6 +224,43 @@ final class HomeViewController: UIViewController {
                         localized: "home.alert.import_failed.title",
                         defaultValue: "Import Failed"
                     ),
+                    message: error.localizedDescription
+                )
+            }
+        }
+    }
+
+    private func exportProject(_ project: HomeProjectItem, kind: ProjectArchiveExportService.ArchiveKind) {
+        exportTask?.cancel()
+        exportTask = Task { [weak self] in
+            guard let self else { return }
+            defer { self.exportTask = nil }
+
+            let appURL = project.projectURL.appendingPathComponent("App", isDirectory: true)
+            let projectRootURL = project.projectURL
+
+            do {
+                let payload = try await self.archiveExportService.exportArchive(
+                    kind: kind,
+                    projectName: project.name,
+                    appURL: appURL,
+                    projectRootURL: projectRootURL
+                )
+                guard !Task.isCancelled else {
+                    for url in payload.cleanupURLs { try? FileManager.default.removeItem(at: url) }
+                    return
+                }
+
+                let activity = UIActivityViewController(activityItems: [payload.archiveURL], applicationActivities: nil)
+                activity.completionWithItemsHandler = { _, _, _, _ in
+                    for url in payload.cleanupURLs { try? FileManager.default.removeItem(at: url) }
+                }
+                self.present(activity, animated: true)
+            } catch is CancellationError {
+                return
+            } catch {
+                self.showPlaceholderAlert(
+                    title: String(localized: "home.alert.export_failed.title", defaultValue: "Export Failed"),
                     message: error.localizedDescription
                 )
             }
@@ -599,6 +639,26 @@ extension HomeViewController: UICollectionViewDelegate {
                 return UIMenu(title: "", children: [])
             }
 
+            let exportDoufuAction = UIAction(
+                title: ".doufu",
+                subtitle: String(localized: "home.menu.export.doufu.subtitle", defaultValue: "Code only")
+            ) { _ in
+                self.exportProject(project, kind: .doufu)
+            }
+
+            let exportDoufullAction = UIAction(
+                title: ".doufull",
+                subtitle: String(localized: "home.menu.export.doufull.subtitle", defaultValue: "Code and data")
+            ) { _ in
+                self.exportProject(project, kind: .doufull)
+            }
+
+            let exportMenu = UIMenu(
+                title: String(localized: "home.menu.export", defaultValue: "Export"),
+                image: UIImage(systemName: "square.and.arrow.up"),
+                children: [exportDoufuAction, exportDoufullAction]
+            )
+
             let settingsAction = UIAction(title: String(localized: "home.menu.settings"), image: UIImage(systemName: "gearshape")) { _ in
                 self.openProjectSettings(project)
             }
@@ -620,6 +680,7 @@ extension HomeViewController: UICollectionViewDelegate {
                 children: [
                     settingsAction,
                     sortAction,
+                    exportMenu,
                     deleteAction
                 ]
             )

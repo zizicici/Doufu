@@ -5,7 +5,7 @@ import Foundation
 /// Archive semantics:
 /// - `.doufu`: ZIP containing `App/`
 /// - `.doufull`: ZIP containing `App/` + `AppData/`
-final class ProjectArchiveExportService {
+nonisolated final class ProjectArchiveExportService {
 
     static let shared = ProjectArchiveExportService()
 
@@ -66,21 +66,66 @@ final class ProjectArchiveExportService {
         projectName: String,
         appURL: URL,
         projectRootURL: URL?
-    ) throws -> ExportResult {
-        switch kind {
-        case .doufu:
-            return try exportCodeArchive(projectName: projectName, appURL: appURL)
-        case .doufull:
-            guard let projectRootURL else {
-                throw ExportError.missingProjectRoot
+    ) async throws -> ExportResult {
+        try Task.checkCancellation()
+
+        return try await Self.runDetachedCancellable(priority: .userInitiated) {
+            switch kind {
+            case .doufu:
+                return try Self.exportCodeArchive(projectName: projectName, appURL: appURL)
+            case .doufull:
+                guard let projectRootURL else {
+                    throw ExportError.missingProjectRoot
+                }
+                return try Self.exportFullArchive(projectName: projectName, projectRootURL: projectRootURL)
             }
-            return try exportFullArchive(projectName: projectName, projectRootURL: projectRootURL)
         }
     }
 
-    private func exportCodeArchive(projectName: String, appURL: URL) throws -> ExportResult {
+    private static func runDetachedCancellable<T: Sendable>(
+        priority: TaskPriority,
+        _ operation: @escaping @Sendable () throws -> T
+    ) async throws -> T {
+        let task = Task.detached(priority: priority) {
+            try operation()
+        }
+
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
+    }
+
+    private static func exportCodeArchive(projectName: String, appURL: URL) throws -> ExportResult {
+        try Task.checkCancellation()
+
         let fileManager = FileManager.default
         try ensureDirectoryExists(at: appURL, fileManager: fileManager, missingError: .missingAppDirectory)
+
+        // Stage into a wrapper directory so the ZIP contains `App/` at its root,
+        // matching the structure that importArchive expects.
+        let stagingRootURL = fileManager.temporaryDirectory
+            .appendingPathComponent("doufu_code_export_\(UUID().uuidString.lowercased())", isDirectory: true)
+        var archiveURLOnFailure: URL?
+        var keepArtifactsForCaller = false
+        defer {
+            if !keepArtifactsForCaller {
+                if let archiveURLOnFailure {
+                    try? fileManager.removeItem(at: archiveURLOnFailure)
+                }
+                try? fileManager.removeItem(at: stagingRootURL)
+            }
+        }
+
+        let exportFolderURL = stagingRootURL
+            .appendingPathComponent("\(safeArchiveBaseName(from: projectName))-code", isDirectory: true)
+        let exportAppURL = exportFolderURL.appendingPathComponent("App", isDirectory: true)
+
+        try fileManager.createDirectory(at: exportFolderURL, withIntermediateDirectories: true)
+        try fileManager.copyItem(at: appURL, to: exportAppURL)
+
+        try Task.checkCancellation()
 
         let archiveURL = makeArchiveURL(
             projectName: projectName,
@@ -88,12 +133,17 @@ final class ProjectArchiveExportService {
             fileExtension: ArchiveKind.doufu.fileExtension,
             fileManager: fileManager
         )
+        archiveURLOnFailure = archiveURL
         try? fileManager.removeItem(at: archiveURL)
-        try zipDirectory(at: appURL, to: archiveURL)
-        return ExportResult(archiveURL: archiveURL, cleanupURLs: [archiveURL])
+        try zipDirectory(at: exportFolderURL, to: archiveURL)
+
+        keepArtifactsForCaller = true
+        return ExportResult(archiveURL: archiveURL, cleanupURLs: [archiveURL, stagingRootURL])
     }
 
-    private func exportFullArchive(projectName: String, projectRootURL: URL) throws -> ExportResult {
+    private static func exportFullArchive(projectName: String, projectRootURL: URL) throws -> ExportResult {
+        try Task.checkCancellation()
+
         let fileManager = FileManager.default
         let appSourceURL = projectRootURL.appendingPathComponent("App", isDirectory: true)
         let appDataSourceURL = projectRootURL.appendingPathComponent("AppData", isDirectory: true)
@@ -102,6 +152,17 @@ final class ProjectArchiveExportService {
 
         let stagingRootURL = fileManager.temporaryDirectory
             .appendingPathComponent("doufu_project_export_\(UUID().uuidString.lowercased())", isDirectory: true)
+        var archiveURLOnFailure: URL?
+        var keepArtifactsForCaller = false
+        defer {
+            if !keepArtifactsForCaller {
+                if let archiveURLOnFailure {
+                    try? fileManager.removeItem(at: archiveURLOnFailure)
+                }
+                try? fileManager.removeItem(at: stagingRootURL)
+            }
+        }
+
         let exportFolderURL = stagingRootURL
             .appendingPathComponent("\(safeArchiveBaseName(from: projectName))-project-backup", isDirectory: true)
         let exportAppURL = exportFolderURL.appendingPathComponent("App", isDirectory: true)
@@ -121,22 +182,26 @@ final class ProjectArchiveExportService {
             try fileManager.createDirectory(at: exportAppDataURL, withIntermediateDirectories: true)
         }
 
+        try Task.checkCancellation()
+
         let archiveURL = makeArchiveURL(
             projectName: projectName,
             suffix: ArchiveKind.doufull.fileSuffix,
             fileExtension: ArchiveKind.doufull.fileExtension,
             fileManager: fileManager
         )
+        archiveURLOnFailure = archiveURL
         try? fileManager.removeItem(at: archiveURL)
         try zipDirectory(at: exportFolderURL, to: archiveURL)
 
+        keepArtifactsForCaller = true
         return ExportResult(
             archiveURL: archiveURL,
             cleanupURLs: [archiveURL, stagingRootURL]
         )
     }
 
-    private func ensureDirectoryExists(
+    private static func ensureDirectoryExists(
         at directoryURL: URL,
         fileManager: FileManager,
         missingError: ExportError
@@ -147,17 +212,18 @@ final class ProjectArchiveExportService {
         }
     }
 
-    private func makeArchiveURL(
+    private static func makeArchiveURL(
         projectName: String,
         suffix: String,
         fileExtension: String,
         fileManager: FileManager
     ) -> URL {
-        fileManager.temporaryDirectory
-            .appendingPathComponent("\(safeArchiveBaseName(from: projectName))-\(suffix).\(fileExtension)")
+        let uniqueID = UUID().uuidString.prefix(8).lowercased()
+        return fileManager.temporaryDirectory
+            .appendingPathComponent("\(safeArchiveBaseName(from: projectName))-\(suffix)-\(uniqueID).\(fileExtension)")
     }
 
-    private func safeArchiveBaseName(from projectName: String) -> String {
+    private static func safeArchiveBaseName(from projectName: String) -> String {
         let rawBaseName = projectName.trimmingCharacters(in: .whitespacesAndNewlines)
         let fallback = rawBaseName.isEmpty ? "project" : rawBaseName
         let invalidCharacters = CharacterSet(charactersIn: "/\\:?%*|\"<>")
@@ -169,7 +235,7 @@ final class ProjectArchiveExportService {
         return sanitized.isEmpty ? "project" : sanitized
     }
 
-    private func zipDirectory(at sourceURL: URL, to destinationURL: URL) throws {
+    private static func zipDirectory(at sourceURL: URL, to destinationURL: URL) throws {
         let coordinator = NSFileCoordinator()
         var coordinatorError: NSError?
         var zipError: Error?

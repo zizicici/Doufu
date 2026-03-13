@@ -72,33 +72,42 @@ final class AppProjectStore {
         let appURL = projectURL.appendingPathComponent("App", isDirectory: true)
         let dataURL = projectURL.appendingPathComponent("AppData", isDirectory: true)
         let now = Date()
-        let projectName = normalizeProjectName(name, createdAt: now)
+        let baseProjectName = normalizeProjectName(name)
         let description = String(localized: "project_template.description.iterate_by_chat")
 
         let fm = fileManager
         let record = try await Task.detached(priority: .userInitiated) {
+            var projectName = baseProjectName
+            var insertedProjectRecord = false
             do {
-                try fm.createDirectory(at: appURL, withIntermediateDirectories: true)
-                try fm.createDirectory(at: dataURL, withIntermediateDirectories: true)
-                try self.writeBlankWebsiteFiles(projectID: projectID, name: projectName, now: now, projectURL: appURL)
-                try ProjectGitService.shared.initializeRepository(at: appURL)
-
-                // Insert project record into DB
-                let nowNanos = DatabaseTimestamp.toNanos(now)
-                try self.dbPool.write { db in
+                projectName = try self.dbPool.write { db in
                     let maxOrder = try Int.fetchOne(db, sql: "SELECT MAX(sort_order) FROM project") ?? 0
+                    let uniqueProjectName = try Self.makeUniqueProjectName(baseName: baseProjectName, in: db)
+                    let nowNanos = DatabaseTimestamp.toNanos(now)
                     let dbProject = DBProject(
                         id: projectID,
                         createdAt: nowNanos,
-                        title: projectName,
+                        title: uniqueProjectName,
                         description: description,
                         sortOrder: maxOrder + 1,
                         updatedAt: nowNanos
                     )
                     try dbProject.insert(db)
+                    return uniqueProjectName
                 }
+                insertedProjectRecord = true
+
+                try fm.createDirectory(at: appURL, withIntermediateDirectories: true)
+                try fm.createDirectory(at: dataURL, withIntermediateDirectories: true)
+                try self.writeBlankWebsiteFiles(projectID: projectID, name: projectName, now: now, projectURL: appURL)
+                try ProjectGitService.shared.initializeRepository(at: appURL)
             } catch {
                 try? fm.removeItem(at: projectURL)
+                if insertedProjectRecord {
+                    try? self.dbPool.write { db in
+                        try db.execute(sql: "DELETE FROM project WHERE id = ?", arguments: [projectID])
+                    }
+                }
                 throw AppProjectStoreError.projectCreationFailed
             }
 
@@ -309,13 +318,29 @@ final class AppProjectStore {
         return projectsRootURL
     }
 
-    private func normalizeProjectName(_ rawName: String?, createdAt: Date) -> String {
+    private func normalizeProjectName(_ rawName: String?) -> String {
         let trimmedName = rawName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !trimmedName.isEmpty {
             return trimmedName
         }
 
         return String(localized: "project_store.default_project_name", defaultValue: "Untitled")
+    }
+
+    nonisolated private static func makeUniqueProjectName(baseName: String, in db: Database) throws -> String {
+        let existingTitles = Set(try String.fetchAll(db, sql: "SELECT title FROM project"))
+        guard existingTitles.contains(baseName) else {
+            return baseName
+        }
+
+        var suffix = 2
+        while true {
+            let candidate = "\(baseName) \(suffix)"
+            if !existingTitles.contains(candidate) {
+                return candidate
+            }
+            suffix += 1
+        }
     }
 
     private func makeDeletionStagingURL(for projectID: String) -> URL {

@@ -11,48 +11,78 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 
     var window: UIWindow?
 
+    private static let importableExtensions: Set<String> = ["doufu", "doufull"]
 
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
-        // Use this method to optionally configure and attach the UIWindow `window` to the provided UIWindowScene `scene`.
-        // If using a storyboard, the `window` property will automatically be initialized and attached to the scene.
-        // This delegate does not imply the connecting scene or session are new (see `application:configurationForConnectingSceneSession` instead).
         guard let windowScene = (scene as? UIWindowScene) else { return }
 
         window = UIWindow(windowScene: windowScene)
-        
+
         let homeViewController = HomeViewController()
         let navigationController = UINavigationController(rootViewController: homeViewController)
         window?.rootViewController = navigationController
         window?.makeKeyAndVisible()
+
+        // Handle file open on cold launch
+        if let url = connectionOptions.urlContexts.first?.url,
+           Self.importableExtensions.contains(url.pathExtension.lowercased()) {
+            homeViewController.importProjectArchive(from: url)
+        }
     }
 
-    func sceneDidDisconnect(_ scene: UIScene) {
-        // Called as the scene is being released by the system.
-        // This occurs shortly after the scene enters the background, or when its session is discarded.
-        // Release any resources associated with this scene that can be re-created the next time the scene connects.
-        // The scene may re-connect later, as its session was not necessarily discarded (see `application:didDiscardSceneSessions` instead).
+    // Handle file open when app is already running
+    func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
+        let importableURLs = URLContexts
+            .map(\.url)
+            .filter { Self.importableExtensions.contains($0.pathExtension.lowercased()) }
+
+        guard let url = importableURLs.first,
+              let homeVC = navigateToHomeViewController() else {
+            return
+        }
+
+        if importableURLs.count > 1 {
+            // Explicitly reject multiple files rather than silently dropping them
+            let alert = UIAlertController(
+                title: String(
+                    localized: "import.error.multiple_files.title",
+                    defaultValue: "Multiple Files"
+                ),
+                message: String(
+                    localized: "import.error.multiple_files.message",
+                    defaultValue: "Only one archive can be imported at a time. The first file will be imported."
+                ),
+                preferredStyle: .alert
+            )
+            alert.addAction(UIAlertAction(
+                title: String(localized: "common.action.ok", defaultValue: "OK"),
+                style: .default
+            ) { _ in
+                homeVC.importProjectArchive(from: url)
+            })
+            homeVC.present(alert, animated: true)
+        } else {
+            homeVC.importProjectArchive(from: url)
+        }
     }
 
-    func sceneDidBecomeActive(_ scene: UIScene) {
-        // Called when the scene has moved from an inactive state to an active state.
-        // Use this method to restart any tasks that were paused (or not yet started) when the scene was inactive.
+    /// Ensures HomeViewController is the visible VC by dismissing modals and popping the nav stack.
+    private func navigateToHomeViewController() -> HomeViewController? {
+        guard let nav = window?.rootViewController as? UINavigationController else { return nil }
+        // Dismiss any modally-presented VC so Home can present alerts
+        if nav.presentedViewController != nil {
+            nav.dismiss(animated: false)
+        }
+        // Pop to root so HomeViewController is the topmost VC in the hierarchy
+        if nav.viewControllers.count > 1 {
+            nav.popToRootViewController(animated: false)
+        }
+        return nav.viewControllers.first as? HomeViewController
     }
 
-    func sceneWillResignActive(_ scene: UIScene) {
-        // Called when the scene will move from an active state to an inactive state.
-        // This may occur due to temporary interruptions (ex. an incoming phone call).
-    }
-
-    func sceneWillEnterForeground(_ scene: UIScene) {
-        // Called as the scene transitions from the background to the foreground.
-        // Use this method to undo the changes made on entering the background.
-    }
-
-    func sceneDidEnterBackground(_ scene: UIScene) {
-        // Called as the scene transitions from the foreground to the background.
-        // Use this method to save data, release shared resources, and store enough scene-specific state information
-        // to restore the scene back to its current state.
-    }
-
-
+    func sceneDidDisconnect(_ scene: UIScene) {}
+    func sceneDidBecomeActive(_ scene: UIScene) {}
+    func sceneWillResignActive(_ scene: UIScene) {}
+    func sceneWillEnterForeground(_ scene: UIScene) {}
+    func sceneDidEnterBackground(_ scene: UIScene) {}
 }
