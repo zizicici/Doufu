@@ -263,6 +263,7 @@ extension DBProvider {
     static let kindOpenAICompatible = 0
     static let kindAnthropic = 1
     static let kindGoogleGemini = 2
+    static let kindOpenRouter = 3
 
     static let authModeAPIKey = 0
     static let authModeOAuth = 1
@@ -272,6 +273,7 @@ extension DBProvider {
         case .openAICompatible: return kindOpenAICompatible
         case .anthropic: return kindAnthropic
         case .googleGemini: return kindGoogleGemini
+        case .openRouter: return kindOpenRouter
         }
     }
 
@@ -279,6 +281,7 @@ extension DBProvider {
         switch value {
         case kindAnthropic: return .anthropic
         case kindGoogleGemini: return .googleGemini
+        case kindOpenRouter: return .openRouter
         default: return .openAICompatible
         }
     }

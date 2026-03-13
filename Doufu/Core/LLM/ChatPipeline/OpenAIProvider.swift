@@ -195,6 +195,10 @@ final class OpenAIProvider: LLMProviderAdapter {
         }
         guard (200...299).contains(httpResponse.statusCode) else {
             let data = try await LLMProviderHelpers.consumeStreamBytes(bytes: bytes)
+            LLMProviderHelpers.logFailedResponse(
+                request: request, httpResponse: httpResponse,
+                responseBodyData: data, requestLabel: "OpenAI ToolUse"
+            )
             let message = LLMProviderHelpers.parseErrorMessage(from: data)
                 ?? HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
             throw ProjectChatService.ServiceError.networkFailed(String(format: String(localized: "llm.error.request_failed_format"), message))
@@ -403,17 +407,19 @@ final class OpenAIProvider: LLMProviderAdapter {
 
         case "error":
             let message = parseStreamingErrorMessage(from: eventObject) ?? String(localized: "llm.error.stream_failed")
+            print("[Doufu OpenAI] Streaming error event: \(eventObject)")
             throw ProjectChatService.ServiceError.networkFailed(String(format: String(localized: "llm.error.request_failed_format"), message))
 
         case "response.failed":
             let message = parseNestedErrorMessage(from: eventObject["response"]) ?? String(localized: "llm.error.response_failed")
+            print("[Doufu OpenAI] response.failed event: \(eventObject)")
             throw ProjectChatService.ServiceError.networkFailed(String(format: String(localized: "llm.error.request_failed_format"), message))
 
         case "response.incomplete":
             // Mark as truncated so the caller returns .maxTokens instead of
             // throwing — this lets the orchestrator auto-continue.
             isIncomplete = true
-            LLMProviderHelpers.debugLog("[Doufu OpenAI] response.incomplete: \(parseIncompleteReason(from: eventObject["response"]) ?? "unknown")")
+            print("[Doufu OpenAI] response.incomplete: \(parseIncompleteReason(from: eventObject["response"]) ?? "unknown")")
 
         default:
             return
@@ -616,14 +622,17 @@ final class OpenAIProvider: LLMProviderAdapter {
 
         case "error":
             let message = parseStreamingErrorMessage(from: eventObject) ?? String(localized: "llm.error.stream_failed")
+            print("[Doufu OpenAI] Streaming error event: \(eventObject)")
             throw ProjectChatService.ServiceError.networkFailed(String(format: String(localized: "llm.error.request_failed_format"), message))
 
         case "response.failed":
             let message = parseNestedErrorMessage(from: eventObject["response"]) ?? String(localized: "llm.error.response_failed")
+            print("[Doufu OpenAI] response.failed event: \(eventObject)")
             throw ProjectChatService.ServiceError.networkFailed(String(format: String(localized: "llm.error.request_failed_format"), message))
 
         case "response.incomplete":
             let message = parseIncompleteReason(from: eventObject["response"]) ?? String(localized: "llm.error.response_incomplete")
+            print("[Doufu OpenAI] response.incomplete event: \(eventObject)")
             throw ProjectChatService.ServiceError.networkFailed(String(format: String(localized: "llm.error.request_failed_format"), message))
 
         default:

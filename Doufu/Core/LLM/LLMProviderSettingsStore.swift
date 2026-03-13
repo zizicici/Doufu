@@ -68,6 +68,7 @@ struct LLMProviderRecord: Codable, Equatable, Hashable {
         case openAICompatible = "openai_compatible"
         case anthropic
         case googleGemini = "google_gemini"
+        case openRouter = "open_router"
 
         var displayName: String {
             switch self {
@@ -76,7 +77,9 @@ struct LLMProviderRecord: Codable, Equatable, Hashable {
             case .anthropic:
                 return String(localized: "providers.kind.anthropic.title")
             case .googleGemini:
-                return "Google Gemini"
+                return String(localized: "providers.kind.google_gemini.title")
+            case .openRouter:
+                return String(localized: "providers.kind.openrouter.title")
             }
         }
 
@@ -87,7 +90,9 @@ struct LLMProviderRecord: Codable, Equatable, Hashable {
             case .anthropic:
                 return String(localized: "providers.kind.anthropic.subtitle")
             case .googleGemini:
-                return "Gemini API / Google OAuth"
+                return String(localized: "providers.kind.google_gemini.subtitle")
+            case .openRouter:
+                return String(localized: "providers.kind.openrouter.subtitle")
             }
         }
 
@@ -99,12 +104,14 @@ struct LLMProviderRecord: Codable, Equatable, Hashable {
                 return "https://api.anthropic.com/v1"
             case .googleGemini:
                 return "https://generativelanguage.googleapis.com/v1beta"
+            case .openRouter:
+                return "https://openrouter.ai/api"
             }
         }
 
         var defaultAutoAppendV1: Bool {
             switch self {
-            case .openAICompatible:
+            case .openAICompatible, .openRouter:
                 return true
             case .anthropic, .googleGemini:
                 return false
@@ -119,6 +126,8 @@ struct LLMProviderRecord: Codable, Equatable, Hashable {
                 return ["claude-opus-4-6", "claude-sonnet-4-5", "claude-haiku-4-5"]
             case .googleGemini:
                 return ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"]
+            case .openRouter:
+                return ["anthropic/claude-sonnet-4", "deepseek/deepseek-r1:free", "google/gemini-2.5-pro-preview", "openai/gpt-4o"]
             }
         }
 

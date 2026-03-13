@@ -81,6 +81,117 @@ struct OpenAIToolDefinition: Encodable {
     }
 }
 
+// MARK: - OpenRouter Chat Completions API
+
+struct OpenRouterChatRequest: Encodable {
+    let model: String
+    let messages: [OpenRouterMessage]
+    let tools: [OpenRouterToolDefinition]?
+    let stream: Bool
+    let reasoning: OpenRouterReasoning?
+
+    private enum CodingKeys: String, CodingKey {
+        case model, messages, tools, stream, reasoning
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(model, forKey: .model)
+        try container.encode(messages, forKey: .messages)
+        if let tools, !tools.isEmpty {
+            try container.encode(tools, forKey: .tools)
+        }
+        try container.encode(stream, forKey: .stream)
+        try container.encodeIfPresent(reasoning, forKey: .reasoning)
+    }
+}
+
+struct OpenRouterReasoning: Encodable {
+    let effort: String
+
+    init(from reasoningEffort: ProjectChatService.ReasoningEffort) {
+        switch reasoningEffort {
+        case .xhigh, .high:
+            effort = "high"
+        case .medium:
+            effort = "medium"
+        case .low:
+            effort = "low"
+        }
+    }
+}
+
+enum OpenRouterMessage: Encodable {
+    case system(content: String)
+    case user(content: String)
+    case assistant(content: String, toolCalls: [OpenRouterToolCall]?)
+    case tool(toolCallID: String, content: String)
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case let .system(content):
+            try container.encode("system", forKey: .role)
+            try container.encode(content, forKey: .content)
+        case let .user(content):
+            try container.encode("user", forKey: .role)
+            try container.encode(content, forKey: .content)
+        case let .assistant(content, toolCalls):
+            try container.encode("assistant", forKey: .role)
+            if let toolCalls, !toolCalls.isEmpty {
+                if !content.isEmpty {
+                    try container.encode(content, forKey: .content)
+                }
+                try container.encode(toolCalls, forKey: .toolCalls)
+            } else {
+                try container.encode(content, forKey: .content)
+            }
+        case let .tool(toolCallID, content):
+            try container.encode("tool", forKey: .role)
+            try container.encode(toolCallID, forKey: .toolCallID)
+            try container.encode(content, forKey: .content)
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case role, content
+        case toolCalls = "tool_calls"
+        case toolCallID = "tool_call_id"
+    }
+}
+
+struct OpenRouterToolCall: Encodable {
+    let id: String
+    let type: String
+    let function: OpenRouterFunctionCall
+
+    init(id: String, name: String, arguments: String) {
+        self.id = id
+        self.type = "function"
+        self.function = OpenRouterFunctionCall(name: name, arguments: arguments)
+    }
+}
+
+struct OpenRouterFunctionCall: Encodable {
+    let name: String
+    let arguments: String
+}
+
+struct OpenRouterToolDefinition: Encodable {
+    let type = "function"
+    let function: OpenRouterFunctionDefinition
+
+    init(name: String, description: String, parameters: JSONValue) {
+        self.function = OpenRouterFunctionDefinition(name: name, description: description, parameters: parameters)
+    }
+}
+
+struct OpenRouterFunctionDefinition: Encodable {
+    let name: String
+    let description: String
+    let parameters: JSONValue
+}
+
 // MARK: - Anthropic Prompt Caching
 
 struct AnthropicCacheControl: Encodable {

@@ -112,6 +112,7 @@ struct LLMModelRegistry {
         case .openAICompatible: registry = openAIRegistry
         case .anthropic:        registry = anthropicRegistry
         case .googleGemini:     registry = geminiRegistry
+        case .openRouter:       registry = openRouterRegistry
         }
 
         // Exact match first.
@@ -147,6 +148,15 @@ struct LLMModelRegistry {
         case .openAICompatible:
             return ModelEntry(
                 reasoningEfforts: [],
+                thinkingSupported: false,
+                thinkingCanDisable: false,
+                structuredOutputSupported: false,
+                maxOutputTokens: 16_384,
+                contextWindowTokens: 128_000
+            )
+        case .openRouter:
+            return ModelEntry(
+                reasoningEfforts: [.low, .medium, .high],
                 thinkingSupported: false,
                 thinkingCanDisable: false,
                 structuredOutputSupported: false,
@@ -278,6 +288,47 @@ struct LLMModelRegistry {
             reasoningEfforts: [], thinkingSupported: true, thinkingCanDisable: true,
             structuredOutputSupported: true,
             maxOutputTokens: 64_000, contextWindowTokens: 200_000
+        ),
+    ]
+
+    // MARK: - OpenRouter Registry
+
+    private static let openRouterRegistry: [String: ModelEntry] = [
+        "anthropic/claude-sonnet-4": ModelEntry(
+            reasoningEfforts: [.low, .medium, .high],
+            thinkingSupported: false, thinkingCanDisable: false,
+            structuredOutputSupported: true,
+            maxOutputTokens: 64_000, contextWindowTokens: 200_000
+        ),
+        "anthropic/claude-haiku-4-5": ModelEntry(
+            reasoningEfforts: [.low, .medium, .high],
+            thinkingSupported: false, thinkingCanDisable: false,
+            structuredOutputSupported: true,
+            maxOutputTokens: 64_000, contextWindowTokens: 200_000
+        ),
+        "openai/gpt-4o": ModelEntry(
+            reasoningEfforts: [.low, .medium, .high],
+            thinkingSupported: false, thinkingCanDisable: false,
+            structuredOutputSupported: true,
+            maxOutputTokens: 16_384, contextWindowTokens: 128_000
+        ),
+        "google/gemini-2.5-pro-preview": ModelEntry(
+            reasoningEfforts: [.low, .medium, .high],
+            thinkingSupported: false, thinkingCanDisable: false,
+            structuredOutputSupported: true,
+            maxOutputTokens: 65_536, contextWindowTokens: 1_048_576
+        ),
+        "deepseek/deepseek-r1:free": ModelEntry(
+            reasoningEfforts: [.low, .medium, .high],
+            thinkingSupported: false, thinkingCanDisable: false,
+            structuredOutputSupported: false,
+            maxOutputTokens: 8_192, contextWindowTokens: 64_000
+        ),
+        "deepseek/deepseek-r1": ModelEntry(
+            reasoningEfforts: [.low, .medium, .high],
+            thinkingSupported: false, thinkingCanDisable: false,
+            structuredOutputSupported: false,
+            maxOutputTokens: 8_192, contextWindowTokens: 64_000
         ),
     ]
 

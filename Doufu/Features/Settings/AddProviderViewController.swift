@@ -11,7 +11,8 @@ final class AddProviderViewController: UITableViewController {
     private let providerKinds: [LLMProviderRecord.Kind] = [
         .openAICompatible,
         .anthropic,
-        .googleGemini
+        .googleGemini,
+        .openRouter
     ]
 
     init() {
@@ -75,7 +76,11 @@ final class AddProviderViewController: UITableViewController {
         case .openAICompatible:
             // OpenAI Compatible supports both API Key and OAuth — let the
             // user choose on the next screen.
-            controller = ProviderAuthMethodViewController(providerKind: kind)
+            controller = ProviderAuthMethodViewController()
+        case .openRouter:
+            // OpenRouter supports API Key and OAuth PKCE — reuse the auth
+            // method selection page.
+            controller = ProviderAuthMethodViewController(providerKind: .openRouter)
         case .anthropic, .googleGemini:
             // Only API Key is available — skip the auth method selection
             // page and go straight to the form.

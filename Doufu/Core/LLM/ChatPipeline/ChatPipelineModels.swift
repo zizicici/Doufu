@@ -197,6 +197,12 @@ struct PatchMemoryUpdate: Decodable {
     let constraints: [String]?
     let todoItems: [String]?
 
+    init(objective: String? = nil, constraints: [String]? = nil, todoItems: [String]? = nil) {
+        self.objective = objective
+        self.constraints = constraints
+        self.todoItems = todoItems
+    }
+
     private enum CodingKeys: String, CodingKey {
         case objective
         case constraints

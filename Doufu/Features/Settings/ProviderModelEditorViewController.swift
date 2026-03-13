@@ -108,7 +108,7 @@ final class ProviderModelEditorViewController: UITableViewController {
             return IdentityRow.allCases.count
         case .capability:
             switch provider.providerKind {
-            case .openAICompatible:
+            case .openAICompatible, .openRouter:
                 return ProjectChatService.ReasoningEffort.allCases.count + 1
             case .anthropic, .googleGemini:
                 return 3
@@ -128,7 +128,7 @@ final class ProviderModelEditorViewController: UITableViewController {
         case .identity:
             return String(localized: "provider_model.editor.section.identity")
         case .capability:
-            return provider.providerKind == .openAICompatible
+            return (provider.providerKind == .openAICompatible || provider.providerKind == .openRouter)
                 ? String(localized: "provider_model.editor.section.capabilities")
                 : String(localized: "provider_model.editor.section.thinking")
         case .tokenLimits:
@@ -196,7 +196,7 @@ final class ProviderModelEditorViewController: UITableViewController {
             }
 
             switch provider.providerKind {
-            case .openAICompatible:
+            case .openAICompatible, .openRouter:
                 if indexPath.row < ProjectChatService.ReasoningEffort.allCases.count {
                     let effort = ProjectChatService.ReasoningEffort.allCases[indexPath.row]
                     cell.configure(
@@ -350,7 +350,7 @@ final class ProviderModelEditorViewController: UITableViewController {
         let contextWindowOverride = (contextWindow ?? 0) > 0 ? contextWindow : nil
 
         switch provider.providerKind {
-        case .openAICompatible:
+        case .openAICompatible, .openRouter:
             let orderedEfforts = ProjectChatService.ReasoningEffort.allCases.filter { reasoningEfforts.contains($0) }
             return LLMProviderModelCapabilities(
                 reasoningEfforts: orderedEfforts,

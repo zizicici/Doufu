@@ -5,6 +5,7 @@
 //  Created by Codex on 2026/03/04.
 //
 
+import AuthenticationServices
 import CryptoKit
 import Foundation
 import Network
@@ -73,8 +74,10 @@ final class OpenAIOAuthService {
     private let clientID = "app_EMoamEEZ73f0CkXaXp7hrann"
     private let originator = "codex_cli_rs"
     private let callbackPath = "/auth/callback"
+    private let appURLScheme = "doufu"
 
     private var callbackServer: LocalhostOAuthCallbackServer?
+    private var webAuthSession: ASWebAuthenticationSession?
     private var expectedState: String?
     private var pkce: PKCE?
     private var completion: ((Result<SignInResult, Error>) -> Void)?
@@ -118,7 +121,128 @@ final class OpenAIOAuthService {
         )
     }
 
+    /// Starts the OAuth flow using `ASWebAuthenticationSession`.
+    ///
+    /// Because we use Codex CLI's public client ID, OpenAI only allows
+    /// `http://localhost:*` redirect URIs. The flow is:
+    ///   1. Start a localhost callback server
+    ///   2. `ASWebAuthenticationSession` opens the authorize page
+    ///      (redirect_uri = localhost)
+    ///   3. OpenAI redirects back to localhost; the server receives the
+    ///      callback, then responds with a 302 to `doufu://openai/callback?…`
+    ///   4. `ASWebAuthenticationSession` intercepts the `doufu://` redirect
+    ///   5. Exchange code for tokens
+    func startWebAuth(
+        contextProvider: ASWebAuthenticationPresentationContextProviding,
+        completion: @escaping (Result<SignInResult, Error>) -> Void
+    ) {
+        let pkce = Self.generatePKCE()
+        let state = Self.generateState()
+
+        let callbackServer = LocalhostOAuthCallbackServer(
+            port: 1455,
+            callbackPath: callbackPath,
+            customSchemeRedirect: "\(appURLScheme)://openai/callback"
+        )
+
+        do {
+            try callbackServer.start(callback: { _ in })
+        } catch {
+            completion(.failure(ServiceError.callbackServerStartFailed))
+            return
+        }
+        self.callbackServer = callbackServer
+
+        let redirectURI = redirectURIString(callbackPort: callbackServer.port)
+        let authorizeURL = buildAuthorizeURL(
+            callbackPort: callbackServer.port,
+            state: state,
+            pkceChallenge: pkce.challenge
+        )
+
+        let session = ASWebAuthenticationSession(
+            url: authorizeURL,
+            callbackURLScheme: appURLScheme
+        ) { [weak self] callbackURL, error in
+            guard let self else { return }
+
+            // Stop the localhost server — no longer needed.
+            self.callbackServer?.stop()
+            self.callbackServer = nil
+
+            if let error {
+                if (error as NSError).code == ASWebAuthenticationSessionError.canceledLogin.rawValue {
+                    completion(.failure(ServiceError.cancelled))
+                } else {
+                    completion(.failure(error))
+                }
+                return
+            }
+
+            guard let callbackURL else {
+                completion(.failure(ServiceError.callbackMissingCode))
+                return
+            }
+
+            let items = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            let code = items.first(where: { $0.name == "code" })?.value
+            let returnedState = items.first(where: { $0.name == "state" })?.value
+
+            guard returnedState == state else {
+                completion(.failure(ServiceError.callbackStateMismatch))
+                return
+            }
+
+            guard let code, !code.isEmpty else {
+                completion(.failure(ServiceError.callbackMissingCode))
+                return
+            }
+
+            self.exchangeTask = Task {
+                do {
+                    let tokens = try await self.exchangeAuthorizationCode(
+                        code: code,
+                        redirectURI: redirectURI,
+                        codeVerifier: pkce.verifier
+                    )
+                    let resolvedBearerToken = try await self.resolvePreferredBearerToken(
+                        idToken: tokens.id_token,
+                        accessToken: tokens.access_token
+                    )
+
+                    let result = SignInResult(
+                        baseURLString: resolvedBearerToken.baseURLString,
+                        autoAppendV1: resolvedBearerToken.autoAppendV1,
+                        bearerToken: resolvedBearerToken.token,
+                        chatGPTAccountID: resolvedBearerToken.chatGPTAccountID,
+                        idToken: tokens.id_token,
+                        accessToken: tokens.access_token,
+                        refreshToken: tokens.refresh_token
+                    )
+                    DispatchQueue.main.async {
+                        completion(.success(result))
+                    }
+                } catch is CancellationError {
+                    DispatchQueue.main.async {
+                        completion(.failure(ServiceError.cancelled))
+                    }
+                } catch {
+                    DispatchQueue.main.async {
+                        completion(.failure(error))
+                    }
+                }
+            }
+        }
+
+        session.presentationContextProvider = contextProvider
+        session.prefersEphemeralWebBrowserSession = false
+        session.start()
+        self.webAuthSession = session
+    }
+
     func cancel() {
+        webAuthSession?.cancel()
+        webAuthSession = nil
         exchangeTask?.cancel()
         exchangeTask = nil
         callbackServer?.stop()
@@ -584,7 +708,7 @@ final class OpenAIOAuthService {
     }
 }
 
-private final class LocalhostOAuthCallbackServer {
+final class LocalhostOAuthCallbackServer {
 
     enum ServerError: Error {
         case listenerSetupFailed
@@ -593,15 +717,20 @@ private final class LocalhostOAuthCallbackServer {
 
     private let portValue: UInt16
     private let callbackPath: String
+    /// When non-nil the server responds with a 302 redirect to this base URL
+    /// (appending the original query string) instead of an HTML page. This
+    /// allows `ASWebAuthenticationSession` to intercept the redirect.
+    private let customSchemeRedirect: String?
     private let queue = DispatchQueue(label: "com.zizicici.doufu.oauth-callback")
 
     private var listener: NWListener?
     private var callback: ((URL) -> Void)?
     private var completed = false
 
-    init(port: UInt16, callbackPath: String) {
+    init(port: UInt16, callbackPath: String, customSchemeRedirect: String? = nil) {
         self.portValue = port
         self.callbackPath = callbackPath
+        self.customSchemeRedirect = customSchemeRedirect
     }
 
     var port: UInt16 {
@@ -702,13 +831,26 @@ private final class LocalhostOAuthCallbackServer {
         }
 
         let callbackURL = URL(string: "http://localhost:\(portValue)\(target)")
-        sendHTMLResponse(
-            connection: connection,
-            statusCode: 200,
-            html: """
-            <html><body><h3>\(String(localized: "oauth.callback.login_complete.title"))</h3><p>\(String(localized: "oauth.callback.login_complete.body"))</p></body></html>
-            """
-        )
+
+        // When customSchemeRedirect is set, issue a 302 redirect so that
+        // ASWebAuthenticationSession can intercept the custom-scheme URL.
+        if let customSchemeRedirect {
+            let queryString = target.contains("?")
+                ? String(target[target.index(after: target.firstIndex(of: "?")!)...])
+                : ""
+            let redirectLocation = queryString.isEmpty
+                ? customSchemeRedirect
+                : "\(customSchemeRedirect)?\(queryString)"
+            sendRedirectResponse(connection: connection, location: redirectLocation)
+        } else {
+            sendHTMLResponse(
+                connection: connection,
+                statusCode: 200,
+                html: """
+                <html><body><h3>\(String(localized: "oauth.callback.login_complete.title"))</h3><p>\(String(localized: "oauth.callback.login_complete.body"))</p></body></html>
+                """
+            )
+        }
 
         guard let callbackURL else {
             return
@@ -722,6 +864,20 @@ private final class LocalhostOAuthCallbackServer {
         DispatchQueue.main.async { [weak self] in
             self?.callback?(callbackURL)
         }
+    }
+
+    private func sendRedirectResponse(connection: NWConnection, location: String) {
+        let headers = """
+        HTTP/1.1 302 Found\r
+        Location: \(location)\r
+        Content-Length: 0\r
+        Connection: close\r
+        \r
+        """
+        let responseData = Data(headers.utf8)
+        connection.send(content: responseData, completion: .contentProcessed { _ in
+            connection.cancel()
+        })
     }
 
     private func sendHTMLResponse(

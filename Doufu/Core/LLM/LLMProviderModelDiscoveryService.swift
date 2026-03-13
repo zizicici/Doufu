@@ -65,7 +65,7 @@ final class LLMProviderModelDiscoveryService {
         bearerToken: String
     ) async throws -> [LLMProviderModelRecord] {
         switch provider.kind {
-        case .openAICompatible:
+        case .openAICompatible, .openRouter:
             return try await fetchOpenAICompatibleModels(for: provider, bearerToken: bearerToken)
         case .anthropic:
             return try await fetchAnthropicModels(for: provider, bearerToken: bearerToken)
@@ -93,13 +93,14 @@ final class LLMProviderModelDiscoveryService {
         let (data, response) = try await URLSession.shared.data(for: request)
         try validate(response: response, data: data)
         let modelEntries = try parseOpenAIModelEntries(from: data)
+        let providerKind = provider.kind
         return modelEntries.map { model in
             LLMProviderModelRecord(
                 id: officialRecordID(for: model.modelID),
                 modelID: model.modelID,
                 displayName: model.displayName ?? model.modelID,
                 source: .official,
-                capabilities: .defaults(for: .openAICompatible, modelID: model.modelID)
+                capabilities: .defaults(for: providerKind, modelID: model.modelID)
             )
         }
     }

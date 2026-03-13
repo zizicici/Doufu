@@ -1069,31 +1069,131 @@ final class ProjectChatOrchestrator {
 
     /// Parse a `<memory-update>` JSON block from the model's response text.
     /// Returns the parsed update and the text with the block removed.
+    ///
+    /// Also handles the `<tool_call><function=memory-update>` variant that
+    /// some models emit when they misinterpret metadata instructions.
     private func extractMemoryUpdate(from text: String) -> (update: PatchMemoryUpdate?, cleanedText: String) {
+        // Standard format: <memory-update>{JSON}</memory-update>
         let openTag = "<memory-update>"
         let closeTag = "</memory-update>"
 
-        guard let openRange = text.range(of: openTag),
-              let closeRange = text.range(of: closeTag, range: openRange.upperBound..<text.endIndex)
-        else {
+        if let openRange = text.range(of: openTag),
+           let closeRange = text.range(of: closeTag, range: openRange.upperBound..<text.endIndex) {
+            let jsonString = String(text[openRange.upperBound..<closeRange.lowerBound])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+
+            var update: PatchMemoryUpdate?
+            if let data = jsonString.data(using: .utf8) {
+                update = try? JSONDecoder().decode(PatchMemoryUpdate.self, from: data)
+            }
+
+            var cleaned = text
+            cleaned.removeSubrange(openRange.lowerBound..<closeRange.upperBound)
+            cleaned = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+            return (update, cleaned)
+        }
+
+        // Fallback: <tool_call><function=memory-update><parameter=...>...</parameter></function></tool_call>
+        let (toolCallUpdate, afterToolCall) = extractMemoryUpdateFromToolCallBlocks(in: text)
+        return (toolCallUpdate, afterToolCall)
+    }
+
+    /// Parse `<tool_call>` blocks that some models emit for memory-update.
+    ///
+    /// Format:
+    /// ```
+    /// <tool_call> <function=memory-update>
+    ///   <parameter=objective>text</parameter>
+    ///   <parameter=todo_items>["a","b"]</parameter>
+    ///   <parameter=constraints>["c"]</parameter>
+    /// </function> </tool_call>
+    /// ```
+    private func extractMemoryUpdateFromToolCallBlocks(in text: String) -> (update: PatchMemoryUpdate?, cleanedText: String) {
+        guard let blockRegex = try? NSRegularExpression(
+            pattern: #"<tool_call>[\s\S]*?</tool_call>"#
+        ) else {
             return (nil, text)
         }
 
-        let jsonString = String(text[openRange.upperBound..<closeRange.lowerBound])
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-        var update: PatchMemoryUpdate?
-        if let data = jsonString.data(using: .utf8) {
-            update = try? JSONDecoder().decode(PatchMemoryUpdate.self, from: data)
+        let nsText = text as NSString
+        let fullRange = NSRange(location: 0, length: nsText.length)
+        let matches = blockRegex.matches(in: text, range: fullRange)
+        guard !matches.isEmpty else {
+            return (nil, text)
         }
 
-        // Remove the entire <memory-update>...</memory-update> block from the displayed text
-        let fullBlockRange = openRange.lowerBound..<closeRange.upperBound
-        var cleaned = text
-        cleaned.removeSubrange(fullBlockRange)
-        cleaned = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+        var bestUpdate: PatchMemoryUpdate?
 
-        return (update, cleaned)
+        // Try to parse memory-update from each <tool_call> block
+        let paramRegex = try? NSRegularExpression(
+            pattern: #"<parameter=(\w+)>([\s\S]*?)</parameter>"#
+        )
+
+        for match in matches {
+            let blockString = nsText.substring(with: match.range)
+            // Only parse blocks that target memory-update
+            guard blockString.contains("memory-update") || blockString.contains("memory_update") else {
+                continue
+            }
+            guard let paramRegex else { continue }
+
+            let blockNS = blockString as NSString
+            let blockRange = NSRange(location: 0, length: blockNS.length)
+            let paramMatches = paramRegex.matches(in: blockString, range: blockRange)
+
+            var objective: String?
+            var constraints: [String]?
+            var todoItems: [String]?
+
+            for pm in paramMatches {
+                guard pm.numberOfRanges >= 3 else { continue }
+                let key = blockNS.substring(with: pm.range(at: 1))
+                let value = blockNS.substring(with: pm.range(at: 2))
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+
+                switch key {
+                case "objective":
+                    objective = value.isEmpty ? nil : value
+                case "constraints":
+                    constraints = parseJSONStringArray(value)
+                case "todo_items":
+                    todoItems = parseJSONStringArray(value)
+                default:
+                    break
+                }
+            }
+
+            if objective != nil || constraints != nil || todoItems != nil {
+                bestUpdate = PatchMemoryUpdate(
+                    objective: objective,
+                    constraints: constraints,
+                    todoItems: todoItems
+                )
+            }
+        }
+
+        // Remove all <tool_call> blocks from the displayed text
+        let cleaned = blockRegex.stringByReplacingMatches(in: text, range: fullRange, withTemplate: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return (bestUpdate, cleaned)
+    }
+
+    /// Try to parse a string as a JSON array of strings.
+    /// Falls back to splitting by comma for plain text lists.
+    private func parseJSONStringArray(_ text: String) -> [String]? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty || trimmed == "[]" { return [] }
+
+        // Try JSON array first
+        if trimmed.hasPrefix("["),
+           let data = trimmed.data(using: .utf8),
+           let array = try? JSONDecoder().decode([String].self, from: data) {
+            return array
+        }
+
+        // Plain text: single item
+        return [trimmed]
     }
 
 }

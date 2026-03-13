@@ -137,6 +137,8 @@ final class ChatTaskCoordinator {
                     self.delegate?.coordinatorDidCancel(changedPaths: [])
                 }
             } catch let interrupted as AgentInterruptedError {
+                print("[Doufu] Task interrupted: \(interrupted.underlyingError.localizedDescription)")
+                print("[Doufu] Underlying error: \(interrupted.underlyingError)")
                 let partialPaths = interrupted.partialResult.changedPaths
                 ActiveTaskManager.shared.taskDidEnd(sessionID: sessionID)
                 if interrupted.underlyingError is CancellationError || self.didCancelCurrentRequest {
@@ -152,6 +154,8 @@ final class ChatTaskCoordinator {
                     self.delegate?.coordinatorDidFailWithError(interrupted.underlyingError, changedPaths: partialPaths)
                 }
             } catch {
+                print("[Doufu] Task error: \(error.localizedDescription)")
+                print("[Doufu] Error detail: \(error)")
                 ActiveTaskManager.shared.taskDidEnd(sessionID: sessionID)
                 if self.didCancelCurrentRequest {
                     PiPProgressManager.shared.taskDidCancel(sessionID: sessionID)

@@ -12,6 +12,7 @@ final class LLMStreamingClient {
     private lazy var openAIProvider = OpenAIProvider(configuration: configuration)
     private lazy var anthropicProvider = AnthropicProvider(configuration: configuration)
     private lazy var geminiProvider = GeminiProvider(configuration: configuration)
+    private lazy var openRouterProvider = OpenRouterProvider(configuration: configuration)
 
     init(configuration: ProjectChatConfiguration) {
         self.configuration = configuration
@@ -125,6 +126,7 @@ final class LLMStreamingClient {
         case .openAICompatible: return openAIProvider
         case .anthropic: return anthropicProvider
         case .googleGemini: return geminiProvider
+        case .openRouter: return openRouterProvider
         }
     }
 }

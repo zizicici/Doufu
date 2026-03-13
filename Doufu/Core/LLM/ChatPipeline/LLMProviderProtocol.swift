@@ -171,17 +171,14 @@ struct LLMProviderHelpers {
         responseBodyData: Data,
         requestLabel: String
     ) {
-#if DEBUG
-        print("========== [Doufu Debug] HTTP 请求失败 ==========")
-        print("Request Label: \(requestLabel)")
-        print("URL: \(request.url?.absoluteString ?? "nil")")
-        print("Status: \(httpResponse.statusCode)")
-        print("Response Headers: \(httpResponse.allHeaderFields)")
+        print("========== [Doufu] HTTP 请求失败 ==========")
+        print("[Doufu] Request Label: \(requestLabel)")
+        print("[Doufu] URL: \(request.url?.absoluteString ?? "nil")")
+        print("[Doufu] Status: \(httpResponse.statusCode)")
         if let responseText = String(data: responseBodyData, encoding: .utf8) {
-            print("Response Body: \(responseText.prefix(2000))")
+            print("[Doufu] Response Body: \(responseText.prefix(4000))")
         }
-        print("========== [Doufu Debug] 结束 ==========")
-#endif
+        print("========== [Doufu] 结束 ==========")
     }
 
     static func logSuccessfulResponse(

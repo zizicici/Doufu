@@ -5,44 +5,71 @@
 //  Created by Codex on 2026/03/04.
 //
 
+import AuthenticationServices
 import UIKit
 
-final class ProviderAuthMethodViewController: UITableViewController {
-    private let providerKind: LLMProviderRecord.Kind
-    private var availableMethods: [Method] {
-        switch providerKind {
-        case .anthropic, .googleGemini:
-            return [.apiKey]
-        case .openAICompatible:
-            return Method.allCases
-        }
-    }
+/// Presents authentication method choices for a provider kind.
+///
+/// Layout:
+///   Section 0 — API Key:        one cell  (manual API key)
+///   Section 1 — OAuth:          provider-specific OAuth options
+final class ProviderAuthMethodViewController: UITableViewController, ASWebAuthenticationPresentationContextProviding {
 
-    private enum Method: Int, CaseIterable {
+    // MARK: - Section / Row model
+
+    private enum SectionKind: Int, CaseIterable {
         case apiKey
         case oauth
+    }
+
+    private enum OAuthRow {
+        case openAI
+        case openRouter
 
         var title: String {
             switch self {
-            case .apiKey:
-                return String(localized: "providers.auth_method.api_key.title")
-            case .oauth:
-                return String(localized: "providers.auth_method.oauth.title")
+            case .openAI:
+                return "OpenAI"
+            case .openRouter:
+                return "OpenRouter"
             }
         }
 
         var subtitle: String {
             switch self {
-            case .apiKey:
-                return String(localized: "providers.auth_method.api_key.subtitle")
-            case .oauth:
-                return String(localized: "providers.auth_method.oauth.subtitle")
+            case .openAI:
+                return String(localized: "providers.auth_method.oauth.openai.subtitle")
+            case .openRouter:
+                return String(localized: "providers.auth_method.oauth.openrouter.subtitle")
             }
         }
-
     }
 
-    init(providerKind: LLMProviderRecord.Kind) {
+    // MARK: - Properties
+
+    private let store = LLMProviderSettingsStore.shared
+    private let providerKind: LLMProviderRecord.Kind
+    private lazy var oauthRows: [OAuthRow] = {
+        switch providerKind {
+        case .openAICompatible:
+            return [.openAI]
+        case .openRouter:
+            return [.openRouter]
+        default:
+            return []
+        }
+    }()
+    private var openAIOAuth: OpenAIOAuthService?
+    private var openRouterOAuth: OpenRouterOAuthService?
+
+    /// True while an OAuth flow is in progress — disables row selection.
+    private var isOAuthInProgress: Bool {
+        openAIOAuth != nil || openRouterOAuth != nil
+    }
+
+    // MARK: - Lifecycle
+
+    init(providerKind: LLMProviderRecord.Kind = .openAICompatible) {
         self.providerKind = providerKind
         super.init(style: .insetGrouped)
     }
@@ -55,23 +82,37 @@ final class ProviderAuthMethodViewController: UITableViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         tableView.backgroundColor = .doufuBackground
-        title = providerKind.displayName
+        title = String(localized: "providers.auth_method.title")
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "MethodCell")
     }
 
+    // MARK: - Data source
+
     override func numberOfSections(in tableView: UITableView) -> Int {
-        1
+        SectionKind.allCases.count
     }
 
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        availableMethods.count
+        guard let kind = SectionKind(rawValue: section) else { return 0 }
+        switch kind {
+        case .apiKey:
+            return 1
+        case .oauth:
+            return oauthRows.count
+        }
     }
 
     override func tableView(
         _ tableView: UITableView,
         titleForHeaderInSection section: Int
     ) -> String? {
-        String(localized: "providers.auth_method.section.title")
+        guard let kind = SectionKind(rawValue: section) else { return nil }
+        switch kind {
+        case .apiKey:
+            return String(localized: "providers.auth_method.api_key.title")
+        case .oauth:
+            return String(localized: "providers.auth_method.oauth.title")
+        }
     }
 
     override func tableView(
@@ -81,33 +122,188 @@ final class ProviderAuthMethodViewController: UITableViewController {
         let cell = tableView.dequeueReusableCell(withIdentifier: "MethodCell", for: indexPath)
         cell.accessoryType = .disclosureIndicator
 
-        guard indexPath.row < availableMethods.count else {
+        guard let section = SectionKind(rawValue: indexPath.section) else {
             return cell
         }
-        let method = availableMethods[indexPath.row]
 
         var configuration = cell.defaultContentConfiguration()
-        configuration.text = method.title
-        configuration.secondaryText = method.subtitle
+
+        switch section {
+        case .apiKey:
+            configuration.text = String(localized: "providers.auth_method.api_key.title")
+            configuration.secondaryText = String(localized: "providers.auth_method.api_key.subtitle")
+
+        case .oauth:
+            guard indexPath.row < oauthRows.count else { return cell }
+            let row = oauthRows[indexPath.row]
+            configuration.text = row.title
+            configuration.secondaryText = row.subtitle
+        }
+
         configuration.secondaryTextProperties.color = .secondaryLabel
         cell.contentConfiguration = configuration
         return cell
     }
 
+    // MARK: - Selection
+
+    override func tableView(_ tableView: UITableView, willSelectRowAt indexPath: IndexPath) -> IndexPath? {
+        if isOAuthInProgress {
+            return nil
+        }
+        return indexPath
+    }
+
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
-        guard indexPath.row < availableMethods.count else {
-            return
-        }
-        let method = availableMethods[indexPath.row]
+        guard let section = SectionKind(rawValue: indexPath.section) else { return }
 
-        switch method {
+        switch section {
         case .apiKey:
             let controller = ProviderAPIKeyFormViewController(providerKind: providerKind)
             navigationController?.pushViewController(controller, animated: true)
+
         case .oauth:
-            let controller = ProviderOAuthFormViewController(providerKind: providerKind)
-            navigationController?.pushViewController(controller, animated: true)
+            guard indexPath.row < oauthRows.count else { return }
+            let row = oauthRows[indexPath.row]
+            switch row {
+            case .openAI:
+                startOpenAIOAuth()
+            case .openRouter:
+                startOpenRouterOAuth()
+            }
         }
+    }
+
+    // MARK: - ASWebAuthenticationPresentationContextProviding
+
+    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+        view.window ?? ASPresentationAnchor()
+    }
+
+    // MARK: - OpenAI OAuth
+
+    private func startOpenAIOAuth() {
+        guard openAIOAuth == nil else { return }
+
+        let service = OpenAIOAuthService()
+        self.openAIOAuth = service
+
+        service.startWebAuth(contextProvider: self) { [weak self] result in
+            guard let self else { return }
+            self.openAIOAuth = nil
+
+            switch result {
+            case let .success(payload):
+                self.createOpenAIProvider(from: payload)
+
+            case let .failure(error):
+                if let serviceError = error as? OpenAIOAuthService.ServiceError,
+                   case .cancelled = serviceError {
+                    return
+                }
+                self.showError(message: error.localizedDescription)
+            }
+        }
+    }
+
+    private func createOpenAIProvider(from payload: OpenAIOAuthService.SignInResult) {
+        do {
+            let provider = try store.addProviderUsingOAuth(
+                kind: .openAICompatible,
+                label: "OpenAI",
+                baseURLString: payload.baseURLString,
+                autoAppendV1: payload.autoAppendV1,
+                bearerToken: payload.bearerToken,
+                chatGPTAccountID: payload.chatGPTAccountID,
+                modelID: nil
+            )
+            showSuccessAndPop(providerLabel: provider.label)
+        } catch {
+            showError(message: error.localizedDescription)
+        }
+    }
+
+    // MARK: - OpenRouter OAuth PKCE
+
+    private func startOpenRouterOAuth() {
+        guard openRouterOAuth == nil else { return }
+
+        let service = OpenRouterOAuthService()
+        self.openRouterOAuth = service
+
+        service.start(contextProvider: self) { [weak self] result in
+            guard let self else { return }
+            self.openRouterOAuth = nil
+
+            switch result {
+            case let .success(payload):
+                self.createOpenRouterProvider(apiKey: payload.apiKey)
+
+            case let .failure(error):
+                if let serviceError = error as? OpenRouterOAuthService.ServiceError,
+                   case .cancelled = serviceError
+                {
+                    return
+                }
+                self.showError(message: error.localizedDescription)
+            }
+        }
+    }
+
+    private func createOpenRouterProvider(apiKey: String) {
+        do {
+            let provider = try store.addProviderUsingAPIKey(
+                kind: providerKind,
+                label: "OpenRouter",
+                apiKey: apiKey,
+                baseURLString: providerKind.defaultBaseURLString,
+                autoAppendV1: providerKind.defaultAutoAppendV1,
+                modelID: nil
+            )
+            showSuccessAndPop(providerLabel: provider.label)
+        } catch {
+            showError(message: error.localizedDescription)
+        }
+    }
+
+    // MARK: - Alerts & navigation
+
+    private func showSuccessAndPop(providerLabel: String) {
+        let alert = UIAlertController(
+            title: String(localized: "providers.form.alert.add_success.title"),
+            message: String(
+                format: String(localized: "providers.form.alert.add_success.message_format"),
+                providerLabel
+            ),
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(
+            title: String(localized: "common.action.done"),
+            style: .default,
+            handler: { [weak self] _ in
+                self?.popToManageProviders()
+            }
+        ))
+        present(alert, animated: true)
+    }
+
+    private func showError(message: String) {
+        let alert = UIAlertController(
+            title: String(localized: "providers.form.alert.add_failed.title"),
+            message: message,
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
+        present(alert, animated: true)
+    }
+
+    private func popToManageProviders() {
+        guard let navigationController else { return }
+        if let target = navigationController.viewControllers.first(where: { $0 is ManageProvidersViewController }) {
+            navigationController.popToViewController(target, animated: true)
+            return
+        }
+        navigationController.popViewController(animated: true)
     }
 }

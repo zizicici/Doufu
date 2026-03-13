@@ -408,7 +408,7 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
 
     private func signInWithProvider() {
         switch providerKind {
-        case .openAICompatible:
+        case .openAICompatible, .openRouter:
             signInWithOpenAIOAuth()
         case .anthropic:
             guard let loginURL = oauthLoginURL(for: providerKind) else {
@@ -460,7 +460,7 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
 
         do {
             let autoAppendV1 = resolveAutoAppendV1()
-            let accountID = providerKind == .openAICompatible ? oauthDerivedChatGPTAccountID : nil
+            let accountID = (providerKind == .openAICompatible || providerKind == .openRouter) ? oauthDerivedChatGPTAccountID : nil
             if let editingProvider {
                 _ = try store.updateProviderUsingOAuth(
                     providerID: editingProvider.id,
@@ -635,7 +635,7 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
 
     private func signInButtonTitle() -> String {
         switch providerKind {
-        case .openAICompatible:
+        case .openAICompatible, .openRouter:
             return String(localized: "providers.oauth_form.button.sign_in")
         case .anthropic:
             return "Sign in with Anthropic"
@@ -646,7 +646,7 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
 
     private func oauthFooterText() -> String {
         switch providerKind {
-        case .openAICompatible:
+        case .openAICompatible, .openRouter:
             return String(localized: "providers.oauth_form.footer.oauth")
         case .anthropic:
             return "Login opens Anthropic account page. Paste OAuth bearer token below."
@@ -657,7 +657,7 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
 
     private func oauthLoginURL(for kind: LLMProviderRecord.Kind) -> URL? {
         switch kind {
-        case .openAICompatible:
+        case .openAICompatible, .openRouter:
             return URL(string: "https://auth.openai.com/log-in")
         case .anthropic:
             return URL(string: "https://console.anthropic.com/login")
