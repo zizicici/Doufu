@@ -16,99 +16,14 @@ final class SettingsViewController: UITableViewController {
     static let supportEmail = "doufu@zi.ci"
     static let appStoreID = "6760194187"
 
-    private enum Section: Int, CaseIterable {
-        case general
-        case llmProviders
-        case project
-        case contact
-        case appjun
-        case about
-    }
-
-    private enum GeneralRow: Int, CaseIterable {
-        case language
-    }
-
-    private enum ProjectRow: Int, CaseIterable {
-        case toolPermission
-        case pipProgress
-    }
-
-    private enum LLMProvidersRow: Int, CaseIterable {
-        case manageProviders
-        case defaultModel
-        case tokenUsage
-    }
-
-    private enum ContactRow: Int, CaseIterable {
-        case email
-        case xiaohongshu
-        case bilibili
-
-        var title: String {
-            switch self {
-            case .email:
-                return String(localized: "settings.contact.email")
-            case .xiaohongshu:
-                return String(localized: "settings.contact.xiaohongshu")
-            case .bilibili:
-                return String(localized: "settings.contact.bilibili")
-            }
-        }
-
-        var value: String? {
-            switch self {
-            case .email:
-                return SettingsViewController.supportEmail
-            case .xiaohongshu, .bilibili:
-                return "@App\u{541b}"
-            }
-        }
-    }
-
-    private enum AboutRow: Int, CaseIterable {
-        case specifications
-        case share
-        case review
-        case eula
-        case privacyPolicy
-
-        var title: String {
-            switch self {
-            case .specifications:
-                return String(localized: "settings.about.specifications")
-            case .share:
-                return String(localized: "settings.about.share")
-            case .review:
-                return String(localized: "settings.about.review")
-            case .eula:
-                return String(localized: "settings.about.eula")
-            case .privacyPolicy:
-                return String(localized: "settings.about.privacy_policy")
-            }
-        }
-    }
-
-    private enum AppJunRow: Hashable {
-        case app(AppInfo.App)
-        case more
-
-        var title: String {
-            switch self {
-            case .app:
-                return ""
-            case .more:
-                return String(localized: "settings.appjun.more")
-            }
-        }
-    }
-
     private let store = LLMProviderSettingsStore.shared
     private let projectStore = AppProjectStore.shared
     private let modelSelectionStore = ModelSelectionStateStore.shared
     private var modelSelectionObserver: NSObjectProtocol?
-    private var appJunRows: [AppJunRow] = []
-    private var aboutRows: [AboutRow] = [.specifications, .eula, .privacyPolicy]
+    private var appJunApps: [AppInfo.App] = []
+    private var aboutRows: [SettingsItemID] = [.specifications, .eula, .privacyPolicy]
+
+    private var diffableDataSource: UITableViewDiffableDataSource<SettingsSectionID, SettingsItemID>!
 
     init() {
         super.init(style: .insetGrouped)
@@ -133,43 +48,235 @@ final class SettingsViewController: UITableViewController {
         tableView.register(AppCell.self, forCellReuseIdentifier: "AppCell")
         tableView.rowHeight = UITableView.automaticDimension
         tableView.estimatedRowHeight = 50.0
+
+        configureDiffableDataSource()
+
         modelSelectionObserver = modelSelectionStore.addObserver { [weak self] change in
             guard case .appDefault = change.scope else { return }
-            self?.reloadDefaultModelRow()
+            self?.applySnapshot()
         }
-        refreshAppJunRows()
+        refreshAppJunApps()
+        applySnapshot()
     }
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        tableView.reloadData()
+        applySnapshot()
     }
 
-    override func numberOfSections(in tableView: UITableView) -> Int {
-        Section.allCases.count
+    // MARK: - Diffable DataSource
+
+    private func configureDiffableDataSource() {
+        diffableDataSource = UITableViewDiffableDataSource<SettingsSectionID, SettingsItemID>(
+            tableView: tableView
+        ) { [weak self] tableView, indexPath, itemID in
+            guard let self else { return UITableViewCell() }
+            return self.cell(for: tableView, indexPath: indexPath, itemID: itemID)
+        }
+        diffableDataSource.defaultRowAnimation = .none
     }
 
-    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        guard let section = Section(rawValue: section) else { return 0 }
-        switch section {
-        case .general:
-            return GeneralRow.allCases.count
-        case .llmProviders:
-            return LLMProvidersRow.allCases.count
-        case .project:
-            return ProjectRow.allCases.count
-        case .contact:
-            return ContactRow.allCases.count
-        case .appjun:
-            return appJunRows.count
-        case .about:
-            return aboutRows.count
+    private func cell(
+        for tableView: UITableView,
+        indexPath: IndexPath,
+        itemID: SettingsItemID
+    ) -> UITableViewCell {
+        switch itemID {
+        case .language(let secondaryText):
+            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
+            cell.accessoryType = .disclosureIndicator
+            var configuration = UIListContentConfiguration.valueCell()
+            configuration.text = String(localized: "settings.general.language.title")
+            configuration.secondaryText = secondaryText
+            cell.contentConfiguration = configuration
+            return cell
+
+        case .manageProviders(let secondaryText):
+            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
+            cell.accessoryType = .disclosureIndicator
+            var configuration = UIListContentConfiguration.valueCell()
+            configuration.text = String(localized: "settings.providers.title")
+            configuration.secondaryText = secondaryText
+            cell.contentConfiguration = configuration
+            return cell
+
+        case .defaultModel(let secondaryText):
+            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
+            cell.accessoryType = .disclosureIndicator
+            var configuration = UIListContentConfiguration.valueCell()
+            configuration.text = String(localized: "settings.default_model.title")
+            configuration.secondaryText = secondaryText
+            cell.contentConfiguration = configuration
+            return cell
+
+        case .tokenUsage:
+            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
+            cell.accessoryType = .disclosureIndicator
+            var configuration = UIListContentConfiguration.valueCell()
+            configuration.text = String(localized: "providers.manage.item.token_usage")
+            cell.contentConfiguration = configuration
+            return cell
+
+        case .toolPermission(let secondaryText):
+            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
+            cell.accessoryType = .disclosureIndicator
+            var configuration = UIListContentConfiguration.valueCell()
+            configuration.text = String(localized: "settings.chat.tool_permission.title")
+            configuration.secondaryText = secondaryText
+            cell.contentConfiguration = configuration
+            return cell
+
+        case .pipProgress(let secondaryText):
+            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
+            cell.accessoryType = .disclosureIndicator
+            var configuration = UIListContentConfiguration.valueCell()
+            configuration.text = String(localized: "settings.chat.pip_progress.title")
+            configuration.secondaryText = secondaryText
+            cell.contentConfiguration = configuration
+            return cell
+
+        case .email:
+            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
+            cell.accessoryType = .disclosureIndicator
+            var configuration = UIListContentConfiguration.valueCell()
+            configuration.text = String(localized: "settings.contact.email")
+            configuration.secondaryText = Self.supportEmail
+            cell.contentConfiguration = configuration
+            return cell
+
+        case .xiaohongshu:
+            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
+            cell.accessoryType = .disclosureIndicator
+            var configuration = UIListContentConfiguration.valueCell()
+            configuration.text = String(localized: "settings.contact.xiaohongshu")
+            configuration.secondaryText = "@App\u{541b}"
+            cell.contentConfiguration = configuration
+            return cell
+
+        case .bilibili:
+            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
+            cell.accessoryType = .disclosureIndicator
+            var configuration = UIListContentConfiguration.valueCell()
+            configuration.text = String(localized: "settings.contact.bilibili")
+            configuration.secondaryText = "@App\u{541b}"
+            cell.contentConfiguration = configuration
+            return cell
+
+        case .app(let storeId):
+            let cell = tableView.dequeueReusableCell(withIdentifier: "AppCell", for: indexPath)
+            if let appCell = cell as? AppCell,
+               let app = appJunApps.first(where: { $0.storeId == storeId }) {
+                appCell.update(app)
+            }
+            cell.accessoryType = .disclosureIndicator
+            return cell
+
+        case .moreApps:
+            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
+            cell.accessoryType = .disclosureIndicator
+            var configuration = UIListContentConfiguration.valueCell()
+            configuration.text = String(localized: "settings.appjun.more")
+            cell.contentConfiguration = configuration
+            return cell
+
+        case .specifications:
+            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
+            cell.accessoryType = .disclosureIndicator
+            var configuration = UIListContentConfiguration.valueCell()
+            configuration.text = String(localized: "settings.about.specifications")
+            cell.contentConfiguration = configuration
+            return cell
+
+        case .share:
+            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
+            cell.accessoryType = .disclosureIndicator
+            var configuration = UIListContentConfiguration.valueCell()
+            configuration.text = String(localized: "settings.about.share")
+            cell.contentConfiguration = configuration
+            return cell
+
+        case .review:
+            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
+            cell.accessoryType = .disclosureIndicator
+            var configuration = UIListContentConfiguration.valueCell()
+            configuration.text = String(localized: "settings.about.review")
+            cell.contentConfiguration = configuration
+            return cell
+
+        case .eula:
+            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
+            cell.accessoryType = .disclosureIndicator
+            var configuration = UIListContentConfiguration.valueCell()
+            configuration.text = String(localized: "settings.about.eula")
+            cell.contentConfiguration = configuration
+            return cell
+
+        case .privacyPolicy:
+            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
+            cell.accessoryType = .disclosureIndicator
+            var configuration = UIListContentConfiguration.valueCell()
+            configuration.text = String(localized: "settings.about.privacy_policy")
+            cell.contentConfiguration = configuration
+            return cell
         }
     }
 
-    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
-        guard let section = Section(rawValue: section) else { return nil }
-        switch section {
+    // MARK: - Snapshot
+
+    private func buildSnapshot() -> NSDiffableDataSourceSnapshot<SettingsSectionID, SettingsItemID> {
+        var snapshot = NSDiffableDataSourceSnapshot<SettingsSectionID, SettingsItemID>()
+        snapshot.appendSections([.general, .llmProviders, .project, .contact, .appjun, .about])
+
+        // General
+        snapshot.appendItems([
+            .language(secondaryText: currentLanguageDisplayName()),
+        ], toSection: .general)
+
+        // LLM Providers
+        let providersCount = store.loadProviders().count
+        snapshot.appendItems([
+            .manageProviders(secondaryText: String(
+                format: String(localized: "settings.manage_providers.configured_count_format"),
+                providersCount
+            )),
+            .defaultModel(secondaryText: defaultModelDisplayName()),
+            .tokenUsage,
+        ], toSection: .llmProviders)
+
+        // Project
+        let mode = projectStore.loadAppToolPermissionMode()
+        snapshot.appendItems([
+            .toolPermission(secondaryText: ToolPermissionPickerViewController.displayName(for: mode)),
+            .pipProgress(secondaryText: PiPProgressManager.shared.isEnabled
+                ? String(localized: "settings.common.on")
+                : String(localized: "settings.common.off")),
+        ], toSection: .project)
+
+        // Contact
+        snapshot.appendItems([.email, .xiaohongshu, .bilibili], toSection: .contact)
+
+        // App Jun
+        var appJunItems: [SettingsItemID] = appJunApps.map { .app(storeId: $0.storeId) }
+        appJunItems.append(.moreApps)
+        snapshot.appendItems(appJunItems, toSection: .appjun)
+
+        // About
+        snapshot.appendItems(aboutRows, toSection: .about)
+
+        return snapshot
+    }
+
+    private func applySnapshot() {
+        var snapshot = buildSnapshot()
+        snapshot.reconfigureItems(snapshot.itemIdentifiers)
+        diffableDataSource.apply(snapshot, animatingDifferences: false)
+    }
+
+    // MARK: - Section Headers & Footers
+
+    override func tableView(_ tableView: UITableView, titleForHeaderInSection sectionIndex: Int) -> String? {
+        guard let sectionID = diffableDataSource.sectionIdentifier(for: sectionIndex) else { return nil }
+        switch sectionID {
         case .general:
             return String(localized: "settings.section.general")
         case .llmProviders:
@@ -185,9 +292,9 @@ final class SettingsViewController: UITableViewController {
         }
     }
 
-    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
-        guard let section = Section(rawValue: section) else { return nil }
-        switch section {
+    override func tableView(_ tableView: UITableView, titleForFooterInSection sectionIndex: Int) -> String? {
+        guard let sectionID = diffableDataSource.sectionIdentifier(for: sectionIndex) else { return nil }
+        switch sectionID {
         case .llmProviders:
             return String(localized: "settings.section.llm_providers.footer")
         case .general, .project, .contact, .appjun, .about:
@@ -195,156 +302,78 @@ final class SettingsViewController: UITableViewController {
         }
     }
 
-    override func tableView(
-        _ tableView: UITableView,
-        cellForRowAt indexPath: IndexPath
-    ) -> UITableViewCell {
-        guard let section = Section(rawValue: indexPath.section) else {
-            return tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
-        }
-
-        switch section {
-        case .general:
-            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
-            cell.accessoryType = .disclosureIndicator
-            var configuration = UIListContentConfiguration.valueCell()
-            configuration.text = String(localized: "settings.general.language.title")
-            configuration.secondaryText = currentLanguageDisplayName()
-            cell.contentConfiguration = configuration
-            return cell
-
-        case .llmProviders:
-            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
-            cell.accessoryType = .disclosureIndicator
-            guard let row = LLMProvidersRow(rawValue: indexPath.row) else { return cell }
-            var configuration = UIListContentConfiguration.valueCell()
-            switch row {
-            case .manageProviders:
-                let providersCount = store.loadProviders().count
-                configuration.text = String(localized: "settings.providers.title")
-                configuration.secondaryText = String(
-                    format: String(localized: "settings.manage_providers.configured_count_format"),
-                    providersCount
-                )
-            case .defaultModel:
-                configuration.text = String(localized: "settings.default_model.title")
-                configuration.secondaryText = defaultModelDisplayName()
-            case .tokenUsage:
-                configuration.text = String(localized: "providers.manage.item.token_usage")
-            }
-            cell.contentConfiguration = configuration
-            return cell
-
-        case .project:
-            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
-            cell.accessoryType = .disclosureIndicator
-            guard let row = ProjectRow(rawValue: indexPath.row) else { return cell }
-            var configuration = UIListContentConfiguration.valueCell()
-            switch row {
-            case .toolPermission:
-                let mode = projectStore.loadAppToolPermissionMode()
-                configuration.text = String(localized: "settings.chat.tool_permission.title")
-                configuration.secondaryText = ToolPermissionPickerViewController.displayName(for: mode)
-            case .pipProgress:
-                configuration.text = String(localized: "settings.chat.pip_progress.title")
-                configuration.secondaryText = PiPProgressManager.shared.isEnabled
-                    ? String(localized: "settings.common.on")
-                    : String(localized: "settings.common.off")
-            }
-            cell.contentConfiguration = configuration
-            return cell
-
-        case .contact:
-            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
-            cell.accessoryType = .disclosureIndicator
-            guard let row = ContactRow(rawValue: indexPath.row) else { return cell }
-            var configuration = UIListContentConfiguration.valueCell()
-            configuration.text = row.title
-            configuration.secondaryText = row.value
-            cell.contentConfiguration = configuration
-            return cell
-
-        case .appjun:
-            let item = appJunRows[indexPath.row]
-            switch item {
-            case .app(let app):
-                let cell = tableView.dequeueReusableCell(withIdentifier: "AppCell", for: indexPath)
-                if let appCell = cell as? AppCell {
-                    appCell.update(app)
-                }
-                cell.accessoryType = .disclosureIndicator
-                return cell
-            case .more:
-                let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
-                cell.accessoryType = .disclosureIndicator
-                var configuration = UIListContentConfiguration.valueCell()
-                configuration.text = item.title
-                cell.contentConfiguration = configuration
-                return cell
-            }
-
-        case .about:
-            let row = aboutRows[indexPath.row]
-            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
-            cell.accessoryType = .disclosureIndicator
-            var configuration = UIListContentConfiguration.valueCell()
-            configuration.text = row.title
-            cell.contentConfiguration = configuration
-            return cell
-        }
-    }
+    // MARK: - Selection
 
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
-        guard let section = Section(rawValue: indexPath.section) else { return }
+        guard let itemID = diffableDataSource.itemIdentifier(for: indexPath) else { return }
 
-        switch section {
-        case .general:
+        switch itemID {
+        case .language:
             if let url = URL(string: UIApplication.openSettingsURLString) {
                 UIApplication.shared.open(url)
             }
 
-        case .llmProviders:
-            guard let row = LLMProvidersRow(rawValue: indexPath.row) else { return }
-            switch row {
-            case .manageProviders:
-                let controller = ManageProvidersViewController()
-                navigationController?.pushViewController(controller, animated: true)
-            case .defaultModel:
-                let controller = DefaultModelSelectionViewController()
-                navigationController?.pushViewController(controller, animated: true)
-            case .tokenUsage:
-                let controller = TokenUsageViewController()
-                navigationController?.pushViewController(controller, animated: true)
-            }
+        case .manageProviders:
+            let controller = ManageProvidersViewController()
+            navigationController?.pushViewController(controller, animated: true)
 
-        case .project:
-            guard let row = ProjectRow(rawValue: indexPath.row) else { return }
-            switch row {
-            case .toolPermission:
-                let controller = makeToolPermissionPicker()
-                navigationController?.pushViewController(controller, animated: true)
-            case .pipProgress:
-                let controller = makePiPProgressPicker()
-                navigationController?.pushViewController(controller, animated: true)
-            }
+        case .defaultModel:
+            let controller = DefaultModelSelectionViewController()
+            navigationController?.pushViewController(controller, animated: true)
 
-        case .contact:
-            guard let row = ContactRow(rawValue: indexPath.row) else { return }
-            handleContact(row)
+        case .tokenUsage:
+            let controller = TokenUsageViewController()
+            navigationController?.pushViewController(controller, animated: true)
 
-        case .appjun:
-            let item = appJunRows[indexPath.row]
-            switch item {
-            case .app(let app):
+        case .toolPermission:
+            let controller = makeToolPermissionPicker()
+            navigationController?.pushViewController(controller, animated: true)
+
+        case .pipProgress:
+            let controller = makePiPProgressPicker()
+            navigationController?.pushViewController(controller, animated: true)
+
+        case .email:
+            handleContactEmail()
+
+        case .xiaohongshu:
+            handleContactXiaohongshu()
+
+        case .bilibili:
+            handleContactBilibili()
+
+        case .app(let storeId):
+            if let app = appJunApps.first(where: { $0.storeId == storeId }) {
                 openStorePage(for: app)
-            case .more:
-                openStoreDeveloperPage()
             }
 
-        case .about:
-            guard let row = AboutRow(rawValue: indexPath.row) else { return }
-            handleAbout(row)
+        case .moreApps:
+            openStoreDeveloperPage()
+
+        case .specifications:
+            let controller = SettingsSpecificationsViewController()
+            navigationController?.pushViewController(controller, animated: true)
+
+        case .share:
+            guard let url = URL(string: "https://apps.apple.com/app/id\(Self.appStoreID)") else { return }
+            let activityVC = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+            present(activityVC, animated: true)
+
+        case .review:
+            guard let url = URL(string: "itms-apps://itunes.apple.com/app/id\(Self.appStoreID)?action=write-review"),
+                  UIApplication.shared.canOpenURL(url) else { return }
+            UIApplication.shared.open(url)
+
+        case .eula:
+            guard let url = URL(string: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/") else { return }
+            let safari = SFSafariViewController(url: url)
+            present(safari, animated: true)
+
+        case .privacyPolicy:
+            guard let url = URL(string: "https://medium.com/@zizicici/privacy-policy-for-doufu-app-68ccda0d3190") else { return }
+            let safari = SFSafariViewController(url: url)
+            present(safari, animated: true)
         }
     }
 
@@ -374,20 +403,6 @@ final class SettingsViewController: UITableViewController {
         })
         let modelName = model?.effectiveDisplayName ?? selection.modelRecordID
         return provider.label + " · " + modelName
-    }
-
-    private func reloadDefaultModelRow() {
-        guard isViewLoaded else { return }
-        let indexPath = IndexPath(
-            row: LLMProvidersRow.defaultModel.rawValue,
-            section: Section.llmProviders.rawValue
-        )
-        guard tableView.numberOfSections > indexPath.section,
-              tableView.numberOfRows(inSection: indexPath.section) > indexPath.row
-        else {
-            return
-        }
-        tableView.reloadRows(at: [indexPath], with: .none)
     }
 
     // MARK: - Language
@@ -426,13 +441,11 @@ final class SettingsViewController: UITableViewController {
         )
     }
 
-
     // MARK: - App Jun
 
-    private func refreshAppJunRows() {
+    private func refreshAppJunApps() {
         let allApps: [AppInfo.App] = [.moontake, .lemon, .offDay, .one, .pigeon, .pin, .coconut, .tagDay]
-        let selected = Array(allApps.shuffled().prefix(3))
-        appJunRows = selected.map { .app($0) } + [.more]
+        appJunApps = Array(allApps.shuffled().prefix(3))
     }
 
     private func openStorePage(for app: AppInfo.App) {
@@ -457,48 +470,23 @@ final class SettingsViewController: UITableViewController {
 
     // MARK: - Contact
 
-    private func handleContact(_ row: ContactRow) {
-        switch row {
-        case .email:
-            guard let encoded = "mailto:\(Self.supportEmail)".addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-                  let url = URL(string: encoded),
-                  UIApplication.shared.canOpenURL(url) else { return }
-            UIApplication.shared.open(url)
-        case .xiaohongshu:
-            guard let url = URL(string: "https://www.xiaohongshu.com/user/profile/63f05fc5000000001001e524") else { return }
-            let safari = SFSafariViewController(url: url)
-            present(safari, animated: true)
-        case .bilibili:
-            guard let url = URL(string: "https://space.bilibili.com/4969209") else { return }
-            let safari = SFSafariViewController(url: url)
-            present(safari, animated: true)
-        }
+    private func handleContactEmail() {
+        guard let encoded = "mailto:\(Self.supportEmail)".addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let url = URL(string: encoded),
+              UIApplication.shared.canOpenURL(url) else { return }
+        UIApplication.shared.open(url)
     }
 
-    // MARK: - About
+    private func handleContactXiaohongshu() {
+        guard let url = URL(string: "https://www.xiaohongshu.com/user/profile/63f05fc5000000001001e524") else { return }
+        let safari = SFSafariViewController(url: url)
+        present(safari, animated: true)
+    }
 
-    private func handleAbout(_ row: AboutRow) {
-        switch row {
-        case .specifications:
-            let controller = SettingsSpecificationsViewController()
-            navigationController?.pushViewController(controller, animated: true)
-        case .share:
-            guard let url = URL(string: "https://apps.apple.com/app/id\(Self.appStoreID)") else { return }
-            let activityVC = UIActivityViewController(activityItems: [url], applicationActivities: nil)
-            present(activityVC, animated: true)
-        case .review:
-            guard let url = URL(string: "itms-apps://itunes.apple.com/app/id\(Self.appStoreID)?action=write-review"),
-                  UIApplication.shared.canOpenURL(url) else { return }
-            UIApplication.shared.open(url)
-        case .eula:
-            guard let url = URL(string: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/") else { return }
-            let safari = SFSafariViewController(url: url)
-            present(safari, animated: true)
-        case .privacyPolicy:
-            guard let url = URL(string: "https://medium.com/@zizicici/privacy-policy-for-doufu-app-68ccda0d3190") else { return }
-            let safari = SFSafariViewController(url: url)
-            present(safari, animated: true)
-        }
+    private func handleContactBilibili() {
+        guard let url = URL(string: "https://space.bilibili.com/4969209") else { return }
+        let safari = SFSafariViewController(url: url)
+        present(safari, animated: true)
     }
 }
 
