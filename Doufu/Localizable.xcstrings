@@ -4290,6 +4290,64 @@
         }
       }
     },
+    "import.error.multiple_files.message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Only one archive can be imported at a time. The first file will be imported."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "一次只能导入一个归档文件，将导入第一个文件。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "一次只能匯入一個封存檔案，將匯入第一個檔案。"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "一次只能匯入一個封存檔案，將匯入第一個檔案。"
+          }
+        }
+      }
+    },
+    "import.error.multiple_files.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Multiple Files"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "多个文件"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "多個檔案"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "多個檔案"
+          }
+        }
+      }
+    },
     "import.error.unsupported_extension" : {
       "extractionState" : "manual",
       "localizations" : {

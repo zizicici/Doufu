@@ -19,13 +19,6 @@ nonisolated final class ProjectArchiveExportService {
             case .doufull: return "doufull"
             }
         }
-
-        var fileSuffix: String {
-            switch self {
-            case .doufu: return "code"
-            case .doufull: return "project-backup"
-            }
-        }
     }
 
     struct ExportResult {
@@ -119,7 +112,7 @@ nonisolated final class ProjectArchiveExportService {
         }
 
         let exportFolderURL = stagingRootURL
-            .appendingPathComponent("\(safeArchiveBaseName(from: projectName))-code", isDirectory: true)
+            .appendingPathComponent(safeArchiveBaseName(from: projectName), isDirectory: true)
         let exportAppURL = exportFolderURL.appendingPathComponent("App", isDirectory: true)
 
         try fileManager.createDirectory(at: exportFolderURL, withIntermediateDirectories: true)
@@ -129,7 +122,6 @@ nonisolated final class ProjectArchiveExportService {
 
         let archiveURL = makeArchiveURL(
             projectName: projectName,
-            suffix: ArchiveKind.doufu.fileSuffix,
             fileExtension: ArchiveKind.doufu.fileExtension,
             fileManager: fileManager
         )
@@ -164,7 +156,7 @@ nonisolated final class ProjectArchiveExportService {
         }
 
         let exportFolderURL = stagingRootURL
-            .appendingPathComponent("\(safeArchiveBaseName(from: projectName))-project-backup", isDirectory: true)
+            .appendingPathComponent(safeArchiveBaseName(from: projectName), isDirectory: true)
         let exportAppURL = exportFolderURL.appendingPathComponent("App", isDirectory: true)
         let exportAppDataURL = exportFolderURL.appendingPathComponent("AppData", isDirectory: true)
 
@@ -186,7 +178,6 @@ nonisolated final class ProjectArchiveExportService {
 
         let archiveURL = makeArchiveURL(
             projectName: projectName,
-            suffix: ArchiveKind.doufull.fileSuffix,
             fileExtension: ArchiveKind.doufull.fileExtension,
             fileManager: fileManager
         )
@@ -214,13 +205,11 @@ nonisolated final class ProjectArchiveExportService {
 
     private static func makeArchiveURL(
         projectName: String,
-        suffix: String,
         fileExtension: String,
         fileManager: FileManager
     ) -> URL {
-        let uniqueID = UUID().uuidString.prefix(8).lowercased()
         return fileManager.temporaryDirectory
-            .appendingPathComponent("\(safeArchiveBaseName(from: projectName))-\(suffix)-\(uniqueID).\(fileExtension)")
+            .appendingPathComponent("\(safeArchiveBaseName(from: projectName)).\(fileExtension)")
     }
 
     private static func safeArchiveBaseName(from projectName: String) -> String {
