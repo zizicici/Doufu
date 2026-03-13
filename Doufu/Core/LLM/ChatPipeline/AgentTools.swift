@@ -391,7 +391,7 @@ final class AgentToolProvider {
                 "properties": .object([
                     "path": .object([
                         "type": .string("string"),
-                        "description": .string("Directory path relative to project root. Use empty string or '.' for the project root.")
+                        "description": .string("Directory path relative to the working directory. Use '.' for the project root. All project files (index.html, style.css, etc.) are directly in the root.")
                     ])
                 ]),
                 "required": .array([.string("path")]),
