@@ -7,8 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		1425E8252F615257009A38B0 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 1425E8242F615257009A38B0 /* GRDB */; };
 		1425E85D2F62DF77009A38B0 /* AppInfo in Frameworks */ = {isa = PBXBuildFile; productRef = 1425E85C2F62DF77009A38B0 /* AppInfo */; };
+		1425EA302F644A84009A38B0 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 1425EA2F2F644A84009A38B0 /* GRDB */; };
 		14A5B8432F5D305000758F69 /* SwiftGitX in Frameworks */ = {isa = PBXBuildFile; productRef = 14C0A0022F5CC00000AA1001 /* SwiftGitX */; };
 		14A5BA102F5D65D200758F69 /* Markdown in Frameworks */ = {isa = PBXBuildFile; productRef = 14D0MD022F5D000000AA2002 /* Markdown */; };
 		14B7E4342F5A8AB200BB3324 /* Runestone in Frameworks */ = {isa = PBXBuildFile; productRef = 14B7E4332F5A8AB200BB3324 /* Runestone */; };
@@ -70,9 +70,9 @@
 				14A5BA102F5D65D200758F69 /* Markdown in Frameworks */,
 				14A5B8432F5D305000758F69 /* SwiftGitX in Frameworks */,
 				14B7E4342F5A8AB200BB3324 /* Runestone in Frameworks */,
-				1425E8252F615257009A38B0 /* GRDB in Frameworks */,
 				14B7E5492F5AB2C100BB3324 /* TreeSitterCSSRunestone in Frameworks */,
 				14B7E5482F5AB2C100BB3324 /* TreeSitterHTMLRunestone in Frameworks */,
+				1425EA302F644A84009A38B0 /* GRDB in Frameworks */,
 				14B7E5442F5AB2C100BB3324 /* TreeSitterJavaScriptRunestone in Frameworks */,
 				14B7E5472F5AB2C100BB3324 /* TreeSitterJSONRunestone in Frameworks */,
 				14B7E5612F5AB2C100BB3324 /* TreeSitterMarkdownRunestone in Frameworks */,
@@ -99,7 +99,6 @@
 			children = (
 				1FACF42D50224C986996F5C7 /* IndexedDBShimTests.swift */,
 			);
-			name = DoufuTests;
 			path = DoufuTests;
 			sourceTree = "<group>";
 		};
@@ -187,8 +186,8 @@
 				14B7E54C2F5AB2C100BB3324 /* TreeSitterTSXRunestone */,
 				14B7E54B2F5AB2C100BB3324 /* TreeSitterTypeScriptRunestone */,
 				14D0MD022F5D000000AA2002 /* Markdown */,
-				1425E8242F615257009A38B0 /* GRDB */,
 				1425E85C2F62DF77009A38B0 /* AppInfo */,
+				1425EA2F2F644A84009A38B0 /* GRDB */,
 			);
 			productName = Doufu;
 			productReference = 450D41E02F40B7430025E0BB /* Doufu.app */;
@@ -226,8 +225,8 @@
 				14B7E5642F5AB2C100BB3324 /* XCRemoteSwiftPackageReference "TreeSitterLanguages" */,
 				14C0A0012F5CC00000AA1001 /* XCRemoteSwiftPackageReference "SwiftGitX" */,
 				14D0MD012F5D000000AA2002 /* XCRemoteSwiftPackageReference "swift-markdown" */,
-				1425E8232F615257009A38B0 /* XCRemoteSwiftPackageReference "GRDB.swift" */,
 				1425E85B2F62DF77009A38B0 /* XCRemoteSwiftPackageReference "AppInfo" */,
+				1425EA2E2F644A83009A38B0 /* XCRemoteSwiftPackageReference "GRDB" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 450D41E12F40B7430025E0BB /* Products */;
@@ -550,20 +549,20 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		1425E8232F615257009A38B0 /* XCRemoteSwiftPackageReference "GRDB.swift" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/groue/GRDB.swift";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 7.10.0;
-			};
-		};
 		1425E85B2F62DF77009A38B0 /* XCRemoteSwiftPackageReference "AppInfo" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/zizicici/AppInfo";
 			requirement = {
 				kind = upToNextMajorVersion;
 				minimumVersion = 1.3.0;
+			};
+		};
+		1425EA2E2F644A83009A38B0 /* XCRemoteSwiftPackageReference "GRDB" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/groue/GRDB.swift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 7.10.0;
 			};
 		};
 		14B7E4322F5A8AB200BB3324 /* XCRemoteSwiftPackageReference "Runestone" */ = {
@@ -601,15 +600,15 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		1425E8242F615257009A38B0 /* GRDB */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 1425E8232F615257009A38B0 /* XCRemoteSwiftPackageReference "GRDB.swift" */;
-			productName = GRDB;
-		};
 		1425E85C2F62DF77009A38B0 /* AppInfo */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 1425E85B2F62DF77009A38B0 /* XCRemoteSwiftPackageReference "AppInfo" */;
 			productName = AppInfo;
+		};
+		1425EA2F2F644A84009A38B0 /* GRDB */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 1425EA2E2F644A83009A38B0 /* XCRemoteSwiftPackageReference "GRDB" */;
+			productName = GRDB;
 		};
 		14B7E4332F5A8AB200BB3324 /* Runestone */ = {
 			isa = XCSwiftPackageProductDependency;

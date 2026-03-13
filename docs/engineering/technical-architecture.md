@@ -32,6 +32,8 @@
    - `ProjectChangeCenter`：project-scoped 变更事件中心，统一广播 `filesChanged`、`checkpointRestored`、`renamed`、`descriptionChanged`、`toolPermissionChanged`、`modelSelectionChanged`；其中 `filesChanged` / `checkpointRestored` 同步维护 `updatedAt`。
    - `ProjectActivityStore`：project-scoped 活动状态源，维护 `idle / building / newVersionAvailable / needsConfirmation / error`，供 Home / Workspace / Chat 共享消费。
    - `ProjectGitService`：项目级 Git 初始化、agent loop 前自动保存、检查点创建、历史恢复与 undo helper。
+   - `ProjectArchiveImportService`：`.doufu` / `.doufull` 导入服务；负责 ZIP 安全解包、结构校验、创建新项目并落盘 `App/`、`AppData/`。
+   - `ProjectArchiveExportService`：`.doufu` / `.doufull` 导出服务；负责按格式打包 `App/` 或 `App/ + AppData/`。
 4. `Doufu/Core/Chat/`
    - `ChatSessionManager`：project-scoped ChatSession 注册表，允许 Workspace 关闭后会话在当前进程内继续执行。
    - `ChatSession`：项目级长生命周期聊天运行时，持有线程/消息状态、执行协调、pending tool confirmation continuation，并消费 `ProjectChangeCenter` 事件。
@@ -155,6 +157,12 @@
 - `App/`：代码文件（index.html, style.css, script.js, AGENTS.md, DOUFU.MD）+ `.git`
 - `AppData/`：用户数据（localStorage.json）— Git 检查点恢复时保留
 - `preview.jpg`：项目预览图（运行页截图写入），位于项目根目录
+
+### 项目归档格式（v1）
+
+- `.doufu`：标准 ZIP 语义；导出/导入内容仅包含 `App/`。
+- `.doufull`：标准 ZIP 语义；导出/导入内容包含 `App/` + `AppData/`（不包含 `preview.jpg`）。
+- 导入按扩展名识别格式；同一归档允许重复导入，每次都会创建新项目 UUID。
 
 ### Git
 

@@ -7,6 +7,7 @@
 
 import UIKit
 import GRDB
+import UniformTypeIdentifiers
 
 private struct HomeProjectItem: Hashable {
     let id: String
@@ -36,10 +37,12 @@ final class HomeViewController: UIViewController {
     private let projectActivityStore = ProjectActivityStore.shared
     private let projectChangeCenter = ProjectChangeCenter.shared
     private let coordinator = ProjectLifecycleCoordinator.shared
+    private let archiveImportService = ProjectArchiveImportService.shared
     private let projectTransitionDelegate = ProjectOpenTransitionDelegate()
     private var selectedCellIndexPath: IndexPath?
     private var projectActivityObserver: NSObjectProtocol?
     private var projectChangeObserver: NSObjectProtocol?
+    private var importTask: Task<Void, Never>?
 
     private lazy var collectionView: UICollectionView = {
         let layout = UICollectionViewFlowLayout()
@@ -104,6 +107,7 @@ final class HomeViewController: UIViewController {
     }
 
     deinit {
+        importTask?.cancel()
         if let projectActivityObserver {
             NotificationCenter.default.removeObserver(projectActivityObserver)
         }
@@ -120,6 +124,17 @@ final class HomeViewController: UIViewController {
     private func configureNavigation() {
         title = String(localized: "home.title")
         navigationController?.navigationBar.prefersLargeTitles = false
+
+        navigationItem.leftBarButtonItem = UIBarButtonItem(
+            image: UIImage(systemName: "square.and.arrow.down"),
+            style: .plain,
+            target: self,
+            action: #selector(didTapImportButton)
+        )
+        navigationItem.leftBarButtonItem?.accessibilityLabel = String(
+            localized: "home.menu.import_project",
+            defaultValue: "Import Project"
+        )
 
         navigationItem.rightBarButtonItem = UIBarButtonItem(
             image: UIImage(systemName: "ellipsis"),
@@ -169,6 +184,77 @@ final class HomeViewController: UIViewController {
     private func didTapMoreButton() {
         let controller = SettingsViewController()
         navigationController?.pushViewController(controller, animated: true)
+    }
+
+    @objc
+    private func didTapImportButton() {
+        presentImportPicker()
+    }
+
+    private func presentImportPicker() {
+        let picker = UIDocumentPickerViewController(
+            forOpeningContentTypes: Self.supportedImportTypes,
+            asCopy: true
+        )
+        picker.allowsMultipleSelection = false
+        picker.delegate = self
+        picker.modalPresentationStyle = .formSheet
+        present(picker, animated: true)
+    }
+
+    private func importProjectArchive(from url: URL) {
+        importTask?.cancel()
+        importTask = Task { [weak self] in
+            guard let self else { return }
+            defer { self.importTask = nil }
+
+            do {
+                let result = try await self.archiveImportService.importArchive(from: url)
+                guard !Task.isCancelled else { return }
+                self.reloadProjects()
+                self.presentImportSuccessAlert(for: result.project)
+            } catch is CancellationError {
+                return
+            } catch {
+                self.showPlaceholderAlert(
+                    title: String(
+                        localized: "home.alert.import_failed.title",
+                        defaultValue: "Import Failed"
+                    ),
+                    message: error.localizedDescription
+                )
+            }
+        }
+    }
+
+    private static let supportedImportTypes: [UTType] = [
+        UTType(exportedAs: "com.zizicici.doufu.archive"),
+        UTType(exportedAs: "com.zizicici.doufull.archive"),
+    ]
+
+    private func presentImportSuccessAlert(for project: AppProjectRecord) {
+        let alert = UIAlertController(
+            title: String(
+                localized: "home.alert.import_success.title",
+                defaultValue: "Import Complete"
+            ),
+            message: String(
+                format: String(
+                    localized: "home.alert.import_success.message_format",
+                    defaultValue: "Imported as a new project: \"%@\"."
+                ),
+                project.name
+            ),
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: String(localized: "common.action.cancel"), style: .cancel))
+        alert.addAction(UIAlertAction(
+            title: String(localized: "common.action.open", defaultValue: "Open"),
+            style: .default
+        ) { [weak self] _ in
+            self?.openProject(project, cellIndexPath: nil)
+        })
+        present(alert, animated: true)
     }
 
     private var reloadTask: Task<Void, Never>?
@@ -558,6 +644,13 @@ extension HomeViewController: UICollectionViewDelegateFlowLayout {
         let previewHeight = previewWidth * screenRatio
         let itemHeight = 8 + previewHeight + 8 + 30 + 8 // top + preview + gap + title + bottom
         return CGSize(width: itemWidth, height: itemHeight)
+    }
+}
+
+extension HomeViewController: UIDocumentPickerDelegate {
+    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+        guard let url = urls.first else { return }
+        importProjectArchive(from: url)
     }
 }
 

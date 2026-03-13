@@ -42,25 +42,6 @@ final class ProjectFileBrowserViewController: UITableViewController {
         case projectBackup
     }
 
-    private struct ExportPayload {
-        let zipURL: URL
-        let cleanupURLs: [URL]
-    }
-
-    private enum ExportError: LocalizedError {
-        case missingProjectRoot
-
-        var errorDescription: String? {
-            switch self {
-            case .missingProjectRoot:
-                return String(
-                    localized: "file_browser.export.error.missing_project_root",
-                    defaultValue: "This project backup is only available from a project workspace."
-                )
-            }
-        }
-    }
-
     private struct Item {
         let name: String
         let url: URL
@@ -74,6 +55,7 @@ final class ProjectFileBrowserViewController: UITableViewController {
     private let directoryURL: URL
     private var items: [Item] = []
     private let fileManager: FileManager
+    private let archiveExportService = ProjectArchiveExportService.shared
 
     init(
         projectName: String,
@@ -291,8 +273,21 @@ final class ProjectFileBrowserViewController: UITableViewController {
 
     private func export(_ kind: ExportKind) {
         do {
-            let payload = try makeExportPayload(for: kind)
-            let activity = UIActivityViewController(activityItems: [payload.zipURL], applicationActivities: nil)
+            let archiveKind: ProjectArchiveExportService.ArchiveKind = {
+                switch kind {
+                case .code:
+                    return .doufu
+                case .projectBackup:
+                    return .doufull
+                }
+            }()
+            let payload = try archiveExportService.exportArchive(
+                kind: archiveKind,
+                projectName: projectName,
+                appURL: rootURL,
+                projectRootURL: projectRootURL
+            )
+            let activity = UIActivityViewController(activityItems: [payload.archiveURL], applicationActivities: nil)
             activity.popoverPresentationController?.barButtonItem = navigationItem.rightBarButtonItem
             activity.completionWithItemsHandler = { _, _, _, _ in
                 for url in payload.cleanupURLs {
@@ -309,97 +304,6 @@ final class ProjectFileBrowserViewController: UITableViewController {
             alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
             present(alert, animated: true)
         }
-    }
-
-    private func makeExportPayload(for kind: ExportKind) throws -> ExportPayload {
-        switch kind {
-        case .code:
-            let zipURL = archiveURL(suffix: "code")
-            try? fileManager.removeItem(at: zipURL)
-            try zipDirectory(at: rootURL, to: zipURL)
-            return ExportPayload(zipURL: zipURL, cleanupURLs: [zipURL])
-        case .projectBackup:
-            return try makeProjectBackupPayload()
-        }
-    }
-
-    private func makeProjectBackupPayload() throws -> ExportPayload {
-        guard let projectRootURL else {
-            throw ExportError.missingProjectRoot
-        }
-
-        let stagingRootURL = fileManager.temporaryDirectory
-            .appendingPathComponent("doufu_project_export_\(UUID().uuidString.lowercased())", isDirectory: true)
-        let exportFolderURL = stagingRootURL
-            .appendingPathComponent("\(safeArchiveBaseName())-project-backup", isDirectory: true)
-        try fileManager.createDirectory(at: exportFolderURL, withIntermediateDirectories: true)
-
-        try copyItemIfPresent(
-            at: projectRootURL.appendingPathComponent("App", isDirectory: true),
-            to: exportFolderURL.appendingPathComponent("App", isDirectory: true)
-        )
-        try copyItemIfPresent(
-            at: projectRootURL.appendingPathComponent("AppData", isDirectory: true),
-            to: exportFolderURL.appendingPathComponent("AppData", isDirectory: true)
-        )
-        for fileName in ["preview.jpg", "preview.jpeg"] {
-            try copyItemIfPresent(
-                at: projectRootURL.appendingPathComponent(fileName),
-                to: exportFolderURL.appendingPathComponent(fileName)
-            )
-        }
-
-        let zipURL = archiveURL(suffix: "project-backup")
-        try? fileManager.removeItem(at: zipURL)
-        try zipDirectory(at: exportFolderURL, to: zipURL)
-        return ExportPayload(zipURL: zipURL, cleanupURLs: [zipURL, stagingRootURL])
-    }
-
-    private func copyItemIfPresent(at sourceURL: URL, to destinationURL: URL) throws {
-        guard fileManager.fileExists(atPath: sourceURL.path) else {
-            return
-        }
-        let parentURL = destinationURL.deletingLastPathComponent()
-        try fileManager.createDirectory(at: parentURL, withIntermediateDirectories: true)
-        try fileManager.copyItem(at: sourceURL, to: destinationURL)
-    }
-
-    private func archiveURL(suffix: String) -> URL {
-        fileManager.temporaryDirectory
-            .appendingPathComponent("\(safeArchiveBaseName())-\(suffix).zip")
-    }
-
-    private func safeArchiveBaseName() -> String {
-        let rawBaseName = projectName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let fallback = rawBaseName.isEmpty ? "project" : rawBaseName
-        let invalidCharacters = CharacterSet(charactersIn: "/\\:?%*|\"<>")
-        let sanitized = fallback
-            .components(separatedBy: invalidCharacters)
-            .joined(separator: "-")
-            .replacingOccurrences(of: "\\s+", with: "-", options: .regularExpression)
-            .trimmingCharacters(in: CharacterSet(charactersIn: ".-"))
-        return sanitized.isEmpty ? "project" : sanitized
-    }
-
-    private func zipDirectory(at sourceURL: URL, to destinationURL: URL) throws {
-        let coordinator = NSFileCoordinator()
-        var coordinatorError: NSError?
-        var zipError: Error?
-
-        coordinator.coordinate(
-            readingItemAt: sourceURL,
-            options: [.forUploading],
-            error: &coordinatorError
-        ) { tempURL in
-            do {
-                try FileManager.default.copyItem(at: tempURL, to: destinationURL)
-            } catch {
-                zipError = error
-            }
-        }
-
-        if let error = coordinatorError { throw error }
-        if let error = zipError { throw error }
     }
 
     private static func formatBytes(_ bytes: Int) -> String {
