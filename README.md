@@ -1,6 +1,6 @@
 # Doufu
 
-一个基于 `UIKit` 的 iOS App，目标是让用户通过自然语言快速生成并迭代本地 `html + css + js` 项目，并在 `WKWebView` 中直接运行。使用 `GRDB.swift`（SQLite）作为统一数据存储层。
+一个基于 `UIKit` 的 iOS App，目标是让用户通过自然语言快速生成并迭代本地 `html + css + js` 项目，并在 `ProjectWebView` 中直接运行。使用 `GRDB.swift`（SQLite）作为统一数据存储层。
 
 ## 文档目录（协作入口）
 
