@@ -147,6 +147,8 @@ final class ChatMessageStore {
         let now = Date()
         let normalizedContent = content.trimmingCharacters(in: .whitespacesAndNewlines)
 
+        print("[TokenDebug] completeWithResult: flowState=\(flowState), tokenUsage=\(String(describing: requestTokenUsage)), contentEmpty=\(normalizedContent.isEmpty), delegateNil=\(delegate == nil)")
+
         switch flowState {
         case .streaming(let index):
             // Promote the streaming cell to the final assistant message.
@@ -156,6 +158,7 @@ final class ChatMessageStore {
             messages[index].finishedAt = now
             messages[index].requestTokenUsage = requestTokenUsage
             messages[index].summary = summary
+            print("[TokenDebug] .streaming(\(index)): set tokenUsage=\(String(describing: messages[index].requestTokenUsage))")
             delegate?.messageStoreDidUpdateCell(at: index, message: messages[index])
             delegate?.messageStoreDidRequestBatchUpdate()
 
@@ -163,7 +166,7 @@ final class ChatMessageStore {
             // Finalize the progress/tool cell, then insert a separate final assistant message.
             finalizeMessage(at: index, finishedAt: now)
             if !normalizedContent.isEmpty {
-                appendMessage(
+                let newIndex = appendMessage(
                     role: .assistant,
                     content: normalizedContent,
                     startedAt: requestStartedAt,
@@ -171,12 +174,15 @@ final class ChatMessageStore {
                     requestTokenUsage: requestTokenUsage,
                     summary: summary
                 )
+                print("[TokenDebug] .progress/.tool(\(index)): appended new msg at \(String(describing: newIndex)), tokenUsage=\(String(describing: requestTokenUsage))")
+            } else {
+                print("[TokenDebug] .progress/.tool(\(index)): normalizedContent is EMPTY, no message appended, tokenUsage LOST")
             }
 
         case .idle:
             // No streaming/progress happened (very fast response).
             if !normalizedContent.isEmpty {
-                appendMessage(
+                let newIndex = appendMessage(
                     role: .assistant,
                     content: normalizedContent,
                     startedAt: requestStartedAt,
@@ -184,6 +190,9 @@ final class ChatMessageStore {
                     requestTokenUsage: requestTokenUsage,
                     summary: summary
                 )
+                print("[TokenDebug] .idle: appended new msg at \(String(describing: newIndex)), tokenUsage=\(String(describing: requestTokenUsage))")
+            } else {
+                print("[TokenDebug] .idle: normalizedContent is EMPTY, no message appended, tokenUsage LOST")
             }
         }
 

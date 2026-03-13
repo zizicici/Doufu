@@ -609,6 +609,10 @@ extension ChatViewController: ChatMessageStoreDelegate {
 
     func messageStoreDidUpdateCell(at index: Int, message: ChatMessage) {
         let ip = IndexPath(row: index, section: 0)
+        if message.role == .assistant && message.finishedAt != nil {
+            let cellExists = tableView.cellForRow(at: ip) != nil
+            print("[TokenDebug] VC.didUpdateCell: index=\(index), role=\(message.role), tokenUsage=\(String(describing: message.requestTokenUsage)), cellVisible=\(cellExists)")
+        }
         if let toolCell = tableView.cellForRow(at: ip) as? ChatToolMessageCell {
             toolCell.configure(message: message)
             if message.finishedAt != nil {

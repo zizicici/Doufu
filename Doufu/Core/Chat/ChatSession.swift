@@ -510,6 +510,8 @@ extension ChatSession: ChatTaskCoordinatorDelegate {
     func coordinatorDidCompleteWithResult(_ result: ChatTaskResult) {
         guard threadManager.currentThread != nil else { return }
 
+        print("[TokenDebug] coordinatorDidCompleteWithResult: tokenUsage=\(String(describing: result.requestTokenUsage)), threadID=\(threadManager.currentThread?.id ?? "nil")")
+
         threadManager.updateSessionMemory(result.updatedMemory)
         if let threadID = threadManager.currentThread?.id {
             try? dataService.persistSessionMemory(threadManager.sessionMemory, threadID: threadID)

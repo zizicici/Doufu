@@ -78,6 +78,12 @@ final class ChatDataService {
         let filtered = filteredMessages(messages)
         let previousCount = persistedCountByThread[threadID] ?? 0
 
+        // Debug: log assistant messages with token usage state
+        for (i, msg) in filtered.enumerated() where msg.role == .assistant && !msg.isProgress {
+            print("[TokenDebug] persist: msg[\(i)] role=\(msg.role) tokenUsageID=\(String(describing: msg.requestTokenUsage?.tokenUsageID)) inputTokens=\(msg.requestTokenUsage?.inputTokens ?? -1)")
+        }
+        print("[TokenDebug] persist: threadID=\(threadID), filtered=\(filtered.count), previousCount=\(previousCount)")
+
         // Fall back to full-replace if the list shrank (e.g. unexpected
         // state) — incremental delete logic is handled inside the store
         // but a full replace is simpler and this path is rare.

@@ -260,9 +260,13 @@ final class ChatDataStore {
                     )
                 }
 
-                return rows.compactMap { row in
+                let messages = rows.compactMap { row in
                     row.toChatMessage(tokenUsage: row.tokenUsageID.flatMap { tokenUsageByID[$0] })
                 }
+                for (i, msg) in messages.enumerated() where msg.role == .assistant && !msg.isProgress {
+                    print("[TokenDebug] loadMessages: msg[\(i)] tokenUsageID=\(String(describing: msg.requestTokenUsage?.tokenUsageID)) inputTokens=\(msg.requestTokenUsage?.inputTokens ?? -1)")
+                }
+                return messages
             }
         } catch {
             throw Error.messageLoadFailed(threadID: threadID, underlying: error)
