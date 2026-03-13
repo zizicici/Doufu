@@ -17,6 +17,9 @@ import WebKit
 /// - **localStorage persistence**: `localStorage` is overridden with an
 ///   in-memory store that async-flushes to a JSON file in the project directory.
 ///   Data survives WKWebView cache clears and app reinstalls.
+/// - **IndexedDB persistence**: `indexedDB` is overridden with a JS shim that
+///   stores all data in-memory and flushes to `AppData/indexedDB.json`.
+///   Survives cache clears, git checkpoint restores, and app reinstalls.
 @MainActor
 final class DoufuBridge: NSObject {
 
@@ -26,16 +29,20 @@ final class DoufuBridge: NSObject {
     /// Called from the WKScriptMessageHandler when localStorage changes.
     private var storageData: [String: String] = [:]
 
+    /// Full IndexedDB snapshot: { dbName: { version, stores: { ... } } }
+    private var indexedDBData: [String: Any] = [:]
+
     /// - Parameters:
     ///   - projectURL: The project directory.
-    ///   - storageDirectoryOverride: If provided, localStorage data is persisted here
-    ///     instead of the default `AppData/` location. Useful for
+    ///   - storageDirectoryOverride: If provided, localStorage and IndexedDB data
+    ///     are persisted here instead of the default `AppData/` location. Useful for
     ///     validation runs that should not dirty real user data.
     init(projectURL: URL, storageDirectoryOverride: URL? = nil) {
         self.projectURL = projectURL
         self.storageDirectoryOverride = storageDirectoryOverride
         super.init()
         loadStorage()
+        loadIndexedDB()
     }
 
     // MARK: - WKWebView Integration
@@ -49,15 +56,14 @@ final class DoufuBridge: NSObject {
             forMainFrameOnly: false
         )
         configuration.userContentController.addUserScript(bridgeScript)
-        configuration.userContentController.add(
-            DoufuBridgeMessageHandler(bridge: self),
-            name: "doufuStorage"
-        )
+        let handler = DoufuBridgeMessageHandler(bridge: self)
+        configuration.userContentController.add(handler, name: "doufuStorage")
+        configuration.userContentController.add(handler, name: "doufuIndexedDB")
     }
 
-    /// Re-adds the bridge user script with the latest `storageData`.
+    /// Re-adds the bridge user script with the latest `storageData` and `indexedDBData`.
     ///
-    /// `WKUserScript` captures its source at creation time, so after localStorage
+    /// `WKUserScript` captures its source at creation time, so after storage
     /// changes the embedded JSON snapshot becomes stale. Call this **before** any
     /// page reload / navigation to ensure the freshly-injected script carries the
     /// current data.
@@ -79,6 +85,7 @@ final class DoufuBridge: NSObject {
     nonisolated func unregister(from configuration: WKWebViewConfiguration) {
         MainActor.assumeIsolated {
             configuration.userContentController.removeScriptMessageHandler(forName: "doufuStorage")
+            configuration.userContentController.removeScriptMessageHandler(forName: "doufuIndexedDB")
         }
     }
 
@@ -90,6 +97,11 @@ final class DoufuBridge: NSObject {
     private var storageFileURL: URL {
         let dataDir = projectDataDirectory()
         return dataDir.appendingPathComponent("localStorage.json")
+    }
+
+    private var indexedDBFileURL: URL {
+        let dataDir = projectDataDirectory()
+        return dataDir.appendingPathComponent("indexedDB.json")
     }
 
     private func projectDataDirectory() -> URL {
@@ -113,10 +125,25 @@ final class DoufuBridge: NSObject {
         storageData = dict
     }
 
+    private func loadIndexedDB() {
+        guard let data = try? Data(contentsOf: indexedDBFileURL),
+              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            indexedDBData = [:]
+            return
+        }
+        indexedDBData = dict
+    }
+
     fileprivate func handleStorageUpdate(_ payload: Any) {
         guard let dict = payload as? [String: String] else { return }
         storageData = dict
         saveStorage()
+    }
+
+    fileprivate func handleIndexedDBUpdate(_ payload: Any) {
+        guard let dict = payload as? [String: Any] else { return }
+        indexedDBData = dict
+        saveIndexedDB()
     }
 
     private func saveStorage() {
@@ -124,6 +151,13 @@ final class DoufuBridge: NSObject {
             return
         }
         try? data.write(to: storageFileURL, options: .atomic)
+    }
+
+    private func saveIndexedDB() {
+        guard let data = try? JSONSerialization.data(withJSONObject: indexedDBData, options: []) else {
+            return
+        }
+        try? data.write(to: indexedDBFileURL, options: .atomic)
     }
 
     // MARK: - Bridge JavaScript
@@ -137,6 +171,23 @@ final class DoufuBridge: NSObject {
             storageJSON = "{}"
         }
 
+        let idbJSON: String
+        if let data = try? JSONSerialization.data(withJSONObject: indexedDBData, options: []),
+           let str = String(data: data, encoding: .utf8) {
+            idbJSON = str
+        } else {
+            idbJSON = "{}"
+        }
+
+        return """
+        \(fetchProxyAndLocalStorageJavaScript(storageJSON: storageJSON))
+        \(indexedDBShimJavaScript(snapshot: idbJSON))
+        """
+    }
+
+    // MARK: - fetch() proxy + localStorage shim
+
+    private func fetchProxyAndLocalStorageJavaScript(storageJSON: String) -> String {
         return """
         (function() {
           'use strict';
@@ -280,6 +331,26 @@ final class DoufuBridge: NSObject {
         })();
         """
     }
+
+    // MARK: - IndexedDB shim
+
+    /// Cached shim template loaded from bundle (DoufuIndexedDBShim.js).
+    private static let indexedDBShimTemplate: String = {
+        guard let url = Bundle.main.url(forResource: "DoufuIndexedDBShim", withExtension: "js"),
+              let js = try? String(contentsOf: url) else {
+            assertionFailure("DoufuIndexedDBShim.js not found in bundle")
+            return ""
+        }
+        return js
+    }()
+
+    private func indexedDBShimJavaScript(snapshot: String) -> String {
+        // The .js file contains: var _idb = '__DOUFU_IDB_SNAPSHOT__';
+        // We replace the entire placeholder string (including quotes) with the raw JSON
+        // object literal, producing: var _idb = {"dbName": ...};
+        return Self.indexedDBShimTemplate
+            .replacingOccurrences(of: "'__DOUFU_IDB_SNAPSHOT__'", with: snapshot)
+    }
 }
 
 // MARK: - Message Handler (prevent retain cycle)
@@ -299,9 +370,18 @@ private nonisolated final class DoufuBridgeMessageHandler: NSObject, WKScriptMes
         didReceive message: WKScriptMessage
     ) {
         // WebKit guarantees this delegate is called on the main thread.
+        let name = MainActor.assumeIsolated { message.name }
         let body = MainActor.assumeIsolated { message.body }
         Task { @MainActor [weak self] in
-            self?.bridge?.handleStorageUpdate(body)
+            guard let bridge = self?.bridge else { return }
+            switch name {
+            case "doufuStorage":
+                bridge.handleStorageUpdate(body)
+            case "doufuIndexedDB":
+                bridge.handleIndexedDBUpdate(body)
+            default:
+                break
+            }
         }
     }
 }

@@ -75,8 +75,8 @@ final class ProjectWorkspaceViewController: UIViewController {
     private lazy var webView: WKWebView = {
         let configuration = WKWebViewConfiguration()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
-        // Per-project data store: IndexedDB, cookies, cache are isolated per project
-        // and persist independently of git checkpoints.
+        // Per-project data store: cookies and cache are isolated per project.
+        // (IndexedDB and localStorage are handled by DoufuBridge → AppData/)
         if let storeID = UUID(uuidString: projectIdentifier) {
             configuration.websiteDataStore = WKWebsiteDataStore(forIdentifier: storeID)
         }

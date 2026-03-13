@@ -45,7 +45,7 @@ final class PromptBuilder {
         - **Validate**: `validate_code` after completing a group of related changes — not after every edit.
 
         ## Doufu Runtime Environment
-        Pages run inside a native iOS app (WKWebView served via localhost). `fetch()` is CORS-free, `localStorage` and `IndexedDB` are natively persisted. No special SDK needed — see the project's AGENTS.md for full details.
+        Pages run inside a native iOS app (WKWebView served via localhost). `fetch()` is CORS-free, `localStorage` and `IndexedDB` are persisted to the project's `AppData/` directory. No special SDK needed — see the project's AGENTS.md for full details.
 
         ## Device & Layout Context
         \(Self.deviceGuidelines)

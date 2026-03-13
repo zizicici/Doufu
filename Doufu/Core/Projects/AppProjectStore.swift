@@ -501,20 +501,14 @@ final class AppProjectStore {
         - Use modern web design: gradients, subtle shadows, rounded corners, color accents — make the app visually appealing.
         - Keep typography clean and hierarchy clear. The `-apple-system` font stack is fine, but don't restrict yourself to mimicking system UI.
 
-        ## Project directory layout
-        ```
-        Projects/{uuid}/
-          App/         ← all code files live here (this is the working directory)
-          AppData/     ← localStorage data (persisted by host app, survives git resets)
-          preview.jpg  ← auto-generated screenshot
-        ```
-        - All file reads/writes happen inside `App/`. Never reference `AppData/` or `preview.jpg` from code.
+        ## Project directory
+        All code files live in the current working directory. All file reads/writes must stay within it.
 
         ## Doufu Runtime
-        The app serves pages from `App/` via a local HTTP server. Standard web APIs are transparently enhanced:
-        - `fetch()`: Cross-origin requests are automatically proxied through the host app. No CORS issues — just use `fetch('https://...')` normally.
-        - `localStorage`: Persisted in `AppData/localStorage.json` by the host app. Data survives cache clears and git checkpoint restores. Use it for any app data (settings, records, etc.).
-        - `IndexedDB`: Fully supported and persistent. Each project has its own isolated data store. Use it for structured or large-volume data.
+        Pages are served via a local HTTP server. Standard web APIs are transparently enhanced:
+        - `fetch()`: Cross-origin requests are automatically proxied. No CORS issues — just use `fetch('https://...')` normally.
+        - `localStorage`: Natively persisted by the host app. Use it for any app data.
+        - `IndexedDB`: Natively persisted by the host app. Use it for structured or large-volume data. Limitations: do not store `Blob`/`File` values, use `ArrayBuffer` or base64 instead; no transaction isolation between concurrent readwrite transactions; cursors are snapshot-based and won't reflect writes made during iteration.
         No special SDK or import is needed — write standard JavaScript.
 
         ## Editing guidance
@@ -539,7 +533,7 @@ final class AppProjectStore {
         - Default device target: \(isIPad ? "iPad (responsive, compact to full width)." : "iPhone portrait.")
         - Key constraints are defined in AGENTS.md.
         - fetch() is CORS-free (proxied through host app).
-        - localStorage is persisted in `AppData/` (survives cache clears and git resets).
+        - localStorage and IndexedDB are natively persisted. IndexedDB: no Blob/File, no transaction isolation, snapshot cursors.
 
         ## Core Files
         - index.html: App shell and semantic structure.

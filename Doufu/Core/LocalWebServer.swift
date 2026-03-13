@@ -32,7 +32,7 @@ final class LocalWebServer: @unchecked Sendable {
 
     /// Derive a stable port (10000–59999) from the project ID so that
     /// the localhost origin stays the same across launches, preserving
-    /// IndexedDB and other origin-keyed browser storage.
+    /// cookies and other origin-keyed browser storage.
     private static func stablePort(for projectID: String) -> UInt16 {
         var hash: UInt64 = 5381
         for byte in projectID.utf8 {

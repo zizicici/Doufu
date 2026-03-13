@@ -20,10 +20,25 @@
 		14B7E5492F5AB2C100BB3324 /* TreeSitterCSSRunestone in Frameworks */ = {isa = PBXBuildFile; productRef = 14B7E54F2F5AB2C100BB3324 /* TreeSitterCSSRunestone */; };
 		14B7E5612F5AB2C100BB3324 /* TreeSitterMarkdownRunestone in Frameworks */ = {isa = PBXBuildFile; productRef = 14B7E5602F5AB2C100BB3324 /* TreeSitterMarkdownRunestone */; };
 		14B7E5622F5AB2C100BB3324 /* TreeSitterSwiftRunestone in Frameworks */ = {isa = PBXBuildFile; productRef = 14B7E5632F5AB2C100BB3324 /* TreeSitterSwiftRunestone */; };
+		337080BA27868A1192D105F8 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D1965CC88DACDE03D200C85F /* Foundation.framework */; };
+		E82F6FE04B4364C8645479E1 /* IndexedDBShimTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FACF42D50224C986996F5C7 /* IndexedDBShimTests.swift */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		395F1F11EBC554CBD83B5F5F /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 450D41D82F40B7430025E0BB /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 450D41DF2F40B7430025E0BB;
+			remoteInfo = Doufu;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
+		1FACF42D50224C986996F5C7 /* IndexedDBShimTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = IndexedDBShimTests.swift; sourceTree = "<group>"; };
 		450D41E02F40B7430025E0BB /* Doufu.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Doufu.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		CFB4F7CBB440E654D0D8A993 /* DoufuTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DoufuTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		D1965CC88DACDE03D200C85F /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -68,14 +83,33 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		59AB69B1D4D140C387A0D5C8 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				337080BA27868A1192D105F8 /* Foundation.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		427B666A83FA291ED907DF1D /* DoufuTests */ = {
+			isa = PBXGroup;
+			children = (
+				1FACF42D50224C986996F5C7 /* IndexedDBShimTests.swift */,
+			);
+			name = DoufuTests;
+			path = DoufuTests;
+			sourceTree = "<group>";
+		};
 		450D41D72F40B7430025E0BB = {
 			isa = PBXGroup;
 			children = (
 				450D41E22F40B7430025E0BB /* Doufu */,
 				450D41E12F40B7430025E0BB /* Products */,
+				CEBB07AFADC5429EA449250A /* Frameworks */,
+				427B666A83FA291ED907DF1D /* DoufuTests */,
 			);
 			sourceTree = "<group>";
 		};
@@ -83,13 +117,48 @@
 			isa = PBXGroup;
 			children = (
 				450D41E02F40B7430025E0BB /* Doufu.app */,
+				CFB4F7CBB440E654D0D8A993 /* DoufuTests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		BBD3F4ED3E48E6A7CF6C798C /* iOS */ = {
+			isa = PBXGroup;
+			children = (
+				D1965CC88DACDE03D200C85F /* Foundation.framework */,
+			);
+			name = iOS;
+			sourceTree = "<group>";
+		};
+		CEBB07AFADC5429EA449250A /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				BBD3F4ED3E48E6A7CF6C798C /* iOS */,
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		34B21FBFCF468BEE67249080 /* DoufuTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 0A32BEB9178E24FFAD0F1E1A /* Build configuration list for PBXNativeTarget "DoufuTests" */;
+			buildPhases = (
+				8D4AB1F0BF3788C7D7D3B32B /* Sources */,
+				59AB69B1D4D140C387A0D5C8 /* Frameworks */,
+				91B7CCEB26DA3FF59558A24A /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				D86DE7A3C77D8B20E33EA995 /* PBXTargetDependency */,
+			);
+			name = DoufuTests;
+			productName = DoufuTests;
+			productReference = CFB4F7CBB440E654D0D8A993 /* DoufuTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 		450D41DF2F40B7430025E0BB /* Doufu */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 450D41F32F40B7440025E0BB /* Build configuration list for PBXNativeTarget "Doufu" */;
@@ -157,7 +226,7 @@
 				14B7E5642F5AB2C100BB3324 /* XCRemoteSwiftPackageReference "TreeSitterLanguages" */,
 				14C0A0012F5CC00000AA1001 /* XCRemoteSwiftPackageReference "SwiftGitX" */,
 				14D0MD012F5D000000AA2002 /* XCRemoteSwiftPackageReference "swift-markdown" */,
-				1425E8232F615257009A38B0 /* XCRemoteSwiftPackageReference "GRDB" */,
+				1425E8232F615257009A38B0 /* XCRemoteSwiftPackageReference "GRDB.swift" */,
 				1425E85B2F62DF77009A38B0 /* XCRemoteSwiftPackageReference "AppInfo" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -166,12 +235,20 @@
 			projectRoot = "";
 			targets = (
 				450D41DF2F40B7430025E0BB /* Doufu */,
+				34B21FBFCF468BEE67249080 /* DoufuTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		450D41DE2F40B7430025E0BB /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		91B7CCEB26DA3FF59558A24A /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -188,7 +265,24 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		8D4AB1F0BF3788C7D7D3B32B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E82F6FE04B4364C8645479E1 /* IndexedDBShimTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		D86DE7A3C77D8B20E33EA995 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = Doufu;
+			target = 450D41DF2F40B7430025E0BB /* Doufu */;
+			targetProxy = 395F1F11EBC554CBD83B5F5F /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		450D41F42F40B7440025E0BB /* Debug */ = {
@@ -392,9 +486,49 @@
 			};
 			name = Release;
 		};
+		6AE5E08724EC7345AED9CBB3 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.doufu.DoufuTests;
+				PRODUCT_NAME = DoufuTests;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 6.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Doufu.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Doufu";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		732DD9CD29898842538D9400 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.doufu.DoufuTests;
+				PRODUCT_NAME = DoufuTests;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 6.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Doufu.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Doufu";
+			};
+			name = Debug;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		0A32BEB9178E24FFAD0F1E1A /* Build configuration list for PBXNativeTarget "DoufuTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6AE5E08724EC7345AED9CBB3 /* Release */,
+				732DD9CD29898842538D9400 /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		450D41DB2F40B7430025E0BB /* Build configuration list for PBXProject "Doufu" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -416,7 +550,7 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		1425E8232F615257009A38B0 /* XCRemoteSwiftPackageReference "GRDB" */ = {
+		1425E8232F615257009A38B0 /* XCRemoteSwiftPackageReference "GRDB.swift" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/groue/GRDB.swift";
 			requirement = {
@@ -469,7 +603,7 @@
 /* Begin XCSwiftPackageProductDependency section */
 		1425E8242F615257009A38B0 /* GRDB */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 1425E8232F615257009A38B0 /* XCRemoteSwiftPackageReference "GRDB" */;
+			package = 1425E8232F615257009A38B0 /* XCRemoteSwiftPackageReference "GRDB.swift" */;
 			productName = GRDB;
 		};
 		1425E85C2F62DF77009A38B0 /* AppInfo */ = {
