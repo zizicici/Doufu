@@ -160,6 +160,18 @@ final class DoufuBridge: NSObject {
         try? data.write(to: indexedDBFileURL, options: .atomic)
     }
 
+    /// Clears all localStorage data and writes an empty JSON object to disk.
+    func clearLocalStorage() {
+        storageData = [:]
+        saveStorage()
+    }
+
+    /// Clears all IndexedDB data and writes an empty JSON object to disk.
+    func clearIndexedDB() {
+        indexedDBData = [:]
+        saveIndexedDB()
+    }
+
     // MARK: - Bridge JavaScript
 
     private func bridgeJavaScript() -> String {

@@ -810,8 +810,14 @@ final class ProjectWorkspaceViewController: UIViewController {
         }
         let settingsController = ProjectSettingsViewController(
             projectURL: projectURL,
-            projectName: projectName
+            projectName: projectName,
+            doufuBridge: doufuBridge
         )
+        settingsController.onStorageCleared = { [weak self] in
+            guard let self else { return }
+            self.doufuBridge.refreshStorageScript(on: self.webView.configuration)
+            self.webView.reload()
+        }
         let navigationController = UINavigationController(rootViewController: settingsController)
         navigationController.modalPresentationStyle = .pageSheet
         if let sheet = navigationController.sheetPresentationController {

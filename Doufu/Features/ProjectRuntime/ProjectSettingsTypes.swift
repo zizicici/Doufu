@@ -7,6 +7,7 @@ nonisolated enum ProjectSettingsSectionID: Hashable, Sendable {
     case project
     case chat
     case checkpoints
+    case storage
 }
 
 nonisolated enum ProjectSettingsItemID: Hashable, Sendable {
@@ -15,6 +16,8 @@ nonisolated enum ProjectSettingsItemID: Hashable, Sendable {
     case defaultModel
     case toolPermission
     case checkpointHistory
+    case clearLocalStorage
+    case clearIndexedDB
 }
 
 // MARK: - Checkpoint History

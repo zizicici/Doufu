@@ -13,6 +13,7 @@ final class ProjectSettingsViewController: UITableViewController {
     private let projectURL: URL
     private let repositoryURL: URL
     private let projectID: String
+    private let doufuBridge: DoufuBridge?
     private let store = AppProjectStore.shared
     private let gitService = ProjectGitService.shared
     private let modelSelectionStore = ModelSelectionStateStore.shared
@@ -25,12 +26,16 @@ final class ProjectSettingsViewController: UITableViewController {
     private var modelSelectionObserver: NSObjectProtocol?
     private var projectChangeObserver: NSObjectProtocol?
 
+    /// Called after localStorage or IndexedDB is cleared so the workspace can reload its webView.
+    var onStorageCleared: (() -> Void)?
+
     private var diffableDataSource: UITableViewDiffableDataSource<ProjectSettingsSectionID, ProjectSettingsItemID>!
 
-    init(projectURL: URL, projectName: String) {
+    init(projectURL: URL, projectName: String, doufuBridge: DoufuBridge? = nil) {
         self.projectURL = projectURL
         repositoryURL = projectURL.appendingPathComponent("App", isDirectory: true)
         self.projectID = projectURL.lastPathComponent
+        self.doufuBridge = doufuBridge
         projectNameText = projectName
         projectDescriptionText = AppProjectStore.shared.loadProjectDescription(projectURL: projectURL)
         toolPermissionOverride = AppProjectStore.shared.loadProjectToolPermissionOverride(projectURL: projectURL)
@@ -173,6 +178,42 @@ final class ProjectSettingsViewController: UITableViewController {
             cell.contentConfiguration = configuration
             cell.accessoryType = .disclosureIndicator
             return cell
+
+        case .clearLocalStorage:
+            guard
+                let cell = tableView.dequeueReusableCell(
+                    withIdentifier: SettingsCenteredButtonCell.reuseIdentifier,
+                    for: indexPath
+                ) as? SettingsCenteredButtonCell
+            else {
+                return UITableViewCell()
+            }
+            cell.configure(
+                title: String(
+                    localized: "project_settings.storage.clear_local_storage",
+                    defaultValue: "Clear localStorage"
+                ),
+                tintColor: .systemRed
+            )
+            return cell
+
+        case .clearIndexedDB:
+            guard
+                let cell = tableView.dequeueReusableCell(
+                    withIdentifier: SettingsCenteredButtonCell.reuseIdentifier,
+                    for: indexPath
+                ) as? SettingsCenteredButtonCell
+            else {
+                return UITableViewCell()
+            }
+            cell.configure(
+                title: String(
+                    localized: "project_settings.storage.clear_indexeddb",
+                    defaultValue: "Clear IndexedDB"
+                ),
+                tintColor: .systemRed
+            )
+            return cell
         }
     }
 
@@ -180,10 +221,15 @@ final class ProjectSettingsViewController: UITableViewController {
 
     private func buildSnapshot() -> NSDiffableDataSourceSnapshot<ProjectSettingsSectionID, ProjectSettingsItemID> {
         var snapshot = NSDiffableDataSourceSnapshot<ProjectSettingsSectionID, ProjectSettingsItemID>()
-        snapshot.appendSections([.project, .chat, .checkpoints])
+        var sections: [ProjectSettingsSectionID] = [.project, .chat, .checkpoints]
+        if doufuBridge != nil { sections.append(.storage) }
+        snapshot.appendSections(sections)
         snapshot.appendItems([.projectName, .projectDescription], toSection: .project)
         snapshot.appendItems([.defaultModel, .toolPermission], toSection: .chat)
         snapshot.appendItems([.checkpointHistory], toSection: .checkpoints)
+        if doufuBridge != nil {
+            snapshot.appendItems([.clearLocalStorage, .clearIndexedDB], toSection: .storage)
+        }
         return snapshot
     }
 
@@ -204,6 +250,11 @@ final class ProjectSettingsViewController: UITableViewController {
             return String(localized: "project_settings.section.chat")
         case .checkpoints:
             return String(localized: "project_settings.section.checkpoints")
+        case .storage:
+            return String(
+                localized: "project_settings.section.storage",
+                defaultValue: "Storage"
+            )
         }
     }
 
@@ -216,6 +267,11 @@ final class ProjectSettingsViewController: UITableViewController {
             return String(localized: "project_settings.footer.tool_permission")
         case .checkpoints:
             return String(localized: "project_settings.footer.checkpoints")
+        case .storage:
+            return String(
+                localized: "project_settings.footer.storage",
+                defaultValue: "Clearing storage will reload the web page."
+            )
         }
     }
 
@@ -226,7 +282,8 @@ final class ProjectSettingsViewController: UITableViewController {
         switch itemID {
         case .projectName:
             return nil
-        case .projectDescription, .defaultModel, .toolPermission, .checkpointHistory:
+        case .projectDescription, .defaultModel, .toolPermission, .checkpointHistory,
+             .clearLocalStorage, .clearIndexedDB:
             return indexPath
         }
     }
@@ -246,6 +303,10 @@ final class ProjectSettingsViewController: UITableViewController {
             presentToolPermissionPicker()
         case .checkpointHistory:
             openCheckpointsPage()
+        case .clearLocalStorage:
+            confirmClearLocalStorage()
+        case .clearIndexedDB:
+            confirmClearIndexedDB()
         }
     }
 
@@ -376,6 +437,54 @@ final class ProjectSettingsViewController: UITableViewController {
         projectDescriptionText = store.loadProjectDescription(projectURL: projectURL)
         toolPermissionOverride = store.loadProjectToolPermissionOverride(projectURL: projectURL)
         applySnapshot()
+    }
+
+    // MARK: - Clear Storage
+
+    private func confirmClearLocalStorage() {
+        let alert = UIAlertController(
+            title: String(
+                localized: "project_settings.storage.clear_local_storage.alert.title",
+                defaultValue: "Clear localStorage"
+            ),
+            message: String(
+                localized: "project_settings.storage.clear_local_storage.alert.message",
+                defaultValue: "All localStorage data for this project will be deleted. The web page will reload."
+            ),
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: String(localized: "common.action.cancel"), style: .cancel))
+        alert.addAction(UIAlertAction(
+            title: String(localized: "project_settings.storage.clear", defaultValue: "Clear"),
+            style: .destructive
+        ) { [weak self] _ in
+            self?.doufuBridge?.clearLocalStorage()
+            self?.onStorageCleared?()
+        })
+        present(alert, animated: true)
+    }
+
+    private func confirmClearIndexedDB() {
+        let alert = UIAlertController(
+            title: String(
+                localized: "project_settings.storage.clear_indexeddb.alert.title",
+                defaultValue: "Clear IndexedDB"
+            ),
+            message: String(
+                localized: "project_settings.storage.clear_indexeddb.alert.message",
+                defaultValue: "All IndexedDB data for this project will be deleted. The web page will reload."
+            ),
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: String(localized: "common.action.cancel"), style: .cancel))
+        alert.addAction(UIAlertAction(
+            title: String(localized: "project_settings.storage.clear", defaultValue: "Clear"),
+            style: .destructive
+        ) { [weak self] _ in
+            self?.doufuBridge?.clearIndexedDB()
+            self?.onStorageCleared?()
+        })
+        present(alert, animated: true)
     }
 
     // MARK: - Actions
