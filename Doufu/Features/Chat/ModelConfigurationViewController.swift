@@ -69,6 +69,7 @@ final class ModelConfigurationViewController: UITableViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        tableView.backgroundColor = .doufuBackground
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "ProjectModelConfigCell")
         tableView.register(SettingsToggleCell.self, forCellReuseIdentifier: SettingsToggleCell.reuseIdentifier)
         configureDiffableDataSource()

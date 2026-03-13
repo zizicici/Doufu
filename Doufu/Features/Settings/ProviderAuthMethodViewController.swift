@@ -11,9 +11,9 @@ final class ProviderAuthMethodViewController: UITableViewController {
     private let providerKind: LLMProviderRecord.Kind
     private var availableMethods: [Method] {
         switch providerKind {
-        case .anthropic:
+        case .anthropic, .googleGemini:
             return [.apiKey]
-        case .openAICompatible, .googleGemini:
+        case .openAICompatible:
             return Method.allCases
         }
     }

@@ -69,7 +69,18 @@ final class AddProviderViewController: UITableViewController {
         guard indexPath.row < providerKinds.count else {
             return
         }
-        let controller = ProviderAuthMethodViewController(providerKind: providerKinds[indexPath.row])
+        let kind = providerKinds[indexPath.row]
+        let controller: UIViewController
+        switch kind {
+        case .openAICompatible:
+            // OpenAI Compatible supports both API Key and OAuth — let the
+            // user choose on the next screen.
+            controller = ProviderAuthMethodViewController(providerKind: kind)
+        case .anthropic, .googleGemini:
+            // Only API Key is available — skip the auth method selection
+            // page and go straight to the form.
+            controller = ProviderAPIKeyFormViewController(providerKind: kind)
+        }
         navigationController?.pushViewController(controller, animated: true)
     }
 }

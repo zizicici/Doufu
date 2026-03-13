@@ -398,14 +398,30 @@ final class ProviderAPIKeyFormViewController: UITableViewController {
 
         do {
             if let editingProvider {
-                _ = try store.updateProviderUsingAPIKey(
-                    providerID: editingProvider.id,
-                    label: labelText,
-                    apiKey: apiKeyText,
-                    baseURLString: customBaseURLText,
-                    autoAppendV1: shouldAutoAppendV1,
-                    modelID: latestEditingProvider()?.modelID
-                )
+                if editingProvider.kind == .anthropic, editingProvider.authMode == .oauth {
+                    // Anthropic OAuth providers are routed to the API Key form
+                    // because the "OAuth" flow is just pasting a token from the
+                    // console.  Preserve the original authMode so it is not
+                    // silently converted to .apiKey on save.
+                    _ = try store.updateProviderUsingOAuth(
+                        providerID: editingProvider.id,
+                        label: labelText,
+                        baseURLString: customBaseURLText,
+                        autoAppendV1: shouldAutoAppendV1,
+                        bearerToken: apiKeyText,
+                        chatGPTAccountID: nil,
+                        modelID: latestEditingProvider()?.modelID
+                    )
+                } else {
+                    _ = try store.updateProviderUsingAPIKey(
+                        providerID: editingProvider.id,
+                        label: labelText,
+                        apiKey: apiKeyText,
+                        baseURLString: customBaseURLText,
+                        autoAppendV1: shouldAutoAppendV1,
+                        modelID: latestEditingProvider()?.modelID
+                    )
+                }
                 popToManageProviders()
             } else {
                 let provider = try store.addProviderUsingAPIKey(

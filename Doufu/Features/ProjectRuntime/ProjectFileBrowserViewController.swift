@@ -98,6 +98,7 @@ final class ProjectFileBrowserViewController: UITableViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         title = titleForCurrentDirectory()
+        tableView.backgroundColor = .doufuBackground
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "ProjectFileRow")
 
         if directoryURL.standardizedFileURL == rootURL.standardizedFileURL {
@@ -494,7 +495,7 @@ private final class ProjectFileContentViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .systemBackground
+        view.backgroundColor = .doufuBackground
         title = fileURL.lastPathComponent
         navigationItem.largeTitleDisplayMode = .never
         navigationItem.prompt = nil

@@ -10,26 +10,6 @@ import UIKit
 @MainActor
 final class ProjectSettingsViewController: UITableViewController {
 
-    private enum Section: Int, CaseIterable {
-        case project
-        case chat
-        case checkpoints
-    }
-
-    private enum ProjectRow: Int, CaseIterable {
-        case name
-        case description
-    }
-
-    private enum ChatRow: Int, CaseIterable {
-        case defaultModel
-        case toolPermission
-    }
-
-    private enum CheckpointRow: Int, CaseIterable {
-        case history
-    }
-
     private let projectURL: URL
     private let repositoryURL: URL
     private let projectID: String
@@ -44,6 +24,8 @@ final class ProjectSettingsViewController: UITableViewController {
     private var projectModelSelection: ModelSelection?
     private var modelSelectionObserver: NSObjectProtocol?
     private var projectChangeObserver: NSObjectProtocol?
+
+    private var diffableDataSource: UITableViewDiffableDataSource<ProjectSettingsSectionID, ProjectSettingsItemID>!
 
     init(projectURL: URL, projectName: String) {
         self.projectURL = projectURL
@@ -72,12 +54,15 @@ final class ProjectSettingsViewController: UITableViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         title = String(localized: "project_settings.title")
+        tableView.backgroundColor = .doufuBackground
         tableView.keyboardDismissMode = .onDrag
         tableView.register(SettingsTextInputCell.self, forCellReuseIdentifier: SettingsTextInputCell.reuseIdentifier)
         tableView.register(SettingsCenteredButtonCell.self, forCellReuseIdentifier: SettingsCenteredButtonCell.reuseIdentifier)
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "CheckpointCell")
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "ChatSettingCell")
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "ProjectSettingCell")
+
+        configureDiffableDataSource()
 
         modelSelectionObserver = modelSelectionStore.addObserver { [weak self] change in
             self?.handleModelSelectionChange(change)
@@ -87,7 +72,7 @@ final class ProjectSettingsViewController: UITableViewController {
         }
 
         projectModelSelection = modelSelectionStore.loadProjectDefaultSelection(projectID: projectID)
-        tableView.reloadSections(IndexSet(integer: Section.chat.rawValue), with: .none)
+        applySnapshot()
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -95,25 +80,124 @@ final class ProjectSettingsViewController: UITableViewController {
         refreshProjectSnapshotFromStore()
     }
 
-    override func numberOfSections(in tableView: UITableView) -> Int {
-        Section.allCases.count
+    // MARK: - Diffable DataSource
+
+    private func configureDiffableDataSource() {
+        diffableDataSource = UITableViewDiffableDataSource<ProjectSettingsSectionID, ProjectSettingsItemID>(
+            tableView: tableView
+        ) { [weak self] tableView, indexPath, itemID in
+            guard let self else { return UITableViewCell() }
+            return self.cell(for: tableView, indexPath: indexPath, itemID: itemID)
+        }
+        diffableDataSource.defaultRowAnimation = .none
     }
 
-    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        guard let section = Section(rawValue: section) else { return 0 }
-        switch section {
-        case .project:
-            return ProjectRow.allCases.count
-        case .chat:
-            return ChatRow.allCases.count
-        case .checkpoints:
-            return CheckpointRow.allCases.count
+    private func cell(
+        for tableView: UITableView,
+        indexPath: IndexPath,
+        itemID: ProjectSettingsItemID
+    ) -> UITableViewCell {
+        switch itemID {
+        case .projectName:
+            guard
+                let cell = tableView.dequeueReusableCell(
+                    withIdentifier: SettingsTextInputCell.reuseIdentifier,
+                    for: indexPath
+                ) as? SettingsTextInputCell
+            else {
+                return UITableViewCell()
+            }
+            cell.configure(
+                title: String(localized: "project_settings.field.name_title"),
+                text: projectNameText,
+                placeholder: String(localized: "project_settings.field.name_placeholder"),
+                autocapitalizationType: .words
+            ) { [weak self] text in
+                self?.projectNameText = text
+                self?.commitProjectName()
+            }
+            return cell
+
+        case .projectDescription:
+            let cell = tableView.dequeueReusableCell(withIdentifier: "ProjectSettingCell", for: indexPath)
+            var configuration = UIListContentConfiguration.subtitleCell()
+            configuration.text = String(
+                localized: "project_settings.field.description_title",
+                defaultValue: "Description"
+            )
+            configuration.secondaryText = projectDescriptionPreviewText()
+            configuration.secondaryTextProperties.color = .secondaryLabel
+            configuration.secondaryTextProperties.numberOfLines = 3
+            cell.contentConfiguration = configuration
+            cell.accessoryType = .disclosureIndicator
+            return cell
+
+        case .defaultModel:
+            let cell = tableView.dequeueReusableCell(withIdentifier: "ChatSettingCell", for: indexPath)
+            var configuration = cell.defaultContentConfiguration()
+            configuration.text = String(localized: "project_settings.default_model.title")
+            if let selection = projectModelSelection {
+                configuration.secondaryText = projectModelDisplayName(for: selection)
+            } else {
+                configuration.secondaryText = String(localized: "project_settings.default_model.use_app_default")
+            }
+            configuration.secondaryTextProperties.color = .secondaryLabel
+            cell.contentConfiguration = configuration
+            cell.accessoryType = .disclosureIndicator
+            return cell
+
+        case .toolPermission:
+            let cell = tableView.dequeueReusableCell(withIdentifier: "ChatSettingCell", for: indexPath)
+            var configuration = cell.defaultContentConfiguration()
+            configuration.text = String(localized: "project_settings.chat.tool_permission.title")
+            if let override = toolPermissionOverride {
+                configuration.secondaryText = ToolPermissionPickerViewController.displayName(for: override)
+            } else {
+                let appDefault = store.loadAppToolPermissionMode()
+                configuration.secondaryText = String(
+                    format: String(localized: "project_settings.chat.tool_permission.default_format"),
+                    ToolPermissionPickerViewController.displayName(for: appDefault)
+                )
+            }
+            configuration.secondaryTextProperties.color = .secondaryLabel
+            cell.contentConfiguration = configuration
+            cell.accessoryType = .disclosureIndicator
+            return cell
+
+        case .checkpointHistory:
+            let cell = tableView.dequeueReusableCell(withIdentifier: "CheckpointCell", for: indexPath)
+            var configuration = cell.defaultContentConfiguration()
+            configuration.text = String(localized: "project_settings.checkpoint.history_title")
+            configuration.secondaryText = String(localized: "project_settings.checkpoint.history_subtitle")
+            configuration.secondaryTextProperties.color = .secondaryLabel
+            cell.contentConfiguration = configuration
+            cell.accessoryType = .disclosureIndicator
+            return cell
         }
     }
 
-    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
-        guard let section = Section(rawValue: section) else { return nil }
-        switch section {
+    // MARK: - Snapshot
+
+    private func buildSnapshot() -> NSDiffableDataSourceSnapshot<ProjectSettingsSectionID, ProjectSettingsItemID> {
+        var snapshot = NSDiffableDataSourceSnapshot<ProjectSettingsSectionID, ProjectSettingsItemID>()
+        snapshot.appendSections([.project, .chat, .checkpoints])
+        snapshot.appendItems([.projectName, .projectDescription], toSection: .project)
+        snapshot.appendItems([.defaultModel, .toolPermission], toSection: .chat)
+        snapshot.appendItems([.checkpointHistory], toSection: .checkpoints)
+        return snapshot
+    }
+
+    private func applySnapshot() {
+        var snapshot = buildSnapshot()
+        snapshot.reconfigureItems(snapshot.itemIdentifiers)
+        diffableDataSource.apply(snapshot, animatingDifferences: false)
+    }
+
+    // MARK: - Section Headers & Footers
+
+    override func tableView(_ tableView: UITableView, titleForHeaderInSection sectionIndex: Int) -> String? {
+        guard let sectionID = diffableDataSource.sectionIdentifier(for: sectionIndex) else { return nil }
+        switch sectionID {
         case .project:
             return String(localized: "project_settings.section.project")
         case .chat:
@@ -123,9 +207,9 @@ final class ProjectSettingsViewController: UITableViewController {
         }
     }
 
-    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
-        guard let section = Section(rawValue: section) else { return nil }
-        switch section {
+    override func tableView(_ tableView: UITableView, titleForFooterInSection sectionIndex: Int) -> String? {
+        guard let sectionID = diffableDataSource.sectionIdentifier(for: sectionIndex) else { return nil }
+        switch sectionID {
         case .project:
             return String(localized: "project_settings.footer.project_name_usage")
         case .chat:
@@ -135,144 +219,33 @@ final class ProjectSettingsViewController: UITableViewController {
         }
     }
 
-    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        guard let section = Section(rawValue: indexPath.section) else {
-            return UITableViewCell()
-        }
-
-        switch section {
-        case .project:
-            guard let row = ProjectRow(rawValue: indexPath.row) else { return UITableViewCell() }
-            switch row {
-            case .name:
-                guard
-                    let cell = tableView.dequeueReusableCell(
-                        withIdentifier: SettingsTextInputCell.reuseIdentifier,
-                        for: indexPath
-                    ) as? SettingsTextInputCell
-                else {
-                    return UITableViewCell()
-                }
-
-                cell.configure(
-                    title: String(localized: "project_settings.field.name_title"),
-                    text: projectNameText,
-                    placeholder: String(localized: "project_settings.field.name_placeholder"),
-                    autocapitalizationType: .words
-                ) { [weak self] text in
-                    self?.projectNameText = text
-                    self?.commitProjectName()
-                }
-                return cell
-            case .description:
-                let cell = tableView.dequeueReusableCell(withIdentifier: "ProjectSettingCell", for: indexPath)
-                var configuration = UIListContentConfiguration.subtitleCell()
-                configuration.text = String(
-                    localized: "project_settings.field.description_title",
-                    defaultValue: "Description"
-                )
-                configuration.secondaryText = projectDescriptionPreviewText()
-                configuration.secondaryTextProperties.color = .secondaryLabel
-                configuration.secondaryTextProperties.numberOfLines = 3
-                cell.contentConfiguration = configuration
-                cell.accessoryType = .disclosureIndicator
-                return cell
-            }
-
-        case .chat:
-            guard let row = ChatRow(rawValue: indexPath.row) else { return UITableViewCell() }
-            let cell = tableView.dequeueReusableCell(withIdentifier: "ChatSettingCell", for: indexPath)
-            var configuration = cell.defaultContentConfiguration()
-
-            switch row {
-            case .defaultModel:
-                configuration.text = String(localized: "project_settings.default_model.title")
-                if let selection = projectModelSelection {
-                    configuration.secondaryText = projectModelDisplayName(for: selection)
-                } else {
-                    configuration.secondaryText = String(localized: "project_settings.default_model.use_app_default")
-                }
-                configuration.secondaryTextProperties.color = .secondaryLabel
-                cell.contentConfiguration = configuration
-                cell.accessoryType = .disclosureIndicator
-            case .toolPermission:
-                configuration.text = String(localized: "project_settings.chat.tool_permission.title")
-                if let override = toolPermissionOverride {
-                    configuration.secondaryText = displayName(for: override)
-                } else {
-                    let appDefault = store.loadAppToolPermissionMode()
-                    configuration.secondaryText = String(
-                        format: String(localized: "project_settings.chat.tool_permission.default_format"),
-                        displayName(for: appDefault)
-                    )
-                }
-                configuration.secondaryTextProperties.color = .secondaryLabel
-                cell.contentConfiguration = configuration
-                cell.accessoryType = .disclosureIndicator
-            }
-            return cell
-
-        case .checkpoints:
-            guard let row = CheckpointRow(rawValue: indexPath.row) else {
-                return UITableViewCell()
-            }
-
-            switch row {
-            case .history:
-                let cell = tableView.dequeueReusableCell(withIdentifier: "CheckpointCell", for: indexPath)
-                var configuration = cell.defaultContentConfiguration()
-                configuration.text = String(localized: "project_settings.checkpoint.history_title")
-                configuration.secondaryText = String(localized: "project_settings.checkpoint.history_subtitle")
-                configuration.secondaryTextProperties.color = .secondaryLabel
-                cell.contentConfiguration = configuration
-                cell.accessoryType = .disclosureIndicator
-                return cell
-            }
-        }
-    }
+    // MARK: - Selection
 
     override func tableView(_ tableView: UITableView, willSelectRowAt indexPath: IndexPath) -> IndexPath? {
-        guard let section = Section(rawValue: indexPath.section) else { return nil }
-        switch section {
-        case .project:
-            guard let row = ProjectRow(rawValue: indexPath.row) else { return nil }
-            return row == .description ? indexPath : nil
-        case .chat:
-            return indexPath
-        case .checkpoints:
+        guard let itemID = diffableDataSource.itemIdentifier(for: indexPath) else { return nil }
+        switch itemID {
+        case .projectName:
+            return nil
+        case .projectDescription, .defaultModel, .toolPermission, .checkpointHistory:
             return indexPath
         }
     }
 
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         defer { tableView.deselectRow(at: indexPath, animated: true) }
-        guard let section = Section(rawValue: indexPath.section) else { return }
+        guard let itemID = diffableDataSource.itemIdentifier(for: indexPath) else { return }
 
-        switch section {
-        case .project:
-            guard let row = ProjectRow(rawValue: indexPath.row) else { break }
-            switch row {
-            case .name:
-                break
-            case .description:
-                presentProjectDescriptionEditor()
-            }
-
-        case .chat:
-            guard let row = ChatRow(rawValue: indexPath.row) else { break }
-            switch row {
-            case .defaultModel:
-                presentProjectModelSelection()
-            case .toolPermission:
-                presentToolPermissionPicker()
-            }
-
-        case .checkpoints:
-            guard let row = CheckpointRow(rawValue: indexPath.row) else { return }
-            switch row {
-            case .history:
-                openCheckpointsPage()
-            }
+        switch itemID {
+        case .projectName:
+            break
+        case .projectDescription:
+            presentProjectDescriptionEditor()
+        case .defaultModel:
+            presentProjectModelSelection()
+        case .toolPermission:
+            presentToolPermissionPicker()
+        case .checkpointHistory:
+            openCheckpointsPage()
         }
     }
 
@@ -287,13 +260,8 @@ final class ProjectSettingsViewController: UITableViewController {
         do {
             try ProjectLifecycleCoordinator.shared.renameProject(projectURL: projectURL, newName: name)
         } catch {
-            // Rename failed — revert text field to persisted name and reload
-            // the cell so the visible text matches the persisted value.
             projectNameText = store.loadProjectName(projectURL: projectURL)
-            tableView.reloadRows(
-                at: [IndexPath(row: ProjectRow.name.rawValue, section: Section.project.rawValue)],
-                with: .none
-            )
+            applySnapshot()
         }
     }
 
@@ -316,66 +284,31 @@ final class ProjectSettingsViewController: UITableViewController {
         controller.onDescriptionSaved = { [weak self] savedDescription in
             guard let self else { return }
             self.projectDescriptionText = savedDescription
-            self.tableView.reloadRows(
-                at: [IndexPath(row: ProjectRow.description.rawValue, section: Section.project.rawValue)],
-                with: .none
-            )
+            self.applySnapshot()
         }
         navigationController?.pushViewController(controller, animated: true)
     }
 
     // MARK: - Tool Permission Picker
 
-    private func displayName(for mode: ToolPermissionMode) -> String {
-        switch mode {
-        case .standard:
-            return String(localized: "tool_permission.mode.standard")
-        case .autoApproveNonDestructive:
-            return String(localized: "tool_permission.mode.auto_non_destructive")
-        case .fullAutoApprove:
-            return String(localized: "tool_permission.mode.full_auto")
-        }
-    }
-
     private func presentToolPermissionPicker() {
-        let alert = UIAlertController(
-            title: String(localized: "tool_permission.picker.title"),
-            message: String(localized: "tool_permission.picker.message"),
-            preferredStyle: .actionSheet
+        let currentMode = toolPermissionOverride ?? store.loadAppToolPermissionMode()
+        let controller = ToolPermissionPickerViewController(
+            currentMode: currentMode,
+            showsUseDefault: true,
+            isUsingDefault: toolPermissionOverride == nil
         )
-
-        // "Use Default" option
-        let defaultAction = UIAlertAction(
-            title: String(localized: "project_settings.chat.tool_permission.use_default"),
-            style: .default
-        ) { [weak self] _ in
-            self?.applyToolPermissionOverride(nil)
+        controller.onSelectionChanged = { [weak self] mode in
+            self?.applyToolPermissionOverride(mode)
         }
-        if toolPermissionOverride == nil {
-            defaultAction.setValue(true, forKey: "checked")
-        }
-        alert.addAction(defaultAction)
-
-        for mode in ToolPermissionMode.allCases {
-            let title = displayName(for: mode)
-            let action = UIAlertAction(title: title, style: .default) { [weak self] _ in
-                self?.applyToolPermissionOverride(mode)
-            }
-            if mode == toolPermissionOverride {
-                action.setValue(true, forKey: "checked")
-            }
-            alert.addAction(action)
-        }
-
-        alert.addAction(UIAlertAction(title: String(localized: "common.action.cancel"), style: .cancel))
-        present(alert, animated: true)
+        navigationController?.pushViewController(controller, animated: true)
     }
 
     private func applyToolPermissionOverride(_ mode: ToolPermissionMode?) {
         toolPermissionOverride = mode
         store.saveToolPermissionMode(projectURL: projectURL, mode: mode)
         ProjectChangeCenter.shared.notifyToolPermissionChanged(projectID: projectID)
-        tableView.reloadSections(IndexSet(integer: Section.chat.rawValue), with: .none)
+        applySnapshot()
     }
 
     // MARK: - Project Model Selection
@@ -414,7 +347,7 @@ final class ProjectSettingsViewController: UITableViewController {
                 selection,
                 projectID: self.projectID
             )
-            self.tableView.reloadSections(IndexSet(integer: Section.chat.rawValue), with: .none)
+            self.applySnapshot()
         }
         navigationController?.pushViewController(controller, animated: true)
     }
@@ -430,7 +363,7 @@ final class ProjectSettingsViewController: UITableViewController {
         }
 
         projectModelSelection = modelSelectionStore.loadProjectDefaultSelection(projectID: projectID)
-        tableView.reloadSections(IndexSet(integer: Section.chat.rawValue), with: .none)
+        applySnapshot()
     }
 
     private func handleProjectChange(_ change: ProjectChangeCenter.Change) {
@@ -442,10 +375,7 @@ final class ProjectSettingsViewController: UITableViewController {
         projectNameText = store.loadProjectName(projectURL: projectURL)
         projectDescriptionText = store.loadProjectDescription(projectURL: projectURL)
         toolPermissionOverride = store.loadProjectToolPermissionOverride(projectURL: projectURL)
-        tableView.reloadSections(
-            IndexSet([Section.project.rawValue, Section.chat.rawValue]),
-            with: .none
-        )
+        applySnapshot()
     }
 
     // MARK: - Actions
@@ -513,7 +443,7 @@ private final class ProjectDescriptionEditorViewController: UIViewController, UI
             localized: "project_settings.description_editor.title",
             defaultValue: "Project Description"
         )
-        view.backgroundColor = .systemGroupedBackground
+        view.backgroundColor = .doufuBackground
         navigationItem.rightBarButtonItem = saveButton
         view.addSubview(textView)
         NSLayoutConstraint.activate([
@@ -581,6 +511,8 @@ private final class ProjectCheckpointsViewController: UITableViewController {
     private var checkpoints: [ProjectGitService.CheckpointRecord] = []
     private var currentCheckpointID: String?
 
+    private var diffableDataSource: UITableViewDiffableDataSource<CheckpointSectionID, CheckpointItemID>!
+
     private lazy var dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale.autoupdatingCurrent
@@ -602,7 +534,10 @@ private final class ProjectCheckpointsViewController: UITableViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         title = String(localized: "checkpoint_list.title")
+        tableView.backgroundColor = .doufuBackground
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "CheckpointRow")
+        configureDiffableDataSource()
+        applySnapshot()
         reloadCheckpoints()
     }
 
@@ -611,44 +546,94 @@ private final class ProjectCheckpointsViewController: UITableViewController {
         reloadCheckpoints()
     }
 
-    override func numberOfSections(in tableView: UITableView) -> Int { 1 }
+    // MARK: - Diffable DataSource
 
-    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        max(1, checkpoints.count)
+    private func configureDiffableDataSource() {
+        diffableDataSource = UITableViewDiffableDataSource<CheckpointSectionID, CheckpointItemID>(
+            tableView: tableView
+        ) { [weak self] tableView, indexPath, itemID in
+            guard let self else { return UITableViewCell() }
+            return self.cell(for: tableView, indexPath: indexPath, itemID: itemID)
+        }
+        diffableDataSource.defaultRowAnimation = .none
     }
 
-    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+    private func cell(
+        for tableView: UITableView,
+        indexPath: IndexPath,
+        itemID: CheckpointItemID
+    ) -> UITableViewCell {
         let cell = tableView.dequeueReusableCell(withIdentifier: "CheckpointRow", for: indexPath)
+        var configuration = cell.defaultContentConfiguration()
 
-        guard !checkpoints.isEmpty, indexPath.row < checkpoints.count else {
-            var configuration = cell.defaultContentConfiguration()
+        switch itemID {
+        case .empty:
             configuration.text = String(localized: "checkpoint_list.empty")
             configuration.textProperties.color = .secondaryLabel
             cell.contentConfiguration = configuration
             cell.selectionStyle = .none
             cell.accessoryType = .none
             return cell
-        }
 
-        let checkpoint = checkpoints[indexPath.row]
-        var configuration = cell.defaultContentConfiguration()
-        configuration.text = checkpoint.userMessage.isEmpty
-            ? dateFormatter.string(from: checkpoint.date)
-            : checkpoint.userMessage
-        configuration.secondaryText = dateFormatter.string(from: checkpoint.date)
-        configuration.secondaryTextProperties.color = .secondaryLabel
-        cell.contentConfiguration = configuration
-        cell.selectionStyle = .default
-        cell.accessoryType = checkpoint.id == currentCheckpointID ? .checkmark : .none
-        return cell
+        case .checkpoint(let id, let isCurrent):
+            guard let checkpoint = checkpoints.first(where: { $0.id == id }) else {
+                cell.contentConfiguration = configuration
+                return cell
+            }
+            configuration.text = checkpoint.userMessage.isEmpty
+                ? dateFormatter.string(from: checkpoint.date)
+                : checkpoint.userMessage
+            configuration.secondaryText = dateFormatter.string(from: checkpoint.date)
+            configuration.secondaryTextProperties.color = .secondaryLabel
+            cell.contentConfiguration = configuration
+            cell.selectionStyle = .default
+            cell.accessoryType = isCurrent ? .checkmark : .none
+            return cell
+        }
     }
+
+    // MARK: - Snapshot
+
+    private func buildSnapshot() -> NSDiffableDataSourceSnapshot<CheckpointSectionID, CheckpointItemID> {
+        var snapshot = NSDiffableDataSourceSnapshot<CheckpointSectionID, CheckpointItemID>()
+        snapshot.appendSections([.checkpoints])
+
+        if checkpoints.isEmpty {
+            snapshot.appendItems([.empty], toSection: .checkpoints)
+        } else {
+            let items = checkpoints.map { checkpoint in
+                CheckpointItemID.checkpoint(
+                    id: checkpoint.id,
+                    isCurrent: checkpoint.id == currentCheckpointID
+                )
+            }
+            snapshot.appendItems(items, toSection: .checkpoints)
+        }
+        return snapshot
+    }
+
+    private func applySnapshot() {
+        var snapshot = buildSnapshot()
+        snapshot.reconfigureItems(snapshot.itemIdentifiers)
+        diffableDataSource.apply(snapshot, animatingDifferences: false)
+    }
+
+    // MARK: - Selection
 
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         defer { tableView.deselectRow(at: indexPath, animated: true) }
+        guard let itemID = diffableDataSource.itemIdentifier(for: indexPath) else { return }
 
-        guard !checkpoints.isEmpty, indexPath.row < checkpoints.count else { return }
-        let checkpoint = checkpoints[indexPath.row]
+        switch itemID {
+        case .empty:
+            return
+        case .checkpoint(let id, _):
+            guard let checkpoint = checkpoints.first(where: { $0.id == id }) else { return }
+            presentRestoreAlert(for: checkpoint)
+        }
+    }
 
+    private func presentRestoreAlert(for checkpoint: ProjectGitService.CheckpointRecord) {
         let alert = UIAlertController(
             title: String(localized: "checkpoint_list.alert.restore.title"),
             message: String(
@@ -663,6 +648,8 @@ private final class ProjectCheckpointsViewController: UITableViewController {
         })
         present(alert, animated: true)
     }
+
+    // MARK: - Data Loading
 
     private var isRestoring = false
     private var reloadTask: Task<Void, Never>?
@@ -680,7 +667,7 @@ private final class ProjectCheckpointsViewController: UITableViewController {
             guard !Task.isCancelled, let self else { return }
             self.checkpoints = checkpoints
             self.currentCheckpointID = currentID
-            self.tableView.reloadData()
+            self.applySnapshot()
         }
     }
 

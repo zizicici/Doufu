@@ -410,7 +410,7 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
         switch providerKind {
         case .openAICompatible:
             signInWithOpenAIOAuth()
-        case .anthropic, .googleGemini:
+        case .anthropic:
             guard let loginURL = oauthLoginURL(for: providerKind) else {
                 showError(message: "OAuth login URL unavailable.")
                 return
@@ -419,6 +419,10 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
             safariController.delegate = self
             loginSafariViewController = safariController
             present(safariController, animated: true)
+        case .googleGemini:
+            // Gemini only supports API Key auth; this VC should not be
+            // reachable for Gemini providers.
+            break
         }
     }
 
@@ -636,7 +640,7 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
         case .anthropic:
             return "Sign in with Anthropic"
         case .googleGemini:
-            return "Sign in with Google for Cloud Code Assist"
+            return ""
         }
     }
 
@@ -647,7 +651,7 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
         case .anthropic:
             return "Login opens Anthropic account page. Paste OAuth bearer token below."
         case .googleGemini:
-            return "Login opens Google OAuth page for Cloud Code Assist. Paste OAuth bearer token below."
+            return ""
         }
     }
 
@@ -658,7 +662,7 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
         case .anthropic:
             return URL(string: "https://console.anthropic.com/login")
         case .googleGemini:
-            return URL(string: "https://accounts.google.com/o/oauth2/v2/auth")
+            return nil
         }
     }
 

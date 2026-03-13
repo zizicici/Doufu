@@ -244,7 +244,7 @@ final class SettingsViewController: UITableViewController {
             case .toolPermission:
                 let mode = projectStore.loadAppToolPermissionMode()
                 configuration.text = String(localized: "settings.chat.tool_permission.title")
-                configuration.secondaryText = displayName(for: mode)
+                configuration.secondaryText = ToolPermissionPickerViewController.displayName(for: mode)
             case .pipProgress:
                 configuration.text = String(localized: "settings.chat.pip_progress.title")
                 configuration.secondaryText = PiPProgressManager.shared.isEnabled
@@ -400,18 +400,18 @@ final class SettingsViewController: UITableViewController {
 
     // MARK: - Pickers
 
-    private func makeToolPermissionPicker() -> SettingsPickerViewController {
-        let modes = ToolPermissionMode.allCases
-        return SettingsPickerViewController(
-            title: String(localized: "settings.chat.tool_permission.title"),
-            options: modes.map { SettingsPickerOption(displayName(for: $0), subtitle: subtitle(for: $0)) },
-            footerText: String(localized: "settings.chat.tool_permission.footer"),
-            selectedIndex: { [projectStore] in
-                let current = projectStore.loadAppToolPermissionMode()
-                return modes.firstIndex(of: current) ?? 0
-            },
-            onSelect: { [projectStore] index in projectStore.saveAppToolPermissionMode(modes[index]) }
+    private func makeToolPermissionPicker() -> ToolPermissionPickerViewController {
+        let currentMode = projectStore.loadAppToolPermissionMode()
+        let controller = ToolPermissionPickerViewController(
+            currentMode: currentMode,
+            showsUseDefault: false
         )
+        controller.onSelectionChanged = { [projectStore] mode in
+            if let mode {
+                projectStore.saveAppToolPermissionMode(mode)
+            }
+        }
+        return controller
     }
 
     private func makePiPProgressPicker() -> SettingsPickerViewController {
@@ -426,27 +426,6 @@ final class SettingsViewController: UITableViewController {
         )
     }
 
-    private func displayName(for mode: ToolPermissionMode) -> String {
-        switch mode {
-        case .standard:
-            return String(localized: "tool_permission.mode.standard")
-        case .autoApproveNonDestructive:
-            return String(localized: "tool_permission.mode.auto_non_destructive")
-        case .fullAutoApprove:
-            return String(localized: "tool_permission.mode.full_auto")
-        }
-    }
-
-    private func subtitle(for mode: ToolPermissionMode) -> String {
-        switch mode {
-        case .standard:
-            return String(localized: "tool_permission.mode.standard.subtitle")
-        case .autoApproveNonDestructive:
-            return String(localized: "tool_permission.mode.auto_non_destructive.subtitle")
-        case .fullAutoApprove:
-            return String(localized: "tool_permission.mode.full_auto.subtitle")
-        }
-    }
 
     // MARK: - App Jun
 

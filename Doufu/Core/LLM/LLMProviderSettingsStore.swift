@@ -380,8 +380,10 @@ final class LLMProviderSettingsStore {
             models: []
         )
 
-        try saveProviderToDB(provider)
+        // Save credential first so a Keychain failure does not leave a
+        // credential-less provider row in the database.
         try saveAPIKey(normalizedAPIKey, providerID: provider.id)
+        try saveProviderToDB(provider)
         return provider
     }
 
@@ -437,12 +439,13 @@ final class LLMProviderSettingsStore {
             models: []
         )
 
-        try saveProviderToDB(provider)
-
+        // Save credential first so a Keychain failure does not leave a
+        // credential-less provider row in the database.
         let normalizedToken = bearerToken?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !normalizedToken.isEmpty {
             try saveOAuthBearerToken(normalizedToken, providerID: provider.id)
         }
+        try saveProviderToDB(provider)
         return provider
     }
 
@@ -498,10 +501,13 @@ final class LLMProviderSettingsStore {
             chatGPTAccountID: .some(nil),
             modelID: .some(normalizedModelID)
         )
-        try saveProviderToDB(updatedProvider)
+        // Save new credential before updating the DB so a Keychain failure
+        // does not leave the provider in an inconsistent authMode state.
         try saveAPIKey(normalizedAPIKey, providerID: providerID)
+        try saveProviderToDB(updatedProvider)
+        // Best-effort cleanup of the old credential slot.
         if existingProvider.authMode == .oauth {
-            try deleteOAuthBearerToken(providerID: providerID)
+            try? deleteOAuthBearerToken(providerID: providerID)
         }
         return updatedProvider
     }
@@ -561,10 +567,13 @@ final class LLMProviderSettingsStore {
             chatGPTAccountID: .some(chatGPTAccountID?.trimmingCharacters(in: .whitespacesAndNewlines)),
             modelID: .some(normalizedModelID)
         )
-        try saveProviderToDB(updatedProvider)
+        // Save new credential before updating the DB so a Keychain failure
+        // does not leave the provider in an inconsistent authMode state.
         try saveOAuthBearerToken(normalizedToken, providerID: providerID)
+        try saveProviderToDB(updatedProvider)
+        // Best-effort cleanup of the old credential slot.
         if existingProvider.authMode == .apiKey {
-            try deleteAPIKey(providerID: providerID)
+            try? deleteAPIKey(providerID: providerID)
         }
         return updatedProvider
     }
@@ -661,8 +670,10 @@ final class LLMProviderSettingsStore {
         try dbPool.write { db in
             try DBProvider.deleteOne(db, key: id)
         }
-        try deleteAPIKey(providerID: id)
-        try deleteOAuthBearerToken(providerID: id)
+        // Best-effort cleanup of both Keychain slots.  A failure in one
+        // should not prevent the other from being attempted.
+        try? deleteAPIKey(providerID: id)
+        try? deleteOAuthBearerToken(providerID: id)
     }
 
     // MARK: - Project-level Model Selection

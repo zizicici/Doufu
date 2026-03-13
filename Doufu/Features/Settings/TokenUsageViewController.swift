@@ -567,6 +567,7 @@ final class SegmentedControlTableViewCell: UITableViewCell {
         segmentedControl.translatesAutoresizingMaskIntoConstraints = false
         segmentedControl.selectedSegmentTintColor = .tintColor
         segmentedControl.addTarget(self, action: #selector(valueDidChange), for: .valueChanged)
+        segmentedControl.tintColor = .doufuPaper
 
         contentView.addSubview(segmentedControl)
         NSLayoutConstraint.activate([
