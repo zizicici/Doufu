@@ -553,9 +553,8 @@ final class ProjectWorkspaceViewController: UIViewController {
 
     private func isOverExitTarget(panelFrame: CGRect) -> Bool {
         let center = exitTargetCenter()
-        let panelTrailing = panelFrame.maxX
-        let distance = abs(panelTrailing - center.x)
-        return distance < exitTargetSize / 2
+        let targetLeftEdge = center.x - exitTargetSize / 2
+        return panelFrame.maxX >= targetLeftEdge
     }
 
     private func hideExitTarget(animated: Bool) {
