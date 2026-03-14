@@ -36,6 +36,96 @@
     },
     "Doufu Project Archive" : {
 
+    },
+    "NSCameraUsageDescription" : {
+      "comment" : "Camera usage description for App Review",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "With your permission, projects in Doufu will use the camera for features such as QR code scanning, photo capture, and AR experiences. You can control camera access for each project at any time in Settings."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "豆腐中的项目在你允许的前提下，将使用相机进行功能的开发与展示，例如扫描二维码、拍照上传、AR 互动体验等，你可以随时在设置中控制不同项目的相机权限。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "豆腐中的專案在你允許的前提下，將使用相機進行功能的開發與展示，例如掃描 QR Code、拍照上傳、AR 互動體驗等，你可以隨時在設定中控制不同專案的相機權限。"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "豆腐入面嘅專案喺你允許嘅前提下，將會使用相機進行功能嘅開發同展示，例如掃描 QR Code、影相上傳、AR 互動體驗等，你可以隨時喺設定入面控制唔同專案嘅相機權限。"
+          }
+        }
+      }
+    },
+    "NSMicrophoneUsageDescription" : {
+      "comment" : "Microphone usage description for App Review",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "With your permission, projects in Doufu will use the microphone for features such as voice memos, speech recognition, and audio visualization. You can control microphone access for each project at any time in Settings."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "豆腐中的项目在你允许的前提下，将使用麦克风进行功能的开发与展示，例如语音备忘录、语音识别、音频可视化等，你可以随时在设置中控制不同项目的麦克风权限。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "豆腐中的專案在你允許的前提下，將使用麥克風進行功能的開發與展示，例如語音備忘錄、語音辨識、音訊視覺化等，你可以隨時在設定中控制不同專案的麥克風權限。"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "豆腐入面嘅專案喺你允許嘅前提下，將會使用麥克風進行功能嘅開發同展示，例如語音備忘錄、語音識別、音頻視覺化等，你可以隨時喺設定入面控制唔同專案嘅麥克風權限。"
+          }
+        }
+      }
+    },
+    "NSLocationWhenInUseUsageDescription" : {
+      "comment" : "Location usage description for App Review",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "With your permission, projects in Doufu will use your location for features such as local weather forecasts, sunrise and sunset times, and nearby place discovery. You can control location access for each project at any time in Settings."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "豆腐中的项目在你允许的前提下，将使用位置信息进行功能的开发与展示，例如基于地理信息的天气预报、日出日落时间、附近地点发现等，你可以随时在设置中控制不同项目的位置权限。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "豆腐中的專案在你允許的前提下，將使用位置資訊進行功能的開發與展示，例如基於地理資訊的天氣預報、日出日落時間、附近地點探索等，你可以隨時在設定中控制不同專案的位置權限。"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "豆腐入面嘅專案喺你允許嘅前提下，將會使用位置資訊進行功能嘅開發同展示，例如基於地理資訊嘅天氣預報、日出日落時間、附近地點探索等，你可以隨時喺設定入面控制唔同專案嘅位置權限。"
+          }
+        }
+      }
     }
   },
   "version" : "1.1"

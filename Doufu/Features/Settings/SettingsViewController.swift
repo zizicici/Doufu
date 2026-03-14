@@ -6,6 +6,8 @@
 //
 
 import AppInfo
+import AVFoundation
+import CoreLocation
 import SafariServices
 import StoreKit
 import UIKit
@@ -67,7 +69,7 @@ final class SettingsViewController: UITableViewController {
     // MARK: - Diffable DataSource
 
     private func configureDiffableDataSource() {
-        diffableDataSource = UITableViewDiffableDataSource<SettingsSectionID, SettingsItemID>(
+        diffableDataSource = SettingsDataSource(
             tableView: tableView
         ) { [weak self] tableView, indexPath, itemID in
             guard let self else { return UITableViewCell() }
@@ -87,6 +89,33 @@ final class SettingsViewController: UITableViewController {
             cell.accessoryType = .disclosureIndicator
             var configuration = UIListContentConfiguration.valueCell()
             configuration.text = String(localized: "settings.general.language.title")
+            configuration.secondaryText = secondaryText
+            cell.contentConfiguration = configuration
+            return cell
+
+        case .cameraPermission(let secondaryText):
+            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
+            cell.accessoryType = .disclosureIndicator
+            var configuration = UIListContentConfiguration.valueCell()
+            configuration.text = String(localized: "settings.permissions.camera")
+            configuration.secondaryText = secondaryText
+            cell.contentConfiguration = configuration
+            return cell
+
+        case .microphonePermission(let secondaryText):
+            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
+            cell.accessoryType = .disclosureIndicator
+            var configuration = UIListContentConfiguration.valueCell()
+            configuration.text = String(localized: "settings.permissions.microphone")
+            configuration.secondaryText = secondaryText
+            cell.contentConfiguration = configuration
+            return cell
+
+        case .locationPermission(let secondaryText):
+            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
+            cell.accessoryType = .disclosureIndicator
+            var configuration = UIListContentConfiguration.valueCell()
+            configuration.text = String(localized: "settings.permissions.location")
             configuration.secondaryText = secondaryText
             cell.contentConfiguration = configuration
             return cell
@@ -225,7 +254,7 @@ final class SettingsViewController: UITableViewController {
 
     private func buildSnapshot() -> NSDiffableDataSourceSnapshot<SettingsSectionID, SettingsItemID> {
         var snapshot = NSDiffableDataSourceSnapshot<SettingsSectionID, SettingsItemID>()
-        snapshot.appendSections([.general, .llmProviders, .project, .contact, .appjun, .about])
+        snapshot.appendSections([.general, .llmProviders, .project, .permissions, .contact, .appjun, .about])
 
         // General
         snapshot.appendItems([
@@ -252,6 +281,13 @@ final class SettingsViewController: UITableViewController {
                 : String(localized: "settings.common.off")),
         ], toSection: .project)
 
+        // Permissions
+        snapshot.appendItems([
+            .cameraPermission(secondaryText: cameraPermissionStatus()),
+            .microphonePermission(secondaryText: microphonePermissionStatus()),
+            .locationPermission(secondaryText: locationPermissionStatus()),
+        ], toSection: .permissions)
+
         // Contact
         snapshot.appendItems([.email, .xiaohongshu, .bilibili], toSection: .contact)
 
@@ -272,36 +308,6 @@ final class SettingsViewController: UITableViewController {
         diffableDataSource.apply(snapshot, animatingDifferences: false)
     }
 
-    // MARK: - Section Headers & Footers
-
-    override func tableView(_ tableView: UITableView, titleForHeaderInSection sectionIndex: Int) -> String? {
-        guard let sectionID = diffableDataSource.sectionIdentifier(for: sectionIndex) else { return nil }
-        switch sectionID {
-        case .general:
-            return String(localized: "settings.section.general")
-        case .llmProviders:
-            return String(localized: "settings.section.llm_providers")
-        case .project:
-            return String(localized: "settings.section.project")
-        case .contact:
-            return String(localized: "settings.section.contact")
-        case .appjun:
-            return String(localized: "settings.section.appjun")
-        case .about:
-            return String(localized: "settings.section.about")
-        }
-    }
-
-    override func tableView(_ tableView: UITableView, titleForFooterInSection sectionIndex: Int) -> String? {
-        guard let sectionID = diffableDataSource.sectionIdentifier(for: sectionIndex) else { return nil }
-        switch sectionID {
-        case .llmProviders:
-            return String(localized: "settings.section.llm_providers.footer")
-        case .general, .project, .contact, .appjun, .about:
-            return nil
-        }
-    }
-
     // MARK: - Selection
 
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
@@ -313,6 +319,15 @@ final class SettingsViewController: UITableViewController {
             if let url = URL(string: UIApplication.openSettingsURLString) {
                 UIApplication.shared.open(url)
             }
+
+        case .cameraPermission:
+            handlePermissionTap(mediaType: .video)
+
+        case .microphonePermission:
+            handlePermissionTap(mediaType: .audio)
+
+        case .locationPermission:
+            handleLocationPermissionTap()
 
         case .manageProviders:
             let controller = ManageProvidersViewController()
@@ -441,6 +456,87 @@ final class SettingsViewController: UITableViewController {
         )
     }
 
+    // MARK: - Permission Status
+
+    private func cameraPermissionStatus() -> String {
+        permissionStatusText(for: AVCaptureDevice.authorizationStatus(for: .video))
+    }
+
+    private func microphonePermissionStatus() -> String {
+        permissionStatusText(for: AVCaptureDevice.authorizationStatus(for: .audio))
+    }
+
+    private func locationPermissionStatus() -> String {
+        let status = CLLocationManager().authorizationStatus
+        switch status {
+        case .notDetermined:
+            return String(localized: "settings.permissions.status.not_requested")
+        case .authorizedWhenInUse, .authorizedAlways:
+            return String(localized: "settings.permissions.status.allowed")
+        case .denied:
+            return String(localized: "settings.permissions.status.denied")
+        case .restricted:
+            return String(localized: "settings.permissions.status.restricted")
+        @unknown default:
+            return String(localized: "settings.permissions.status.not_requested")
+        }
+    }
+
+    private func permissionStatusText(for status: AVAuthorizationStatus) -> String {
+        switch status {
+        case .notDetermined:
+            return String(localized: "settings.permissions.status.not_requested")
+        case .authorized:
+            return String(localized: "settings.permissions.status.allowed")
+        case .denied:
+            return String(localized: "settings.permissions.status.denied")
+        case .restricted:
+            return String(localized: "settings.permissions.status.restricted")
+        @unknown default:
+            return String(localized: "settings.permissions.status.not_requested")
+        }
+    }
+
+    // MARK: - Permission Requests
+
+    private func handlePermissionTap(mediaType: AVMediaType) {
+        let status = AVCaptureDevice.authorizationStatus(for: mediaType)
+        switch status {
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: mediaType) { [weak self] _ in
+                Task { @MainActor in self?.applySnapshot() }
+            }
+        case .denied, .restricted:
+            openSystemSettings()
+        case .authorized:
+            break
+        @unknown default:
+            break
+        }
+    }
+
+    private lazy var locationManager = CLLocationManager()
+
+    private func handleLocationPermissionTap() {
+        let status = locationManager.authorizationStatus
+        switch status {
+        case .notDetermined:
+            locationManager.delegate = self
+            locationManager.requestWhenInUseAuthorization()
+        case .denied, .restricted:
+            openSystemSettings()
+        case .authorizedWhenInUse, .authorizedAlways:
+            break
+        @unknown default:
+            break
+        }
+    }
+
+    private func openSystemSettings() {
+        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+        UIApplication.shared.open(url)
+    }
+
     // MARK: - App Jun
 
     private func refreshAppJunApps() {
@@ -487,6 +583,26 @@ final class SettingsViewController: UITableViewController {
         guard let url = URL(string: "https://space.bilibili.com/4969209") else { return }
         let safari = SFSafariViewController(url: url)
         present(safari, animated: true)
+    }
+}
+
+// MARK: - DataSource (header/footer support)
+
+private final class SettingsDataSource: UITableViewDiffableDataSource<SettingsSectionID, SettingsItemID> {
+    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
+        sectionIdentifier(for: section)?.header
+    }
+
+    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
+        sectionIdentifier(for: section)?.footer
+    }
+}
+
+// MARK: - CLLocationManagerDelegate
+
+extension SettingsViewController: CLLocationManagerDelegate {
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        applySnapshot()
     }
 }
 
