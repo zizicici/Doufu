@@ -188,5 +188,21 @@ nonisolated final class DatabaseManager {
             }
         }
 
+        migrator.registerMigration("v2_add_indexes") { db in
+            // Index on token_usage.created_at for daily aggregation queries.
+            try db.create(
+                index: "idx_token_usage_created_at",
+                on: "token_usage",
+                columns: ["created_at"]
+            )
+
+            // Composite index on message(thread_id, sort_order) for ordered message loading.
+            try db.create(
+                index: "idx_message_thread_sort",
+                on: "message",
+                columns: ["thread_id", "sort_order"]
+            )
+        }
+
     }
 }
