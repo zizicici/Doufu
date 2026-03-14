@@ -188,6 +188,7 @@
 				14D0MD022F5D000000AA2002 /* Markdown */,
 				1425E85C2F62DF77009A38B0 /* AppInfo */,
 				1425EA2F2F644A84009A38B0 /* GRDB */,
+				14A0BC022F75000000AA3002 /* WebRTC */,
 			);
 			productName = Doufu;
 			productReference = 450D41E02F40B7430025E0BB /* Doufu.app */;
@@ -227,6 +228,7 @@
 				14D0MD012F5D000000AA2002 /* XCRemoteSwiftPackageReference "swift-markdown" */,
 				1425E85B2F62DF77009A38B0 /* XCRemoteSwiftPackageReference "AppInfo" */,
 				1425EA2E2F644A83009A38B0 /* XCRemoteSwiftPackageReference "GRDB" */,
+				14A0BC012F75000000AA3001 /* XCRemoteSwiftPackageReference "WebRTC" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 450D41E12F40B7430025E0BB /* Products */;
@@ -597,6 +599,14 @@
 				minimumVersion = 0.5.0;
 			};
 		};
+		14A0BC012F75000000AA3001 /* XCRemoteSwiftPackageReference "WebRTC" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/stasel/WebRTC.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 130.0.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -664,6 +674,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 14D0MD012F5D000000AA2002 /* XCRemoteSwiftPackageReference "swift-markdown" */;
 			productName = Markdown;
+		};
+		14A0BC022F75000000AA3002 /* WebRTC */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 14A0BC012F75000000AA3001 /* XCRemoteSwiftPackageReference "WebRTC" */;
+			productName = WebRTC;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

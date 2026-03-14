@@ -14,6 +14,8 @@ enum CapabilityType: CaseIterable, Sendable {
     case location
     case clipboardRead
     case clipboardWrite
+    case photoPick
+    case photoSave
 
     var dbKey: String {
         switch self {
@@ -22,6 +24,8 @@ enum CapabilityType: CaseIterable, Sendable {
         case .location: return "location"
         case .clipboardRead: return "clipboard_read"
         case .clipboardWrite: return "clipboard_write"
+        case .photoPick: return "photo_pick"
+        case .photoSave: return "photo_save"
         }
     }
 
@@ -32,14 +36,17 @@ enum CapabilityType: CaseIterable, Sendable {
         case .location: return String(localized: "capability.name.location")
         case .clipboardRead: return String(localized: "capability.name.clipboard_read")
         case .clipboardWrite: return String(localized: "capability.name.clipboard_write")
+        case .photoPick: return String(localized: "capability.name.photo_pick")
+        case .photoSave: return String(localized: "capability.name.photo_save")
         }
     }
 
-    /// Whether this capability requires a system-level permission (camera/mic/location).
+    /// Whether this capability requires a system-level permission (camera/mic/location/photoSave).
+    /// photoPick uses PHPicker which requires no system permission.
     var hasSystemPermission: Bool {
         switch self {
-        case .camera, .microphone, .location: return true
-        case .clipboardRead, .clipboardWrite: return false
+        case .camera, .microphone, .location, .photoSave: return true
+        case .clipboardRead, .clipboardWrite, .photoPick: return false
         }
     }
 

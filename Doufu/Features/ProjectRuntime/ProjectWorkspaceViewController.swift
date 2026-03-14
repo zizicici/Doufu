@@ -7,6 +7,8 @@
 
 import AVFoundation
 import CoreLocation
+import Photos
+import PhotosUI
 import UIKit
 import WebKit
 
@@ -89,10 +91,20 @@ final class ProjectWorkspaceViewController: UIViewController {
     private var locationGetCompletions: [(Result<String, DoufuBridgeCapabilityError>) -> Void] = []
     private var activeWatchIDs: Set<String> = []
     private var nextWatchID: Int = 1
+    private lazy var mediaSessionManager: MediaSessionManager = {
+        let m = MediaSessionManager()
+        m.bridge = doufuBridge
+        return m
+    }()
+    private var photoPickCompletion: ((Result<String, DoufuBridgeCapabilityError>) -> Void)?
 
     private lazy var webView: WKWebView = {
         let configuration = WKWebViewConfiguration()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
+        // Allow <video> to play inline (without this, iOS forces native full-screen player).
+        configuration.allowsInlineMediaPlayback = true
+        // Allow autoplay without requiring a user gesture (needed for camera preview).
+        configuration.mediaTypesRequiringUserActionForPlayback = []
         // Per-project data store: cookies and cache are isolated per project.
         // (IndexedDB and localStorage are handled by DoufuBridge → AppData/)
         if let storeID = UUID(uuidString: projectIdentifier) {
@@ -261,6 +273,9 @@ final class ProjectWorkspaceViewController: UIViewController {
             NotificationCenter.default.removeObserver(appDidBecomeActiveObserver)
         }
         webServer.stop()
+        MainActor.assumeIsolated {
+            mediaSessionManager.stopAll()
+        }
         stopLocationServices()
         doufuBridge.unregister(from: webView.configuration)
         webView.configuration.userContentController.removeScriptMessageHandler(forName: jsErrorHandlerName)
@@ -274,6 +289,7 @@ final class ProjectWorkspaceViewController: UIViewController {
         installWebLoadingCover()
         configureFloatingPanel()
         doufuBridge.capabilityDelegate = self
+        doufuBridge.mediaDelegate = mediaSessionManager
         doufuBridge.webView = webView
         projectChangeObserver = projectChangeCenter.addObserver(projectID: project.id) { [weak self] change in
             self?.handleProjectChange(change)
@@ -1070,6 +1086,10 @@ extension ProjectWorkspaceViewController: WKUIDelegate {
 }
 
 extension ProjectWorkspaceViewController: WKNavigationDelegate {
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        mediaSessionManager.stopAll()
+    }
+
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         lastPresentedJSErrorSignature = nil
         removeWebLoadingCover()
@@ -1115,9 +1135,16 @@ extension ProjectWorkspaceViewController: DoufuBridgeCapabilityDelegate {
         options: [String: Any],
         completion: @escaping (Result<String, DoufuBridgeCapabilityError>) -> Void
     ) {
-        // Teardown actions bypass permission checks entirely — they are cleanup
-        // operations and must always succeed (otherwise native resources leak).
-        if action == "clearWatch" || action == "stop" {
+        // Teardown and control actions bypass permission checks — they operate
+        // on an already-authorized session and must not re-prompt.
+        let bypassActions: Set<String> = ["stop", "clearWatch", "focus", "exposure", "torch", "zoom"]
+        if bypassActions.contains(action) {
+            executeCapability(type: type, action: action, options: options, completion: completion)
+            return
+        }
+
+        // PHPicker is privacy-safe (user picks what to share) — skip all permission checks.
+        if type == .photoPick {
             executeCapability(type: type, action: action, options: options, completion: completion)
             return
         }
@@ -1186,7 +1213,14 @@ extension ProjectWorkspaceViewController: DoufuBridgeCapabilityDelegate {
             case .authorizedWhenInUse, .authorizedAlways: completion(.authorized)
             default: completion(.denied)
             }
-        case .clipboardRead, .clipboardWrite:
+        case .photoSave:
+            let status = PHPhotoLibrary.authorizationStatus(for: .addOnly)
+            switch status {
+            case .notDetermined: completion(.notDetermined)
+            case .authorized, .limited: completion(.authorized)
+            default: completion(.denied)
+            }
+        case .photoPick, .clipboardRead, .clipboardWrite:
             completion(.authorized)
         }
     }
@@ -1216,6 +1250,12 @@ extension ProjectWorkspaceViewController: DoufuBridgeCapabilityDelegate {
             capabilityLocationCompletion = completion
             capabilityLocationManager.delegate = self
             capabilityLocationManager.requestWhenInUseAuthorization()
+        case .photoSave:
+            PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
+                Task { @MainActor in
+                    completion(status == .authorized || status == .limited)
+                }
+            }
         default:
             completion(true)
         }
@@ -1273,11 +1313,130 @@ extension ProjectWorkspaceViewController: DoufuBridgeCapabilityDelegate {
             executeClipboardWrite(options: options, completion: completion)
         case .location:
             executeLocation(action: action, options: options, completion: completion)
-        case .camera, .microphone:
+        case .camera:
+            switch action {
+            case "stop":
+                mediaSessionManager.stopCamera()
+                completion(.success("null"))
+            case "focus":
+                let x = options["x"] as? Double ?? 0.5
+                let y = options["y"] as? Double ?? 0.5
+                completeCameraControl(mediaSessionManager.focus(x: x, y: y), completion: completion)
+            case "exposure":
+                let bias = Float(options["bias"] as? Double ?? 0.0)
+                completeCameraControl(mediaSessionManager.setExposure(bias: bias), completion: completion)
+            case "torch":
+                let mode = options["mode"] as? String ?? "off"
+                completeCameraControl(mediaSessionManager.setTorch(mode: mode), completion: completion)
+            case "zoom":
+                let factor = options["factor"] as? Double ?? 1.0
+                completeCameraControl(mediaSessionManager.setZoom(factor: factor), completion: completion)
+            default: // "start"
+                let facing = options["facing"] as? String ?? "user"
+                mediaSessionManager.startCamera(facing: facing, options: options) { result in
+                    switch result {
+                    case .success:
+                        completion(.success("null"))
+                    case .failure(let error):
+                        completion(.failure(error))
+                    }
+                }
+            }
+        case .microphone:
+            if action == "stop" {
+                mediaSessionManager.stopMicrophone()
+                completion(.success("null"))
+            } else {
+                mediaSessionManager.startMicrophone { result in
+                    switch result {
+                    case .success:
+                        completion(.success("null"))
+                    case .failure(let error):
+                        completion(.failure(error))
+                    }
+                }
+            }
+        case .photoPick:
+            executePhotoPick(options: options, completion: completion)
+        case .photoSave:
+            executePhotoSave(options: options, completion: completion)
+        }
+    }
+
+    // MARK: - Photos (Pick + Save)
+
+    private func executePhotoPick(
+        options: [String: Any],
+        completion: @escaping (Result<String, DoufuBridgeCapabilityError>) -> Void
+    ) {
+        let multiple = options["multiple"] as? Bool ?? false
+        let limit = options["limit"] as? Int ?? (multiple ? 9 : 1)
+
+        var config = PHPickerConfiguration()
+        config.selectionLimit = multiple ? limit : 1
+        config.filter = .images
+
+        let picker = PHPickerViewController(configuration: config)
+        picker.delegate = self
+        photoPickCompletion = completion
+        present(picker, animated: true)
+    }
+
+    private func executePhotoSave(
+        options: [String: Any],
+        completion: @escaping (Result<String, DoufuBridgeCapabilityError>) -> Void
+    ) {
+        guard let dataUrl = options["data"] as? String else {
             completion(.failure(DoufuBridgeCapabilityError(
-                message: "Capability not yet implemented.",
-                name: "NotSupportedError"
+                message: "Missing 'data' parameter (data URL string).",
+                name: "TypeError"
             )))
+            return
+        }
+
+        // Parse data URL: "data:image/jpeg;base64,/9j/4AAQ..."
+        guard let commaIndex = dataUrl.firstIndex(of: ",") else {
+            completion(.failure(DoufuBridgeCapabilityError(
+                message: "Invalid data URL format.",
+                name: "TypeError"
+            )))
+            return
+        }
+        let base64String = String(dataUrl[dataUrl.index(after: commaIndex)...])
+        guard let imageData = Data(base64Encoded: base64String),
+              let image = UIImage(data: imageData) else {
+            completion(.failure(DoufuBridgeCapabilityError(
+                message: "Failed to decode image from data URL.",
+                name: "TypeError"
+            )))
+            return
+        }
+
+        PHPhotoLibrary.shared().performChanges({
+            PHAssetCreationRequest.creationRequestForAsset(from: image)
+        }) { success, error in
+            Task { @MainActor in
+                if success {
+                    completion(.success("null"))
+                } else {
+                    completion(.failure(DoufuBridgeCapabilityError(
+                        message: error?.localizedDescription ?? "Failed to save photo.",
+                        name: "NotAllowedError"
+                    )))
+                }
+            }
+        }
+    }
+
+    private func completeCameraControl(
+        _ result: Result<Void, DoufuBridgeCapabilityError>,
+        completion: @escaping (Result<String, DoufuBridgeCapabilityError>) -> Void
+    ) {
+        switch result {
+        case .success:
+            completion(.success("null"))
+        case .failure(let error):
+            completion(.failure(error))
         }
     }
 
@@ -1455,6 +1614,70 @@ extension ProjectWorkspaceViewController: CLLocationManagerDelegate {
         locationGetCompletions.removeAll()
         for c in getCompletions {
             c(.failure(err))
+        }
+    }
+}
+
+// MARK: - PHPickerViewControllerDelegate
+
+extension ProjectWorkspaceViewController: PHPickerViewControllerDelegate {
+    func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+        picker.dismiss(animated: true)
+
+        guard let completion = photoPickCompletion else { return }
+        photoPickCompletion = nil
+
+        if results.isEmpty {
+            completion(.failure(DoufuBridgeCapabilityError(
+                message: "User cancelled photo selection.",
+                name: "AbortError"
+            )))
+            return
+        }
+
+        let group = DispatchGroup()
+        var dataUrls: [String] = []
+        let lock = NSLock()
+
+        for result in results {
+            group.enter()
+            result.itemProvider.loadObject(ofClass: UIImage.self) { object, _ in
+                defer { group.leave() }
+                guard let image = object as? UIImage,
+                      let jpegData = image.jpegData(compressionQuality: 0.9) else { return }
+                let base64 = jpegData.base64EncodedString()
+                let dataUrl = "data:image/jpeg;base64,\(base64)"
+                lock.lock()
+                dataUrls.append(dataUrl)
+                lock.unlock()
+            }
+        }
+
+        group.notify(queue: .main) {
+            if dataUrls.isEmpty {
+                completion(.failure(DoufuBridgeCapabilityError(
+                    message: "Failed to load selected photos.",
+                    name: "NotReadableError"
+                )))
+                return
+            }
+            // Single pick → return string directly; multiple → return JSON array
+            if results.count == 1 {
+                // Encode as JSON string so JS receives a proper string value
+                if let jsonData = try? JSONEncoder().encode(dataUrls[0]),
+                   let json = String(data: jsonData, encoding: .utf8) {
+                    completion(.success(json))
+                } else {
+                    completion(.success("\"\(dataUrls[0])\""))
+                }
+            } else {
+                if let jsonData = try? JSONEncoder().encode(dataUrls),
+                   let json = String(data: jsonData, encoding: .utf8) {
+                    completion(.success(json))
+                } else {
+                    completion(.success("[]"))
+                }
+            }
         }
     }
 }

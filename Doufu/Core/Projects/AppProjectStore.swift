@@ -534,6 +534,7 @@ final class AppProjectStore {
         - `fetch()`: Cross-origin requests are automatically proxied. No CORS issues — just use `fetch('https://...')` normally.
         - `localStorage`: Natively persisted by the host app. Use it for any app data.
         - `IndexedDB`: Natively persisted by the host app. Use it for structured or large-volume data. Limitations: do not store `Blob`/`File` values, use `ArrayBuffer` or base64 instead; no transaction isolation between concurrent readwrite transactions; cursors are snapshot-based and won't reflect writes made during iteration.
+        - **Native capabilities**: Standard browser APIs for camera, microphone, geolocation, and clipboard are **blocked**. Use the `doufu.*` JavaScript API instead (e.g. `doufu.camera.start()`, `doufu.mic.start()`, `doufu.location.get()`, `doufu.clipboard.read()`). Call the `doufu_api_docs` tool to see full usage documentation before writing code that uses these features.
         No special SDK or import is needed — write standard JavaScript.
 
         ## Editing guidance

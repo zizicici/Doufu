@@ -559,7 +559,8 @@ final class AgentToolProvider {
                             .string("location"),
                             .string("clipboard"),
                             .string("camera"),
-                            .string("microphone")
+                            .string("microphone"),
+                            .string("photos")
                         ])
                     ])
                 ]),
@@ -1812,21 +1813,98 @@ final class AgentToolProvider {
         "camera": """
             ## doufu.camera
 
-            This capability is not yet available. It will be added in a future update.
+            ```js
+            // Start camera (returns a standard MediaStream)
+            const stream = await doufu.camera.start({facing: 'user'});
+            // facing: 'user' (front camera, default) or 'environment' (back camera)
+            // Optional: {facing: 'user', width: 1920, height: 1440, fps: 30}
+            // Default is 4:3 (1920×1440) to match native sensor. Use 1920×1080 for 16:9.
+
+            // Use with a <video> element (must have playsinline attribute)
+            const video = document.querySelector('video');
+            video.srcObject = stream;
+            video.play();
+
+            // Switch camera (restarts with new facing direction)
+            const newStream = await doufu.camera.start({facing: 'environment'});
+            video.srcObject = newStream;
+
+            // Tap-to-focus at normalized coordinates (0–1, origin top-left)
+            await doufu.camera.focus({x: 0.5, y: 0.5});
+
+            // Adjust exposure compensation in EV units (-3.0 to +3.0)
+            await doufu.camera.exposure({bias: 1.0});   // brighter
+            await doufu.camera.exposure({bias: -1.0});  // darker
+            await doufu.camera.exposure({bias: 0});     // reset
+
+            // Flashlight / torch (continuous fill light): 'on' or 'off'
+            await doufu.camera.torch({mode: 'on'});
+
+            // Zoom (1.0 = no zoom, clamped to device max)
+            await doufu.camera.zoom({factor: 2.0});
+
+            // Stop camera
+            await doufu.camera.stop();
+            ```
+
+            Returns a MediaStream with one video track. Requires system camera permission.
             Do NOT use getUserMedia or any browser media API — they are blocked.
+            If microphone is also needed, start both independently.
+            To save a captured frame to the photo library, use `doufu.photos.save()`.
             """,
         "microphone": """
             ## doufu.mic
 
-            This capability is not yet available. It will be added in a future update.
+            ```js
+            // Start microphone (returns a standard MediaStream)
+            const stream = await doufu.mic.start();
+
+            // Use with Web Audio API
+            const ctx = new AudioContext();
+            const source = ctx.createMediaStreamSource(stream);
+            source.connect(ctx.destination); // or connect to analyser, etc.
+
+            // Or attach to <audio> element
+            const audio = document.querySelector('audio');
+            audio.srcObject = stream;
+
+            // Stop microphone
+            await doufu.mic.stop();
+            ```
+
+            Returns a MediaStream with one audio track. Requires system microphone permission.
             Do NOT use getUserMedia or any browser media API — they are blocked.
+            """,
+        "photos": """
+            ## doufu.photos
+
+            ```js
+            // Pick a single photo from the system photo picker (no permission needed)
+            const dataUrl = await doufu.photos.pick();
+            img.src = dataUrl;  // data:image/jpeg;base64,...
+
+            // Pick multiple photos (up to limit)
+            const photos = await doufu.photos.pick({multiple: true, limit: 5});
+            photos.forEach(url => { /* ... */ });
+
+            // Save a data URL image to the iOS photo library
+            // Requires "Save Photos" permission (add-only, cannot read library)
+            await doufu.photos.save(canvas.toDataURL('image/jpeg', 0.9));
+            ```
+
+            `pick()` uses the system photo picker (PHPicker) — completely private,
+            no photo library permission required. The user selects which photos to share.
+            Returns a data URL string (single) or array of data URL strings (multiple).
+
+            `save()` writes an image to the photo library. Requires system "Add Photos Only"
+            permission. Pass a data URL (e.g. from canvas.toDataURL() or a picked photo).
             """,
     ]
 
     private func executeDoufuAPIDocs(args: [String: Any]) -> ToolExecutionResult {
         guard let capability = args["capability"] as? String else {
             return ToolExecutionResult(
-                output: "Missing required parameter: capability (location, clipboard, camera, or microphone)",
+                output: "Missing required parameter: capability (location, clipboard, camera, microphone, or photos)",
                 isError: true,
                 changedPaths: []
             )
@@ -1834,7 +1912,7 @@ final class AgentToolProvider {
 
         guard let doc = Self.doufuAPIDocs[capability] else {
             return ToolExecutionResult(
-                output: "Unknown capability: \(capability). Valid values: location, clipboard, camera, microphone.",
+                output: "Unknown capability: \(capability). Valid values: location, clipboard, camera, microphone, photos.",
                 isError: true,
                 changedPaths: []
             )

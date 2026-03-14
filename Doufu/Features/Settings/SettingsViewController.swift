@@ -8,6 +8,7 @@
 import AppInfo
 import AVFoundation
 import CoreLocation
+import Photos
 import SafariServices
 import StoreKit
 import UIKit
@@ -116,6 +117,15 @@ final class SettingsViewController: UITableViewController {
             cell.accessoryType = .disclosureIndicator
             var configuration = UIListContentConfiguration.valueCell()
             configuration.text = String(localized: "settings.permissions.location")
+            configuration.secondaryText = secondaryText
+            cell.contentConfiguration = configuration
+            return cell
+
+        case .photoSavePermission(let secondaryText):
+            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
+            cell.accessoryType = .disclosureIndicator
+            var configuration = UIListContentConfiguration.valueCell()
+            configuration.text = String(localized: "settings.permissions.photo_save")
             configuration.secondaryText = secondaryText
             cell.contentConfiguration = configuration
             return cell
@@ -286,6 +296,7 @@ final class SettingsViewController: UITableViewController {
             .cameraPermission(secondaryText: cameraPermissionStatus()),
             .microphonePermission(secondaryText: microphonePermissionStatus()),
             .locationPermission(secondaryText: locationPermissionStatus()),
+            .photoSavePermission(secondaryText: photoSavePermissionStatus()),
         ], toSection: .permissions)
 
         // Contact
@@ -330,6 +341,10 @@ final class SettingsViewController: UITableViewController {
 
         case .locationPermission:
             let vc = CapabilityDetailViewController(capabilityType: .location)
+            navigationController?.pushViewController(vc, animated: true)
+
+        case .photoSavePermission:
+            let vc = CapabilityDetailViewController(capabilityType: .photoSave)
             navigationController?.pushViewController(vc, animated: true)
 
         case .manageProviders:
@@ -475,6 +490,22 @@ final class SettingsViewController: UITableViewController {
         case .notDetermined:
             return String(localized: "settings.permissions.status.not_requested")
         case .authorizedWhenInUse, .authorizedAlways:
+            return String(localized: "settings.permissions.status.allowed")
+        case .denied:
+            return String(localized: "settings.permissions.status.denied")
+        case .restricted:
+            return String(localized: "settings.permissions.status.restricted")
+        @unknown default:
+            return String(localized: "settings.permissions.status.not_requested")
+        }
+    }
+
+    private func photoSavePermissionStatus() -> String {
+        let status = PHPhotoLibrary.authorizationStatus(for: .addOnly)
+        switch status {
+        case .notDetermined:
+            return String(localized: "settings.permissions.status.not_requested")
+        case .authorized, .limited:
             return String(localized: "settings.permissions.status.allowed")
         case .denied:
             return String(localized: "settings.permissions.status.denied")

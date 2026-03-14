@@ -113,5 +113,7 @@
 	<string>With your permission, projects in Doufu will use the microphone for features such as voice memos, speech recognition, and audio visualization. You can control microphone access for each project at any time in Settings.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>With your permission, projects in Doufu will use your location for features such as local weather forecasts, sunrise and sunset times, and nearby place discovery. You can control location access for each project at any time in Settings.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>With your permission, projects in Doufu will save photos to your photo library. You can control this access for each project at any time in Settings.</string>
 </dict>
 </plist>

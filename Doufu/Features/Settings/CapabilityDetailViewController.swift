@@ -5,6 +5,7 @@
 
 import AVFoundation
 import CoreLocation
+import Photos
 import UIKit
 
 // MARK: - Section / Item IDs
@@ -185,7 +186,9 @@ final class CapabilityDetailViewController: UITableViewController {
             return permissionStatusText(for: AVCaptureDevice.authorizationStatus(for: .audio))
         case .location:
             return locationPermissionStatusText()
-        case .clipboardRead, .clipboardWrite:
+        case .photoSave:
+            return photoSavePermissionStatusText()
+        case .photoPick, .clipboardRead, .clipboardWrite:
             return ""
         }
     }
@@ -219,7 +222,9 @@ final class CapabilityDetailViewController: UITableViewController {
             handleMediaPermissionTap(mediaType: .audio)
         case .location:
             handleLocationPermissionTap()
-        case .clipboardRead, .clipboardWrite:
+        case .photoSave:
+            handlePhotoSavePermissionTap()
+        case .photoPick, .clipboardRead, .clipboardWrite:
             break
         }
     }
@@ -251,6 +256,33 @@ final class CapabilityDetailViewController: UITableViewController {
         case .denied, .restricted:
             openSystemSettings()
         case .authorizedWhenInUse, .authorizedAlways:
+            break
+        @unknown default:
+            break
+        }
+    }
+
+    private func photoSavePermissionStatusText() -> String {
+        let status = PHPhotoLibrary.authorizationStatus(for: .addOnly)
+        switch status {
+        case .notDetermined: return String(localized: "settings.permissions.status.not_requested")
+        case .authorized, .limited: return String(localized: "settings.permissions.status.allowed")
+        case .denied: return String(localized: "settings.permissions.status.denied")
+        case .restricted: return String(localized: "settings.permissions.status.restricted")
+        @unknown default: return String(localized: "settings.permissions.status.not_requested")
+        }
+    }
+
+    private func handlePhotoSavePermissionTap() {
+        let status = PHPhotoLibrary.authorizationStatus(for: .addOnly)
+        switch status {
+        case .notDetermined:
+            PHPhotoLibrary.requestAuthorization(for: .addOnly) { [weak self] _ in
+                Task { @MainActor in self?.reloadData() }
+            }
+        case .denied, .restricted:
+            openSystemSettings()
+        case .authorized, .limited:
             break
         @unknown default:
             break

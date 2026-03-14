@@ -51,6 +51,9 @@ final class DoufuBridge: NSObject {
 
     weak var capabilityDelegate: DoufuBridgeCapabilityDelegate?
 
+    /// Delegate for forwarding WebRTC media signaling messages from JS.
+    weak var mediaDelegate: MediaSessionManager?
+
     /// Reference to the webView for evaluateJavaScript callbacks.
     weak var webView: WKWebView?
 
@@ -92,6 +95,7 @@ final class DoufuBridge: NSObject {
         configuration.userContentController.add(handler, name: "doufuStorage")
         configuration.userContentController.add(handler, name: "doufuIndexedDB")
         configuration.userContentController.add(handler, name: "doufuCapability")
+        configuration.userContentController.add(handler, name: "doufuMedia")
     }
 
     /// Re-adds the bridge user script with the latest `storageData` and `indexedDBData`.
@@ -120,6 +124,7 @@ final class DoufuBridge: NSObject {
             configuration.userContentController.removeScriptMessageHandler(forName: "doufuStorage")
             configuration.userContentController.removeScriptMessageHandler(forName: "doufuIndexedDB")
             configuration.userContentController.removeScriptMessageHandler(forName: "doufuCapability")
+            configuration.userContentController.removeScriptMessageHandler(forName: "doufuMedia")
         }
     }
 
@@ -228,6 +233,7 @@ final class DoufuBridge: NSObject {
         return """
         \(permissionBlockingJavaScript())
         \(capabilityJavaScript())
+        \(mediaJavaScript())
         \(fetchProxyAndLocalStorageJavaScript(storageJSON: storageJSON))
         \(indexedDBShimJavaScript(snapshot: idbJSON))
         """
@@ -338,13 +344,23 @@ final class DoufuBridge: NSObject {
           };
 
           window.doufu = {
+            // Exposed for mediaJavaScript() to call _request for stop actions.
+            _rawRequest: _request,
             camera: {
               start: function(opts) { return _request('camera', 'start', opts); },
-              stop: function() { return _request('camera', 'stop'); }
+              stop: function() { return _request('camera', 'stop'); },
+              focus: function(opts) { return _request('camera', 'focus', opts); },
+              exposure: function(opts) { return _request('camera', 'exposure', opts); },
+              torch: function(opts) { return _request('camera', 'torch', opts); },
+              zoom: function(opts) { return _request('camera', 'zoom', opts); }
             },
             mic: {
               start: function(opts) { return _request('microphone', 'start', opts); },
               stop: function() { return _request('microphone', 'stop'); }
+            },
+            photos: {
+              pick: function(opts) { return _request('photo_pick', 'pick', opts); },
+              save: function(dataUrl) { return _request('photo_save', 'save', { data: dataUrl }); }
             },
             location: {
               get: function() { return _request('location', 'get'); },
@@ -415,6 +431,221 @@ final class DoufuBridge: NSObject {
     private func rejectCallback(callbackID: String, message: String, name: String) {
         let js = "window.__doufuReject('\(callbackID.escapedForJS)', '\(message.escapedForJS)', '\(name.escapedForJS)');"
         webView?.evaluateJavaScript(js, completionHandler: nil)
+    }
+
+    // MARK: - Media WebRTC Signaling
+
+    /// JavaScript that overrides `doufu.camera.start/stop` and `doufu.mic.start/stop`
+    /// to transparently handle WebRTC signaling and deliver a standard `MediaStream`.
+    private func mediaJavaScript() -> String {
+        return """
+        (function() {
+          'use strict';
+
+          var _mediaPc = null;
+          var _pendingMedia = {};
+          var _activeStreams = {};
+
+          window.__doufuMediaSignal = function(signal) {
+            if (signal.type === 'offer') {
+              _handleOffer(signal);
+            } else if (signal.type === 'ice') {
+              if (_mediaPc && signal.candidate) {
+                _mediaPc.addIceCandidate(new RTCIceCandidate(signal.candidate))
+                  .catch(function() {});
+              }
+            } else if (signal.type === 'teardown') {
+              _teardownPC();
+            }
+          };
+
+          function _handleOffer(signal) {
+            if (!_mediaPc) {
+              _mediaPc = new RTCPeerConnection({iceServers: []});
+
+              _mediaPc.ontrack = function(e) {
+                var kind = e.track.kind;
+                var capType = kind === 'video' ? 'camera' : 'microphone';
+                // Always create a dedicated stream per track so stopping camera
+                // doesn't kill the mic track (and vice versa).
+                var stream = new MediaStream([e.track]);
+                _activeStreams[capType] = stream;
+                var cb = _pendingMedia[capType];
+                if (cb) {
+                  clearTimeout(cb.timer);
+                  delete _pendingMedia[capType];
+                  cb.resolve(stream);
+                }
+              };
+
+              _mediaPc.onicecandidate = function(e) {
+                if (e.candidate) {
+                  try {
+                    window.webkit.messageHandlers.doufuMedia.postMessage({
+                      type: 'ice',
+                      candidate: {
+                        candidate: e.candidate.candidate,
+                        sdpMid: e.candidate.sdpMid,
+                        sdpMLineIndex: e.candidate.sdpMLineIndex
+                      }
+                    });
+                  } catch(x) {}
+                }
+              };
+            }
+
+            _mediaPc.setRemoteDescription(new RTCSessionDescription({
+              type: 'offer', sdp: signal.sdp
+            }))
+            .then(function() { return _mediaPc.createAnswer(); })
+            .then(function(answer) { return _mediaPc.setLocalDescription(answer); })
+            .then(function() {
+              window.webkit.messageHandlers.doufuMedia.postMessage({
+                type: 'answer',
+                sdp: _mediaPc.localDescription.sdp
+              });
+            })
+            .catch(function(err) {
+              var keys = Object.keys(_pendingMedia);
+              for (var i = 0; i < keys.length; i++) {
+                var k = keys[i];
+                clearTimeout(_pendingMedia[k].timer);
+                _pendingMedia[k].reject(new DOMException(err.message || 'SDP negotiation failed.', 'NotSupportedError'));
+                delete _pendingMedia[k];
+              }
+            });
+          }
+
+          function _teardownPC() {
+            if (_mediaPc) {
+              try { _mediaPc.close(); } catch(x) {}
+              _mediaPc = null;
+            }
+            _activeStreams = {};
+          }
+
+          // Override doufu.camera.start to return MediaStream via WebRTC ontrack
+          var _origCamStart = window.doufu.camera.start;
+          window.doufu.camera.start = function(opts) {
+            // Cancel any previous pending camera callback
+            var prev = _pendingMedia['camera'];
+            if (prev) {
+              clearTimeout(prev.timer);
+              delete _pendingMedia['camera'];
+            }
+
+            return new Promise(function(resolve, reject) {
+              var timer = setTimeout(function() {
+                delete _pendingMedia['camera'];
+                reject(new DOMException('Camera start timed out.', 'NotSupportedError'));
+              }, 10000);
+              _pendingMedia['camera'] = { resolve: resolve, reject: reject, timer: timer };
+
+              _origCamStart(opts).then(function() {
+                // Permission granted. If stream already exists (already active / camera switch),
+                // resolve immediately with existing stream.
+                if (_activeStreams['camera']) {
+                  var cb = _pendingMedia['camera'];
+                  if (cb) {
+                    clearTimeout(cb.timer);
+                    delete _pendingMedia['camera'];
+                    cb.resolve(_activeStreams['camera']);
+                  }
+                }
+                // Otherwise wait for ontrack via SDP renegotiation
+              }).catch(function(err) {
+                var cb = _pendingMedia['camera'];
+                if (cb) {
+                  clearTimeout(cb.timer);
+                  delete _pendingMedia['camera'];
+                  cb.reject(err);
+                }
+              });
+            });
+          };
+
+          // Override doufu.mic.start to return MediaStream via WebRTC ontrack
+          var _origMicStart = window.doufu.mic.start;
+          window.doufu.mic.start = function(opts) {
+            // Cancel any previous pending mic callback
+            var prev = _pendingMedia['microphone'];
+            if (prev) {
+              clearTimeout(prev.timer);
+              delete _pendingMedia['microphone'];
+            }
+
+            return new Promise(function(resolve, reject) {
+              var timer = setTimeout(function() {
+                delete _pendingMedia['microphone'];
+                reject(new DOMException('Microphone start timed out.', 'NotSupportedError'));
+              }, 10000);
+              _pendingMedia['microphone'] = { resolve: resolve, reject: reject, timer: timer };
+
+              _origMicStart(opts).then(function() {
+                // Permission granted. If stream already exists (already active),
+                // resolve immediately with existing stream.
+                if (_activeStreams['microphone']) {
+                  var cb = _pendingMedia['microphone'];
+                  if (cb) {
+                    clearTimeout(cb.timer);
+                    delete _pendingMedia['microphone'];
+                    cb.resolve(_activeStreams['microphone']);
+                  }
+                }
+                // Otherwise wait for ontrack via SDP renegotiation
+              }).catch(function(err) {
+                var cb = _pendingMedia['microphone'];
+                if (cb) {
+                  clearTimeout(cb.timer);
+                  delete _pendingMedia['microphone'];
+                  cb.reject(err);
+                }
+              });
+            });
+          };
+
+          // Override stop to clean up JS-side streams
+          window.doufu.camera.stop = function() {
+            var stream = _activeStreams['camera'];
+            if (stream) {
+              stream.getTracks().forEach(function(t) { t.stop(); });
+              delete _activeStreams['camera'];
+            }
+            return window.doufu._rawRequest('camera', 'stop');
+          };
+
+          window.doufu.mic.stop = function() {
+            var stream = _activeStreams['microphone'];
+            if (stream) {
+              stream.getTracks().forEach(function(t) { t.stop(); });
+              delete _activeStreams['microphone'];
+            }
+            return window.doufu._rawRequest('microphone', 'stop');
+          };
+
+        })();
+        """
+    }
+
+    /// Sends a WebRTC signaling message from native to JS.
+    func sendMediaSignal(type: String, sdp: String? = nil, candidate: [String: Any]? = nil) {
+        var parts = ["type:'\(type.escapedForJS)'"]
+        if let sdp {
+            parts.append("sdp:'\(sdp.escapedForJS)'")
+        }
+        if let candidate,
+           let data = try? JSONSerialization.data(withJSONObject: candidate),
+           let str = String(data: data, encoding: .utf8) {
+            parts.append("candidate:\(str)")
+        }
+        let joined = parts.joined(separator: ",")
+        let js = "window.__doufuMediaSignal({\(joined)});"
+        webView?.evaluateJavaScript(js, completionHandler: nil)
+    }
+
+    fileprivate func handleMediaSignalFromJS(_ payload: Any) {
+        guard let dict = payload as? [String: Any] else { return }
+        mediaDelegate?.handleMediaSignal(dict)
     }
 
     // MARK: - fetch() proxy + localStorage shim
@@ -625,6 +856,8 @@ private nonisolated final class DoufuBridgeMessageHandler: NSObject, WKScriptMes
                 bridge.handleIndexedDBUpdate(body)
             case "doufuCapability":
                 bridge.handleCapabilityRequest(body)
+            case "doufuMedia":
+                bridge.handleMediaSignalFromJS(body)
             default:
                 break
             }
