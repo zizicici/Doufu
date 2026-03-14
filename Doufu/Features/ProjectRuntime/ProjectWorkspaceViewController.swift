@@ -93,6 +93,7 @@ final class ProjectWorkspaceViewController: UIViewController {
         let view = ProjectWebView(frame: .zero, configuration: configuration)
         view.translatesAutoresizingMaskIntoConstraints = false
         view.navigationDelegate = self
+        view.uiDelegate = self
         view.backgroundColor = .systemBackground
         view.scrollView.contentInsetAdjustmentBehavior = .never
         view.setKeyboardRequiresUserInteraction(false)
@@ -1028,6 +1029,18 @@ extension ProjectWorkspaceViewController: UIAdaptivePresentationControllerDelega
             chatNavigationController = nil
         }
         consumeVisibleProjectUpdateIfNeeded()
+    }
+}
+
+extension ProjectWorkspaceViewController: WKUIDelegate {
+    func webView(
+        _ webView: WKWebView,
+        requestMediaCapturePermissionFor origin: WKSecurityOrigin,
+        initiatedByFrame frame: WKFrameInfo,
+        type: WKMediaCaptureType,
+        decisionHandler: @escaping (WKPermissionDecision) -> Void
+    ) {
+        decisionHandler(.deny)
     }
 }
 

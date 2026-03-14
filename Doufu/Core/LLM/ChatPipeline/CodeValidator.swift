@@ -132,6 +132,7 @@ final class CodeValidator: NSObject {
 
         let wv = WKWebView(frame: CGRect(x: 0, y: 0, width: 375, height: 667), configuration: config)
         wv.navigationDelegate = self
+        wv.uiDelegate = self
         self.webView = wv
         self.activeBridge = bridge
 
@@ -375,6 +376,20 @@ extension CodeValidator: WKScriptMessageHandler {
         if let v = value as? Int { return v }
         if let v = value as? Double { return Int(v) }
         return nil
+    }
+}
+
+// MARK: - WKUIDelegate
+
+extension CodeValidator: WKUIDelegate {
+    nonisolated func webView(
+        _ webView: WKWebView,
+        requestMediaCapturePermissionFor origin: WKSecurityOrigin,
+        initiatedByFrame frame: WKFrameInfo,
+        type: WKMediaCaptureType,
+        decisionHandler: @escaping (WKPermissionDecision) -> Void
+    ) {
+        decisionHandler(.deny)
     }
 }
 

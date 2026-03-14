@@ -192,8 +192,69 @@ final class DoufuBridge: NSObject {
         }
 
         return """
+        \(permissionBlockingJavaScript())
         \(fetchProxyAndLocalStorageJavaScript(storageJSON: storageJSON))
         \(indexedDBShimJavaScript(snapshot: idbJSON))
+        """
+    }
+
+    // MARK: - Permission Blocking
+
+    private func permissionBlockingJavaScript() -> String {
+        return """
+        (function() {
+          'use strict';
+
+          var _notAllowed = function(msg) {
+            return Promise.reject(new DOMException(msg || 'Permission denied by Doufu.', 'NotAllowedError'));
+          };
+
+          // ======== Camera / Microphone ========
+          if (navigator.mediaDevices) {
+            navigator.mediaDevices.getUserMedia = function() { return _notAllowed('getUserMedia is not allowed.'); };
+            navigator.mediaDevices.enumerateDevices = function() { return Promise.resolve([]); };
+          }
+          // Legacy APIs
+          navigator.getUserMedia = function(c, s, e) { if (e) e(new DOMException('getUserMedia is not allowed.', 'NotAllowedError')); };
+          navigator.webkitGetUserMedia = navigator.getUserMedia;
+
+          // ======== Geolocation ========
+          if (navigator.geolocation) {
+            var _geoError = { code: 1, message: 'Geolocation permission denied by Doufu.', PERMISSION_DENIED: 1, POSITION_UNAVAILABLE: 2, TIMEOUT: 3 };
+            navigator.geolocation.getCurrentPosition = function(s, e) { if (e) { try { e(_geoError); } catch(x){} } };
+            navigator.geolocation.watchPosition = function(s, e) { if (e) { try { e(_geoError); } catch(x){} } return 0; };
+            navigator.geolocation.clearWatch = function() {};
+          }
+
+          // ======== Clipboard ========
+          if (navigator.clipboard) {
+            navigator.clipboard.readText = function() { return _notAllowed('Clipboard access is not allowed.'); };
+            navigator.clipboard.read = function() { return _notAllowed('Clipboard access is not allowed.'); };
+            navigator.clipboard.writeText = function() { return _notAllowed('Clipboard access is not allowed.'); };
+            navigator.clipboard.write = function() { return _notAllowed('Clipboard access is not allowed.'); };
+          }
+
+          // Legacy execCommand clipboard operations
+          var _origExecCommand = document.execCommand.bind(document);
+          document.execCommand = function(cmd) {
+            var lower = (cmd || '').toLowerCase();
+            if (lower === 'copy' || lower === 'cut' || lower === 'paste') return false;
+            return _origExecCommand.apply(document, arguments);
+          };
+
+          // ======== Permissions API ========
+          if (navigator.permissions && navigator.permissions.query) {
+            var _origQuery = navigator.permissions.query.bind(navigator.permissions);
+            var _blocked = ['camera', 'microphone', 'geolocation', 'clipboard-read', 'clipboard-write'];
+            navigator.permissions.query = function(desc) {
+              if (desc && _blocked.indexOf(desc.name) !== -1) {
+                return Promise.resolve({ state: 'denied', onchange: null });
+              }
+              return _origQuery(desc);
+            };
+          }
+
+        })();
         """
     }
 
