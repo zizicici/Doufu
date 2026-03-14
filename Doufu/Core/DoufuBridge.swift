@@ -13,13 +13,14 @@ import WebKit
 protocol DoufuBridgeCapabilityDelegate: AnyObject {
     /// Called when JS code requests a capability. The delegate should check
     /// system + project permissions and call the completion handler with:
-    /// - `.success(())` if allowed (Phase 1 returns "not yet implemented")
+    /// - `.success(jsonString)` with JSON data to resolve the JS Promise
     /// - `.failure(error)` with a descriptive error
     func bridge(
         _ bridge: DoufuBridge,
         didRequestCapability type: CapabilityType,
-        callbackID: String,
-        completion: @escaping (Result<Void, DoufuBridgeCapabilityError>) -> Void
+        action: String,
+        options: [String: Any],
+        completion: @escaping (Result<String, DoufuBridgeCapabilityError>) -> Void
     )
 }
 
@@ -300,6 +301,7 @@ final class DoufuBridge: NSObject {
           'use strict';
 
           var _callbacks = {};
+          var _watchCallbacks = {};
           var _nextId = 1;
 
           function _request(capability, action, opts) {
@@ -330,6 +332,11 @@ final class DoufuBridge: NSObject {
             if (cb) { delete _callbacks[id]; cb.reject(new DOMException(message, name || 'NotAllowedError')); }
           };
 
+          window.__doufuLocationUpdate = function(watchId, data) {
+            var cb = _watchCallbacks[watchId];
+            if (cb) cb(data);
+          };
+
           window.doufu = {
             camera: {
               start: function(opts) { return _request('camera', 'start', opts); },
@@ -341,8 +348,16 @@ final class DoufuBridge: NSObject {
             },
             location: {
               get: function() { return _request('location', 'get'); },
-              watch: function(cb) { return _request('location', 'watch'); },
-              clearWatch: function(id) { return _request('location', 'clearWatch', { watchId: id }); }
+              watch: function(cb) {
+                return _request('location', 'watch').then(function(watchId) {
+                  _watchCallbacks[watchId] = cb;
+                  return watchId;
+                });
+              },
+              clearWatch: function(id) {
+                delete _watchCallbacks[id];
+                return _request('location', 'clearWatch', { watchId: String(id) });
+              }
             },
             clipboard: {
               read: function() { return _request('clipboard_read', 'read'); },
@@ -372,15 +387,24 @@ final class DoufuBridge: NSObject {
             return
         }
 
-        delegate.bridge(self, didRequestCapability: type, callbackID: callbackID) { [weak self] result in
+        let action = dict["action"] as? String ?? ""
+        let options = dict["options"] as? [String: Any] ?? [:]
+
+        delegate.bridge(self, didRequestCapability: type, action: action, options: options) { [weak self] result in
             guard let self else { return }
             switch result {
-            case .success:
-                self.resolveCallback(callbackID: callbackID, data: "null")
+            case .success(let data):
+                self.resolveCallback(callbackID: callbackID, data: data)
             case .failure(let error):
                 self.rejectCallback(callbackID: callbackID, message: error.message, name: error.name)
             }
         }
+    }
+
+    /// Pushes a location update to a JS watch callback.
+    func pushLocationUpdate(watchID: String, data: String) {
+        let js = "window.__doufuLocationUpdate('\(watchID.escapedForJS)', \(data));"
+        webView?.evaluateJavaScript(js, completionHandler: nil)
     }
 
     private func resolveCallback(callbackID: String, data: String) {

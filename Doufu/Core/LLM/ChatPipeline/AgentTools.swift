@@ -140,7 +140,7 @@ final class AgentToolProvider {
     static func permissionTier(for toolName: String) -> ToolPermissionTier {
         switch toolName {
         case "read_file", "list_directory", "search_files", "grep_files", "glob_files", "validate_code",
-             "diff_file", "changed_files":
+             "diff_file", "changed_files", "doufu_api_docs":
             return .autoAllow
         case "write_file", "edit_file", "revert_file":
             return .confirmOnce
@@ -206,6 +206,7 @@ final class AgentToolProvider {
             webSearchTool(),
             webFetchTool(),
             validateCodeTool(),
+            doufuAPIDocsTool(),
         ]
     }
 
@@ -544,6 +545,30 @@ final class AgentToolProvider {
         )
     }
 
+    private func doufuAPIDocsTool() -> AgentToolDefinition {
+        AgentToolDefinition(
+            name: "doufu_api_docs",
+            description: "Returns usage documentation for a specific doufu.* native JavaScript API. Standard browser APIs (getUserMedia, geolocation, clipboard) are blocked in Doufu — use this tool to learn the correct doufu.* alternative before writing code that needs these features.",
+            parameters: .object([
+                "type": .string("object"),
+                "properties": .object([
+                    "capability": .object([
+                        "type": .string("string"),
+                        "description": .string("The capability to look up."),
+                        "enum": .array([
+                            .string("location"),
+                            .string("clipboard"),
+                            .string("camera"),
+                            .string("microphone")
+                        ])
+                    ])
+                ]),
+                "required": .array([.string("capability")]),
+                "additionalProperties": .bool(false)
+            ])
+        )
+    }
+
     // MARK: - Tool Result Metadata
 
     /// Structured metadata attached to a tool execution result.
@@ -669,6 +694,8 @@ final class AgentToolProvider {
             let path = (args["path"] as? String) ?? "?"
             if let onProgress { onProgress(.validatingCode(path: path)) }
             return await executeValidateCode(args: args, onProgress: onProgress)
+        case "doufu_api_docs":
+            return executeDoufuAPIDocs(args: args)
         default:
             return ToolExecutionResult(
                 output: "Unknown tool: \(toolCall.name)",
@@ -1739,6 +1766,89 @@ final class AgentToolProvider {
             isError: false,
             changedPaths: [],
             metadata: .codeValidation(path: normalizedPath, errorCount: totalErrorCount, passed: result.passed)
+        )
+    }
+
+    // MARK: - Doufu API Docs
+
+    private static let doufuAPIDocs: [String: String] = [
+        "location": """
+            ## doufu.location
+
+            ```js
+            // Get current position (one-shot)
+            const pos = await doufu.location.get();
+            // pos = {
+            //   coords: { latitude, longitude, accuracy, altitude, altitudeAccuracy, heading, speed },
+            //   timestamp: 1710000000000
+            // }
+
+            // Watch position (continuous updates)
+            const watchId = await doufu.location.watch((pos) => {
+              console.log(pos.coords.latitude, pos.coords.longitude);
+            });
+
+            // Stop watching
+            await doufu.location.clearWatch(watchId);
+            ```
+
+            Return format matches the Web Geolocation API structure. Requires system location permission.
+            Do NOT use navigator.geolocation — it is blocked.
+            """,
+        "clipboard": """
+            ## doufu.clipboard
+
+            ```js
+            // Read clipboard text
+            const text = await doufu.clipboard.read();   // → string
+
+            // Write text to clipboard
+            await doufu.clipboard.write("hello");        // → void (resolves on success)
+            ```
+
+            No system permission needed — project-level only.
+            Do NOT use navigator.clipboard or document.execCommand('copy'/'paste') — they are blocked.
+            """,
+        "camera": """
+            ## doufu.camera
+
+            This capability is not yet available. It will be added in a future update.
+            Do NOT use getUserMedia or any browser media API — they are blocked.
+            """,
+        "microphone": """
+            ## doufu.mic
+
+            This capability is not yet available. It will be added in a future update.
+            Do NOT use getUserMedia or any browser media API — they are blocked.
+            """,
+    ]
+
+    private func executeDoufuAPIDocs(args: [String: Any]) -> ToolExecutionResult {
+        guard let capability = args["capability"] as? String else {
+            return ToolExecutionResult(
+                output: "Missing required parameter: capability (location, clipboard, camera, or microphone)",
+                isError: true,
+                changedPaths: []
+            )
+        }
+
+        guard let doc = Self.doufuAPIDocs[capability] else {
+            return ToolExecutionResult(
+                output: "Unknown capability: \(capability). Valid values: location, clipboard, camera, microphone.",
+                isError: true,
+                changedPaths: []
+            )
+        }
+
+        let preamble = """
+            Standard browser APIs for this capability are permanently blocked in Doufu. Use the doufu.* API instead.
+            Permission: First call triggers a per-project user permission prompt. If denied, the Promise rejects with NotAllowedError. Permission is changeable in project settings.
+            """
+
+        return ToolExecutionResult(
+            output: preamble + "\n" + doc,
+            isError: false,
+            changedPaths: []
         )
     }
 

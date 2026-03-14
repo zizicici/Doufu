@@ -76,6 +76,20 @@ final class ProjectWorkspaceViewController: UIViewController {
     private lazy var capabilityLocationManager = CLLocationManager()
     private var capabilityLocationCompletion: ((Bool) -> Void)?
 
+    // Location service (separate from capabilityLocationManager which is only for permission requests)
+    private var _locationService: CLLocationManager?
+    private var locationService: CLLocationManager {
+        if _locationService == nil {
+            let m = CLLocationManager()
+            m.desiredAccuracy = kCLLocationAccuracyBest
+            _locationService = m
+        }
+        return _locationService!
+    }
+    private var locationGetCompletions: [(Result<String, DoufuBridgeCapabilityError>) -> Void] = []
+    private var activeWatchIDs: Set<String> = []
+    private var nextWatchID: Int = 1
+
     private lazy var webView: WKWebView = {
         let configuration = WKWebViewConfiguration()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
@@ -247,6 +261,7 @@ final class ProjectWorkspaceViewController: UIViewController {
             NotificationCenter.default.removeObserver(appDidBecomeActiveObserver)
         }
         webServer.stop()
+        stopLocationServices()
         doufuBridge.unregister(from: webView.configuration)
         webView.configuration.userContentController.removeScriptMessageHandler(forName: jsErrorHandlerName)
     }
@@ -1096,21 +1111,29 @@ extension ProjectWorkspaceViewController: DoufuBridgeCapabilityDelegate {
     func bridge(
         _ bridge: DoufuBridge,
         didRequestCapability type: CapabilityType,
-        callbackID: String,
-        completion: @escaping (Result<Void, DoufuBridgeCapabilityError>) -> Void
+        action: String,
+        options: [String: Any],
+        completion: @escaping (Result<String, DoufuBridgeCapabilityError>) -> Void
     ) {
+        // Teardown actions bypass permission checks entirely — they are cleanup
+        // operations and must always succeed (otherwise native resources leak).
+        if action == "clearWatch" || action == "stop" {
+            executeCapability(type: type, action: action, options: options, completion: completion)
+            return
+        }
+
         // Layer 1: System permission check (camera/mic/location only)
         if type.hasSystemPermission {
             checkSystemPermission(for: type) { [weak self] systemResult in
                 guard let self else { return }
                 switch systemResult {
                 case .authorized:
-                    self.checkProjectPermission(type: type, completion: completion)
+                    self.checkProjectPermission(type: type, action: action, options: options, completion: completion)
                 case .notDetermined:
                     self.requestSystemPermission(for: type) { [weak self] granted in
                         guard let self else { return }
                         if granted {
-                            self.checkProjectPermission(type: type, completion: completion)
+                            self.checkProjectPermission(type: type, action: action, options: options, completion: completion)
                         } else {
                             let name = type.displayName
                             completion(.failure(DoufuBridgeCapabilityError(
@@ -1135,7 +1158,7 @@ extension ProjectWorkspaceViewController: DoufuBridgeCapabilityDelegate {
             }
         } else {
             // Clipboard: no system permission needed
-            checkProjectPermission(type: type, completion: completion)
+            checkProjectPermission(type: type, action: action, options: options, completion: completion)
         }
     }
 
@@ -1200,7 +1223,9 @@ extension ProjectWorkspaceViewController: DoufuBridgeCapabilityDelegate {
 
     private func checkProjectPermission(
         type: CapabilityType,
-        completion: @escaping (Result<Void, DoufuBridgeCapabilityError>) -> Void
+        action: String,
+        options: [String: Any],
+        completion: @escaping (Result<String, DoufuBridgeCapabilityError>) -> Void
     ) {
         let store = ProjectCapabilityStore.shared
         let state = store.loadCapability(projectID: project.id, type: type)
@@ -1215,11 +1240,7 @@ extension ProjectWorkspaceViewController: DoufuBridgeCapabilityDelegate {
                     state: userAllowed ? .allowed : .denied
                 )
                 if userAllowed {
-                    // Phase 1: capability granted but not yet implemented
-                    completion(.failure(DoufuBridgeCapabilityError(
-                        message: "Capability not yet implemented.",
-                        name: "NotSupportedError"
-                    )))
+                    self.executeCapability(type: type, action: action, options: options, completion: completion)
                 } else {
                     completion(.failure(DoufuBridgeCapabilityError(
                         message: String(localized: "capability.error.project_denied"),
@@ -1228,15 +1249,126 @@ extension ProjectWorkspaceViewController: DoufuBridgeCapabilityDelegate {
                 }
             }
         case .allowed:
-            // Phase 1: capability granted but not yet implemented
-            completion(.failure(DoufuBridgeCapabilityError(
-                message: "Capability not yet implemented.",
-                name: "NotSupportedError"
-            )))
+            executeCapability(type: type, action: action, options: options, completion: completion)
         case .denied:
             completion(.failure(DoufuBridgeCapabilityError(
                 message: String(localized: "capability.error.project_denied"),
                 name: "NotAllowedError"
+            )))
+        }
+    }
+
+    // MARK: - Capability Execution
+
+    private func executeCapability(
+        type: CapabilityType,
+        action: String,
+        options: [String: Any],
+        completion: @escaping (Result<String, DoufuBridgeCapabilityError>) -> Void
+    ) {
+        switch type {
+        case .clipboardRead:
+            executeClipboardRead(completion: completion)
+        case .clipboardWrite:
+            executeClipboardWrite(options: options, completion: completion)
+        case .location:
+            executeLocation(action: action, options: options, completion: completion)
+        case .camera, .microphone:
+            completion(.failure(DoufuBridgeCapabilityError(
+                message: "Capability not yet implemented.",
+                name: "NotSupportedError"
+            )))
+        }
+    }
+
+    // MARK: - Clipboard
+
+    private func executeClipboardRead(
+        completion: @escaping (Result<String, DoufuBridgeCapabilityError>) -> Void
+    ) {
+        let text = UIPasteboard.general.string ?? ""
+        if let jsonData = try? JSONEncoder().encode(text),
+           let jsonString = String(data: jsonData, encoding: .utf8) {
+            completion(.success(jsonString))
+        } else {
+            completion(.success("\"\""))
+        }
+    }
+
+    private func executeClipboardWrite(
+        options: [String: Any],
+        completion: @escaping (Result<String, DoufuBridgeCapabilityError>) -> Void
+    ) {
+        let text = options["text"] as? String ?? ""
+        UIPasteboard.general.string = text
+        completion(.success("null"))
+    }
+
+    // MARK: - Location
+
+    private func executeLocation(
+        action: String,
+        options: [String: Any],
+        completion: @escaping (Result<String, DoufuBridgeCapabilityError>) -> Void
+    ) {
+        switch action {
+        case "get":
+            locationGetCompletions.append(completion)
+            locationService.delegate = self
+            if activeWatchIDs.isEmpty {
+                locationService.requestLocation()
+            }
+            // If watch is active, didUpdateLocations will fulfill get completions naturally
+
+        case "watch":
+            let watchId = String(nextWatchID)
+            nextWatchID += 1
+            activeWatchIDs.insert(watchId)
+            completion(.success("\"\(watchId)\""))
+            locationService.delegate = self
+            locationService.startUpdatingLocation()
+
+        case "clearWatch":
+            let watchId = options["watchId"] as? String ?? ""
+            activeWatchIDs.remove(watchId)
+            if activeWatchIDs.isEmpty && locationGetCompletions.isEmpty {
+                locationService.stopUpdatingLocation()
+            }
+            completion(.success("null"))
+
+        default:
+            completion(.failure(DoufuBridgeCapabilityError(
+                message: "Unknown location action: \(action)",
+                name: "NotSupportedError"
+            )))
+        }
+    }
+
+    private func locationJSON(from location: CLLocation) -> String {
+        let coords = location.coordinate
+        let ts = Int64(location.timestamp.timeIntervalSince1970 * 1000)
+        return """
+        {"coords":{"latitude":\(coords.latitude),"longitude":\(coords.longitude),\
+        "accuracy":\(location.horizontalAccuracy),\
+        "altitude":\(location.altitude),\
+        "altitudeAccuracy":\(location.verticalAccuracy),\
+        "heading":\(location.course),\
+        "speed":\(location.speed)},\
+        "timestamp":\(ts)}
+        """
+    }
+
+    private func stopLocationServices() {
+        guard let service = _locationService else { return }
+        service.stopUpdatingLocation()
+        service.delegate = nil
+        let getCompletions = locationGetCompletions
+        locationGetCompletions.removeAll()
+        activeWatchIDs.removeAll()
+        for c in getCompletions {
+            c(.failure(DoufuBridgeCapabilityError(
+                message: "Location service stopped.",
+                name: "PositionError"
             )))
         }
     }
@@ -1279,6 +1411,42 @@ extension ProjectWorkspaceViewController: CLLocationManagerDelegate {
         let granted = (status == .authorizedWhenInUse || status == .authorizedAlways)
         capabilityLocationCompletion?(granted)
         capabilityLocationCompletion = nil
+    }
+
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        guard manager === locationService, let location = locations.last else { return }
+        let json = locationJSON(from: location)
+
+        // Fulfill all pending get() completions
+        let getCompletions = locationGetCompletions
+        locationGetCompletions.removeAll()
+        for c in getCompletions {
+            c(.success(json))
+        }
+
+        // If no active watches and all gets fulfilled, stop updates
+        if activeWatchIDs.isEmpty {
+            locationService.stopUpdatingLocation()
+        }
+
+        // Push to all active watches
+        for watchID in activeWatchIDs {
+            doufuBridge.pushLocationUpdate(watchID: watchID, data: json)
+        }
+    }
+
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        guard manager === locationService else { return }
+        let err = DoufuBridgeCapabilityError(
+            message: error.localizedDescription,
+            name: "PositionError"
+        )
+        // Reject pending get() completions; watches continue trying
+        let getCompletions = locationGetCompletions
+        locationGetCompletions.removeAll()
+        for c in getCompletions {
+            c(.failure(err))
+        }
     }
 }
 

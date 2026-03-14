@@ -46,6 +46,7 @@ final class PromptBuilder {
 
         ## Doufu Runtime Environment
         Pages run inside a native iOS app (WKWebView served via localhost). `fetch()` is CORS-free, `localStorage` and `IndexedDB` are persisted in app. No special SDK needed — see the project's AGENTS.md for full details.
+        Standard browser APIs for camera, microphone, geolocation, and clipboard are **blocked**. Native alternatives are available via the `doufu.*` JavaScript API — call the `doufu_api_docs` tool to see usage documentation before writing code that uses these features.
 
         ## Device & Layout Context
         \(Self.deviceGuidelines)
