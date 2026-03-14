@@ -5,6 +5,8 @@
 //  Created by Codex on 2026/03/05.
 //
 
+import AVFoundation
+import CoreLocation
 import UIKit
 import WebKit
 
@@ -71,6 +73,8 @@ final class ProjectWorkspaceViewController: UIViewController {
     private var appDidBecomeActiveObserver: NSObjectProtocol?
     private var isDraggingPanel = false
     private var isOverExitTargetPrevious = false
+    private lazy var capabilityLocationManager = CLLocationManager()
+    private var capabilityLocationCompletion: ((Bool) -> Void)?
 
     private lazy var webView: WKWebView = {
         let configuration = WKWebViewConfiguration()
@@ -220,7 +224,11 @@ final class ProjectWorkspaceViewController: UIViewController {
     init(project: AppProjectRecord, initialRoute: InitialRoute = .workspace) {
         self.project = project
         self.webServer = LocalWebServer(projectURL: project.appURL, projectID: project.id)
-        self.doufuBridge = DoufuBridge(projectURL: project.appURL)
+        self.doufuBridge = DoufuBridge(
+            projectURL: project.appURL,
+            projectID: project.id,
+            projectName: project.name
+        )
         self.pendingInitialRoute = initialRoute
         super.init(nibName: nil, bundle: nil)
     }
@@ -250,6 +258,8 @@ final class ProjectWorkspaceViewController: UIViewController {
         configureLayout()
         installWebLoadingCover()
         configureFloatingPanel()
+        doufuBridge.capabilityDelegate = self
+        doufuBridge.webView = webView
         projectChangeObserver = projectChangeCenter.addObserver(projectID: project.id) { [weak self] change in
             self?.handleProjectChange(change)
         }
@@ -1077,6 +1087,198 @@ extension ProjectWorkspaceViewController: WKScriptMessageHandler {
             return
         }
         handleJavaScriptErrorPayload(payload)
+    }
+}
+
+// MARK: - DoufuBridgeCapabilityDelegate
+
+extension ProjectWorkspaceViewController: DoufuBridgeCapabilityDelegate {
+    func bridge(
+        _ bridge: DoufuBridge,
+        didRequestCapability type: CapabilityType,
+        callbackID: String,
+        completion: @escaping (Result<Void, DoufuBridgeCapabilityError>) -> Void
+    ) {
+        // Layer 1: System permission check (camera/mic/location only)
+        if type.hasSystemPermission {
+            checkSystemPermission(for: type) { [weak self] systemResult in
+                guard let self else { return }
+                switch systemResult {
+                case .authorized:
+                    self.checkProjectPermission(type: type, completion: completion)
+                case .notDetermined:
+                    self.requestSystemPermission(for: type) { [weak self] granted in
+                        guard let self else { return }
+                        if granted {
+                            self.checkProjectPermission(type: type, completion: completion)
+                        } else {
+                            let name = type.displayName
+                            completion(.failure(DoufuBridgeCapabilityError(
+                                message: String(
+                                    format: String(localized: "capability.error.system_denied_format"),
+                                    name
+                                ),
+                                name: "NotAllowedError"
+                            )))
+                        }
+                    }
+                case .denied:
+                    let name = type.displayName
+                    completion(.failure(DoufuBridgeCapabilityError(
+                        message: String(
+                            format: String(localized: "capability.error.system_denied_format"),
+                            name
+                        ),
+                        name: "NotAllowedError"
+                    )))
+                }
+            }
+        } else {
+            // Clipboard: no system permission needed
+            checkProjectPermission(type: type, completion: completion)
+        }
+    }
+
+    private enum SystemPermissionResult {
+        case authorized
+        case notDetermined
+        case denied
+    }
+
+    private func checkSystemPermission(
+        for type: CapabilityType,
+        completion: @escaping (SystemPermissionResult) -> Void
+    ) {
+        switch type {
+        case .camera:
+            let status = AVCaptureDevice.authorizationStatus(for: .video)
+            completion(mapAVStatus(status))
+        case .microphone:
+            let status = AVCaptureDevice.authorizationStatus(for: .audio)
+            completion(mapAVStatus(status))
+        case .location:
+            let status = CLLocationManager().authorizationStatus
+            switch status {
+            case .notDetermined: completion(.notDetermined)
+            case .authorizedWhenInUse, .authorizedAlways: completion(.authorized)
+            default: completion(.denied)
+            }
+        case .clipboardRead, .clipboardWrite:
+            completion(.authorized)
+        }
+    }
+
+    private func mapAVStatus(_ status: AVAuthorizationStatus) -> SystemPermissionResult {
+        switch status {
+        case .authorized: return .authorized
+        case .notDetermined: return .notDetermined
+        default: return .denied
+        }
+    }
+
+    private func requestSystemPermission(
+        for type: CapabilityType,
+        completion: @escaping (Bool) -> Void
+    ) {
+        switch type {
+        case .camera:
+            AVCaptureDevice.requestAccess(for: .video) { granted in
+                Task { @MainActor in completion(granted) }
+            }
+        case .microphone:
+            AVCaptureDevice.requestAccess(for: .audio) { granted in
+                Task { @MainActor in completion(granted) }
+            }
+        case .location:
+            capabilityLocationCompletion = completion
+            capabilityLocationManager.delegate = self
+            capabilityLocationManager.requestWhenInUseAuthorization()
+        default:
+            completion(true)
+        }
+    }
+
+    private func checkProjectPermission(
+        type: CapabilityType,
+        completion: @escaping (Result<Void, DoufuBridgeCapabilityError>) -> Void
+    ) {
+        let store = ProjectCapabilityStore.shared
+        let state = store.loadCapability(projectID: project.id, type: type)
+
+        switch state {
+        case .notRequested:
+            presentCapabilityPrompt(type: type) { [weak self] userAllowed in
+                guard let self else { return }
+                store.saveCapability(
+                    projectID: self.project.id,
+                    type: type,
+                    state: userAllowed ? .allowed : .denied
+                )
+                if userAllowed {
+                    // Phase 1: capability granted but not yet implemented
+                    completion(.failure(DoufuBridgeCapabilityError(
+                        message: "Capability not yet implemented.",
+                        name: "NotSupportedError"
+                    )))
+                } else {
+                    completion(.failure(DoufuBridgeCapabilityError(
+                        message: String(localized: "capability.error.project_denied"),
+                        name: "NotAllowedError"
+                    )))
+                }
+            }
+        case .allowed:
+            // Phase 1: capability granted but not yet implemented
+            completion(.failure(DoufuBridgeCapabilityError(
+                message: "Capability not yet implemented.",
+                name: "NotSupportedError"
+            )))
+        case .denied:
+            completion(.failure(DoufuBridgeCapabilityError(
+                message: String(localized: "capability.error.project_denied"),
+                name: "NotAllowedError"
+            )))
+        }
+    }
+
+    private func presentCapabilityPrompt(
+        type: CapabilityType,
+        completion: @escaping (Bool) -> Void
+    ) {
+        guard presentedViewController == nil else {
+            completion(false)
+            return
+        }
+        let title = String(
+            format: String(localized: "capability.prompt.title_format"),
+            projectName,
+            type.displayName
+        )
+        let alert = UIAlertController(title: title, message: nil, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(
+            title: String(localized: "capability.prompt.allow"),
+            style: .default
+        ) { _ in
+            completion(true)
+        })
+        alert.addAction(UIAlertAction(
+            title: String(localized: "capability.prompt.deny"),
+            style: .cancel
+        ) { _ in
+            completion(false)
+        })
+        present(alert, animated: true)
+    }
+}
+
+extension ProjectWorkspaceViewController: CLLocationManagerDelegate {
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        guard manager === capabilityLocationManager else { return }
+        let status = manager.authorizationStatus
+        guard status != .notDetermined else { return }
+        let granted = (status == .authorizedWhenInUse || status == .authorizedAlways)
+        capabilityLocationCompletion?(granted)
+        capabilityLocationCompletion = nil
     }
 }
 

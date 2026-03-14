@@ -6,6 +6,7 @@
 nonisolated enum ProjectSettingsSectionID: Hashable, Sendable {
     case project
     case chat
+    case capabilities
     case checkpoints
     case storage
 }
@@ -15,6 +16,7 @@ nonisolated enum ProjectSettingsItemID: Hashable, Sendable {
     case projectDescription
     case defaultModel
     case toolPermission
+    case capability(type: String, isAllowed: Bool)
     case checkpointHistory
     case clearLocalStorage
     case clearIndexedDB

@@ -73,6 +73,36 @@ struct DBProject: Codable, FetchableRecord, PersistableRecord {
     }
 }
 
+struct DBProjectCapability: Codable, FetchableRecord, PersistableRecord {
+    static let databaseTableName = "project_capability"
+
+    var id: Int64?
+    var projectID: String
+    var capability: String
+    var state: Int
+    var updatedAt: Int64
+
+    enum Columns: String, ColumnExpression {
+        case id
+        case projectID = "project_id"
+        case capability
+        case state
+        case updatedAt = "updated_at"
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case projectID = "project_id"
+        case capability
+        case state
+        case updatedAt = "updated_at"
+    }
+
+    mutating func didInsert(_ inserted: InsertionSuccess) {
+        id = inserted.rowID
+    }
+}
+
 struct DBPermission: Codable, FetchableRecord, PersistableRecord {
     static let databaseTableName = "permission"
 

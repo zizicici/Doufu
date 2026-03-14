@@ -8,6 +8,26 @@
 import Foundation
 import WebKit
 
+/// Protocol for handling capability requests from the JS bridge.
+@MainActor
+protocol DoufuBridgeCapabilityDelegate: AnyObject {
+    /// Called when JS code requests a capability. The delegate should check
+    /// system + project permissions and call the completion handler with:
+    /// - `.success(())` if allowed (Phase 1 returns "not yet implemented")
+    /// - `.failure(error)` with a descriptive error
+    func bridge(
+        _ bridge: DoufuBridge,
+        didRequestCapability type: CapabilityType,
+        callbackID: String,
+        completion: @escaping (Result<Void, DoufuBridgeCapabilityError>) -> Void
+    )
+}
+
+struct DoufuBridgeCapabilityError: Error {
+    let message: String
+    let name: String // DOMException name, e.g. "NotAllowedError"
+}
+
 /// Manages the JS bridge injected into every project web page.
 ///
 /// Capabilities:
@@ -24,7 +44,14 @@ import WebKit
 final class DoufuBridge: NSObject {
 
     private let projectURL: URL
+    let projectID: String
+    let projectName: String
     private let storageDirectoryOverride: URL?
+
+    weak var capabilityDelegate: DoufuBridgeCapabilityDelegate?
+
+    /// Reference to the webView for evaluateJavaScript callbacks.
+    weak var webView: WKWebView?
 
     /// Called from the WKScriptMessageHandler when localStorage changes.
     private var storageData: [String: String] = [:]
@@ -34,11 +61,15 @@ final class DoufuBridge: NSObject {
 
     /// - Parameters:
     ///   - projectURL: The project directory.
+    ///   - projectID: The project's unique identifier.
+    ///   - projectName: The project's display name.
     ///   - storageDirectoryOverride: If provided, localStorage and IndexedDB data
     ///     are persisted here instead of the default `AppData/` location. Useful for
     ///     validation runs that should not dirty real user data.
-    init(projectURL: URL, storageDirectoryOverride: URL? = nil) {
+    init(projectURL: URL, projectID: String = "", projectName: String = "", storageDirectoryOverride: URL? = nil) {
         self.projectURL = projectURL
+        self.projectID = projectID
+        self.projectName = projectName
         self.storageDirectoryOverride = storageDirectoryOverride
         super.init()
         loadStorage()
@@ -59,6 +90,7 @@ final class DoufuBridge: NSObject {
         let handler = DoufuBridgeMessageHandler(bridge: self)
         configuration.userContentController.add(handler, name: "doufuStorage")
         configuration.userContentController.add(handler, name: "doufuIndexedDB")
+        configuration.userContentController.add(handler, name: "doufuCapability")
     }
 
     /// Re-adds the bridge user script with the latest `storageData` and `indexedDBData`.
@@ -86,6 +118,7 @@ final class DoufuBridge: NSObject {
         MainActor.assumeIsolated {
             configuration.userContentController.removeScriptMessageHandler(forName: "doufuStorage")
             configuration.userContentController.removeScriptMessageHandler(forName: "doufuIndexedDB")
+            configuration.userContentController.removeScriptMessageHandler(forName: "doufuCapability")
         }
     }
 
@@ -193,6 +226,7 @@ final class DoufuBridge: NSObject {
 
         return """
         \(permissionBlockingJavaScript())
+        \(capabilityJavaScript())
         \(fetchProxyAndLocalStorageJavaScript(storageJSON: storageJSON))
         \(indexedDBShimJavaScript(snapshot: idbJSON))
         """
@@ -256,6 +290,107 @@ final class DoufuBridge: NSObject {
 
         })();
         """
+    }
+
+    // MARK: - Capability JS API
+
+    private func capabilityJavaScript() -> String {
+        return """
+        (function() {
+          'use strict';
+
+          var _callbacks = {};
+          var _nextId = 1;
+
+          function _request(capability, action, opts) {
+            return new Promise(function(resolve, reject) {
+              var id = String(_nextId++);
+              _callbacks[id] = { resolve: resolve, reject: reject };
+              try {
+                window.webkit.messageHandlers.doufuCapability.postMessage({
+                  callbackId: id,
+                  capability: capability,
+                  action: action,
+                  options: opts || {}
+                });
+              } catch(e) {
+                delete _callbacks[id];
+                reject(new DOMException('Bridge unavailable.', 'NotSupportedError'));
+              }
+            });
+          }
+
+          window.__doufuResolve = function(id, data) {
+            var cb = _callbacks[id];
+            if (cb) { delete _callbacks[id]; cb.resolve(data); }
+          };
+
+          window.__doufuReject = function(id, message, name) {
+            var cb = _callbacks[id];
+            if (cb) { delete _callbacks[id]; cb.reject(new DOMException(message, name || 'NotAllowedError')); }
+          };
+
+          window.doufu = {
+            camera: {
+              start: function(opts) { return _request('camera', 'start', opts); },
+              stop: function() { return _request('camera', 'stop'); }
+            },
+            mic: {
+              start: function(opts) { return _request('microphone', 'start', opts); },
+              stop: function() { return _request('microphone', 'stop'); }
+            },
+            location: {
+              get: function() { return _request('location', 'get'); },
+              watch: function(cb) { return _request('location', 'watch'); },
+              clearWatch: function(id) { return _request('location', 'clearWatch', { watchId: id }); }
+            },
+            clipboard: {
+              read: function() { return _request('clipboard_read', 'read'); },
+              write: function(text) { return _request('clipboard_write', 'write', { text: text }); }
+            }
+          };
+        })();
+        """
+    }
+
+    // MARK: - Capability Request Handling
+
+    fileprivate func handleCapabilityRequest(_ payload: Any) {
+        guard let dict = payload as? [String: Any],
+              let callbackID = dict["callbackId"] as? String else {
+            return
+        }
+
+        guard let capabilityKey = dict["capability"] as? String,
+              let type = CapabilityType.from(dbKey: capabilityKey) else {
+            rejectCallback(callbackID: callbackID, message: "Unknown capability.", name: "NotSupportedError")
+            return
+        }
+
+        guard let delegate = capabilityDelegate else {
+            rejectCallback(callbackID: callbackID, message: "Capability not available.", name: "NotSupportedError")
+            return
+        }
+
+        delegate.bridge(self, didRequestCapability: type, callbackID: callbackID) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success:
+                self.resolveCallback(callbackID: callbackID, data: "null")
+            case .failure(let error):
+                self.rejectCallback(callbackID: callbackID, message: error.message, name: error.name)
+            }
+        }
+    }
+
+    private func resolveCallback(callbackID: String, data: String) {
+        let js = "window.__doufuResolve('\(callbackID.escapedForJS)', \(data));"
+        webView?.evaluateJavaScript(js, completionHandler: nil)
+    }
+
+    private func rejectCallback(callbackID: String, message: String, name: String) {
+        let js = "window.__doufuReject('\(callbackID.escapedForJS)', '\(message.escapedForJS)', '\(name.escapedForJS)');"
+        webView?.evaluateJavaScript(js, completionHandler: nil)
     }
 
     // MARK: - fetch() proxy + localStorage shim
@@ -426,6 +561,18 @@ final class DoufuBridge: NSObject {
     }
 }
 
+// MARK: - String JS Escaping
+
+private extension String {
+    /// Escapes single quotes, backslashes, and newlines for safe embedding in JS string literals.
+    var escapedForJS: String {
+        self.replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "'", with: "\\'")
+            .replacingOccurrences(of: "\n", with: "\\n")
+            .replacingOccurrences(of: "\r", with: "\\r")
+    }
+}
+
 // MARK: - Message Handler (prevent retain cycle)
 
 /// A thin non-isolated wrapper so that `WKScriptMessageHandler` doesn't
@@ -452,6 +599,8 @@ private nonisolated final class DoufuBridgeMessageHandler: NSObject, WKScriptMes
                 bridge.handleStorageUpdate(body)
             case "doufuIndexedDB":
                 bridge.handleIndexedDBUpdate(body)
+            case "doufuCapability":
+                bridge.handleCapabilityRequest(body)
             default:
                 break
             }

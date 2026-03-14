@@ -204,5 +204,17 @@ nonisolated final class DatabaseManager {
             )
         }
 
+        migrator.registerMigration("v3_project_capabilities") { db in
+            try db.create(table: "project_capability") { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("project_id", .text).notNull()
+                    .references("project", onDelete: .cascade)
+                t.column("capability", .text).notNull()
+                t.column("state", .integer).notNull().defaults(to: 0)
+                t.column("updated_at", .integer).notNull()
+                t.uniqueKey(["project_id", "capability"])
+            }
+        }
+
     }
 }

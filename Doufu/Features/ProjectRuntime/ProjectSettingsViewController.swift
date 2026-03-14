@@ -18,11 +18,14 @@ final class ProjectSettingsViewController: UITableViewController {
     private let gitService = ProjectGitService.shared
     private let modelSelectionStore = ModelSelectionStateStore.shared
 
+    private let capabilityStore = ProjectCapabilityStore.shared
+
     private var projectNameText: String
     private var projectDescriptionText: String
     /// nil means "use app default"
     private var toolPermissionOverride: ToolPermissionMode?
     private var projectModelSelection: ModelSelection?
+    private var projectCapabilities: [(type: CapabilityType, state: CapabilityState)] = []
     private var modelSelectionObserver: NSObjectProtocol?
     private var projectChangeObserver: NSObjectProtocol?
 
@@ -66,6 +69,7 @@ final class ProjectSettingsViewController: UITableViewController {
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "CheckpointCell")
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "ChatSettingCell")
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "ProjectSettingCell")
+        tableView.register(CapabilitySwitchCell.self, forCellReuseIdentifier: CapabilitySwitchCell.reuseIdentifier)
 
         configureDiffableDataSource()
 
@@ -77,6 +81,7 @@ final class ProjectSettingsViewController: UITableViewController {
         }
 
         projectModelSelection = modelSelectionStore.loadProjectDefaultSelection(projectID: projectID)
+        projectCapabilities = capabilityStore.loadRequestedCapabilities(projectID: projectID)
         applySnapshot()
     }
 
@@ -169,6 +174,30 @@ final class ProjectSettingsViewController: UITableViewController {
             cell.accessoryType = .disclosureIndicator
             return cell
 
+        case .capability(let typeKey, let isAllowed):
+            guard let cell = tableView.dequeueReusableCell(
+                withIdentifier: CapabilitySwitchCell.reuseIdentifier,
+                for: indexPath
+            ) as? CapabilitySwitchCell else {
+                return UITableViewCell()
+            }
+            let capType = CapabilityType.from(dbKey: typeKey)
+            cell.configure(
+                title: capType?.displayName ?? typeKey,
+                isOn: isAllowed
+            ) { [weak self] newValue in
+                guard let self, let capType else { return }
+                let newState: CapabilityState = newValue ? .allowed : .denied
+                self.capabilityStore.saveCapability(
+                    projectID: self.projectID,
+                    type: capType,
+                    state: newState
+                )
+                self.projectCapabilities = self.capabilityStore.loadRequestedCapabilities(projectID: self.projectID)
+                self.applySnapshot()
+            }
+            return cell
+
         case .checkpointHistory:
             let cell = tableView.dequeueReusableCell(withIdentifier: "CheckpointCell", for: indexPath)
             var configuration = cell.defaultContentConfiguration()
@@ -221,11 +250,22 @@ final class ProjectSettingsViewController: UITableViewController {
 
     private func buildSnapshot() -> NSDiffableDataSourceSnapshot<ProjectSettingsSectionID, ProjectSettingsItemID> {
         var snapshot = NSDiffableDataSourceSnapshot<ProjectSettingsSectionID, ProjectSettingsItemID>()
-        var sections: [ProjectSettingsSectionID] = [.project, .chat, .checkpoints]
+        var sections: [ProjectSettingsSectionID] = [.project, .chat]
+        if !projectCapabilities.isEmpty { sections.append(.capabilities) }
+        sections.append(.checkpoints)
         if doufuBridge != nil { sections.append(.storage) }
         snapshot.appendSections(sections)
         snapshot.appendItems([.projectName, .projectDescription], toSection: .project)
         snapshot.appendItems([.defaultModel, .toolPermission], toSection: .chat)
+        if !projectCapabilities.isEmpty {
+            let items = projectCapabilities.map { entry in
+                ProjectSettingsItemID.capability(
+                    type: entry.type.dbKey,
+                    isAllowed: entry.state == .allowed
+                )
+            }
+            snapshot.appendItems(items, toSection: .capabilities)
+        }
         snapshot.appendItems([.checkpointHistory], toSection: .checkpoints)
         if doufuBridge != nil {
             snapshot.appendItems([.clearLocalStorage, .clearIndexedDB], toSection: .storage)
@@ -248,6 +288,8 @@ final class ProjectSettingsViewController: UITableViewController {
             return String(localized: "project_settings.section.project")
         case .chat:
             return String(localized: "project_settings.section.chat")
+        case .capabilities:
+            return String(localized: "project_settings.section.capabilities")
         case .checkpoints:
             return String(localized: "project_settings.section.checkpoints")
         case .storage:
@@ -265,6 +307,8 @@ final class ProjectSettingsViewController: UITableViewController {
             return String(localized: "project_settings.footer.project_name_usage")
         case .chat:
             return String(localized: "project_settings.footer.tool_permission")
+        case .capabilities:
+            return nil
         case .checkpoints:
             return String(localized: "project_settings.footer.checkpoints")
         case .storage:
@@ -280,7 +324,7 @@ final class ProjectSettingsViewController: UITableViewController {
     override func tableView(_ tableView: UITableView, willSelectRowAt indexPath: IndexPath) -> IndexPath? {
         guard let itemID = diffableDataSource.itemIdentifier(for: indexPath) else { return nil }
         switch itemID {
-        case .projectName:
+        case .projectName, .capability:
             return nil
         case .projectDescription, .defaultModel, .toolPermission, .checkpointHistory,
              .clearLocalStorage, .clearIndexedDB:
@@ -293,7 +337,7 @@ final class ProjectSettingsViewController: UITableViewController {
         guard let itemID = diffableDataSource.itemIdentifier(for: indexPath) else { return }
 
         switch itemID {
-        case .projectName:
+        case .projectName, .capability:
             break
         case .projectDescription:
             presentProjectDescriptionEditor()
@@ -436,6 +480,7 @@ final class ProjectSettingsViewController: UITableViewController {
         projectNameText = store.loadProjectName(projectURL: projectURL)
         projectDescriptionText = store.loadProjectDescription(projectURL: projectURL)
         toolPermissionOverride = store.loadProjectToolPermissionOverride(projectURL: projectURL)
+        projectCapabilities = capabilityStore.loadRequestedCapabilities(projectID: projectID)
         applySnapshot()
     }
 

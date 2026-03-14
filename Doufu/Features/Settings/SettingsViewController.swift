@@ -321,13 +321,16 @@ final class SettingsViewController: UITableViewController {
             }
 
         case .cameraPermission:
-            handlePermissionTap(mediaType: .video)
+            let vc = CapabilityDetailViewController(capabilityType: .camera)
+            navigationController?.pushViewController(vc, animated: true)
 
         case .microphonePermission:
-            handlePermissionTap(mediaType: .audio)
+            let vc = CapabilityDetailViewController(capabilityType: .microphone)
+            navigationController?.pushViewController(vc, animated: true)
 
         case .locationPermission:
-            handleLocationPermissionTap()
+            let vc = CapabilityDetailViewController(capabilityType: .location)
+            navigationController?.pushViewController(vc, animated: true)
 
         case .manageProviders:
             let controller = ManageProvidersViewController()
@@ -497,41 +500,6 @@ final class SettingsViewController: UITableViewController {
         }
     }
 
-    // MARK: - Permission Requests
-
-    private func handlePermissionTap(mediaType: AVMediaType) {
-        let status = AVCaptureDevice.authorizationStatus(for: mediaType)
-        switch status {
-        case .notDetermined:
-            AVCaptureDevice.requestAccess(for: mediaType) { [weak self] _ in
-                Task { @MainActor in self?.applySnapshot() }
-            }
-        case .denied, .restricted:
-            openSystemSettings()
-        case .authorized:
-            break
-        @unknown default:
-            break
-        }
-    }
-
-    private lazy var locationManager = CLLocationManager()
-
-    private func handleLocationPermissionTap() {
-        let status = locationManager.authorizationStatus
-        switch status {
-        case .notDetermined:
-            locationManager.delegate = self
-            locationManager.requestWhenInUseAuthorization()
-        case .denied, .restricted:
-            openSystemSettings()
-        case .authorizedWhenInUse, .authorizedAlways:
-            break
-        @unknown default:
-            break
-        }
-    }
-
     private func openSystemSettings() {
         guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
         UIApplication.shared.open(url)
@@ -595,14 +563,6 @@ private final class SettingsDataSource: UITableViewDiffableDataSource<SettingsSe
 
     override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
         sectionIdentifier(for: section)?.footer
-    }
-}
-
-// MARK: - CLLocationManagerDelegate
-
-extension SettingsViewController: CLLocationManagerDelegate {
-    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
-        applySnapshot()
     }
 }
 
