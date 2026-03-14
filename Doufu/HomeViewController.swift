@@ -63,6 +63,9 @@ final class HomeViewController: UIViewController {
         view.keyboardDismissMode = .onDrag
         view.dataSource = self
         view.delegate = self
+        view.dragDelegate = self
+        view.dropDelegate = self
+        view.dragInteractionEnabled = true
         view.register(ProjectCardCell.self, forCellWithReuseIdentifier: ProjectCardCell.reuseIdentifier)
         view.register(AddProjectCardCell.self, forCellWithReuseIdentifier: AddProjectCardCell.reuseIdentifier)
         return view
@@ -470,26 +473,6 @@ final class HomeViewController: UIViewController {
         present(navigationController, animated: true)
     }
 
-    private func presentProjectSortPage() {
-        let items = allProjects.map { project in
-            ProjectSortViewController.Item(id: project.id, name: project.name)
-        }
-
-        let controller = ProjectSortViewController(items: items)
-        controller.onDone = { [weak self] orderedIDs in
-            self?.saveCustomProjectOrder(orderedIDs)
-            self?.reloadProjects()
-        }
-
-        let navigationController = UINavigationController(rootViewController: controller)
-        navigationController.modalPresentationStyle = .pageSheet
-        if let sheet = navigationController.sheetPresentationController {
-            sheet.detents = [.medium(), .large()]
-            sheet.prefersGrabberVisible = true
-        }
-        present(navigationController, animated: true)
-    }
-
     private func presentDeleteConfirmation(for project: HomeProjectItem) {
         let alert = UIAlertController(
             title: String(localized: "home.alert.delete.title"),
@@ -663,10 +646,6 @@ extension HomeViewController: UICollectionViewDelegate {
                 self.openProjectSettings(project)
             }
 
-            let sortAction = UIAction(title: String(localized: "home.menu.sort"), image: UIImage(systemName: "line.3.horizontal.decrease.circle")) { _ in
-                self.presentProjectSortPage()
-            }
-
             let deleteAction = UIAction(
                 title: String(localized: "common.action.delete"),
                 image: UIImage(systemName: "trash"),
@@ -679,7 +658,6 @@ extension HomeViewController: UICollectionViewDelegate {
                 title: "",
                 children: [
                     settingsAction,
-                    sortAction,
                     exportMenu,
                     deleteAction
                 ]
@@ -705,6 +683,66 @@ extension HomeViewController: UICollectionViewDelegateFlowLayout {
         let previewHeight = previewWidth * screenRatio
         let itemHeight = 8 + previewHeight + 8 + 30 + 8 // top + preview + gap + title + bottom
         return CGSize(width: itemWidth, height: itemHeight)
+    }
+}
+
+extension HomeViewController: UICollectionViewDragDelegate {
+    func collectionView(
+        _ collectionView: UICollectionView,
+        itemsForBeginning session: UIDragSession,
+        at indexPath: IndexPath
+    ) -> [UIDragItem] {
+        guard !isSearchActive, indexPath.item < filteredProjects.count else { return [] }
+        let project = filteredProjects[indexPath.item]
+        let itemProvider = NSItemProvider(object: project.id as NSString)
+        return [UIDragItem(itemProvider: itemProvider)]
+    }
+}
+
+extension HomeViewController: UICollectionViewDropDelegate {
+    func collectionView(_ collectionView: UICollectionView, canHandle session: UIDropSession) -> Bool {
+        !isSearchActive
+    }
+
+    func collectionView(
+        _ collectionView: UICollectionView,
+        dropSessionDidUpdate session: UIDropSession,
+        withDestinationIndexPath destinationIndexPath: IndexPath?
+    ) -> UICollectionViewDropProposal {
+        guard collectionView.hasActiveDrag else {
+            return UICollectionViewDropProposal(operation: .cancel)
+        }
+        guard let destination = destinationIndexPath, destination.item <= filteredProjects.count else {
+            return UICollectionViewDropProposal(operation: .cancel)
+        }
+        return UICollectionViewDropProposal(operation: .move, intent: .insertAtDestinationIndexPath)
+    }
+
+    func collectionView(
+        _ collectionView: UICollectionView,
+        performDropWith coordinator: UICollectionViewDropCoordinator
+    ) {
+        guard let item = coordinator.items.first,
+              let sourceIndexPath = item.sourceIndexPath,
+              sourceIndexPath.item < filteredProjects.count else { return }
+
+        let destinationIndexPath = coordinator.destinationIndexPath ?? IndexPath(item: filteredProjects.count - 1, section: 0)
+        // Clamp to last project position (don't land on AddProjectCardCell)
+        let destItem = min(destinationIndexPath.item, filteredProjects.count - 1)
+
+        guard sourceIndexPath.item != destItem else { return }
+
+        let movedProject = allProjects.remove(at: sourceIndexPath.item)
+        allProjects.insert(movedProject, at: destItem)
+        filteredProjects = allProjects
+
+        let finalIndexPath = IndexPath(item: destItem, section: 0)
+        collectionView.performBatchUpdates {
+            collectionView.moveItem(at: sourceIndexPath, to: finalIndexPath)
+        }
+        coordinator.drop(item.dragItem, toItemAt: finalIndexPath)
+
+        saveCustomProjectOrder(allProjects.map(\.id))
     }
 }
 
