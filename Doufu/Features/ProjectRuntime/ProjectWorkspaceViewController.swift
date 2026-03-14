@@ -1375,10 +1375,19 @@ extension ProjectWorkspaceViewController: DoufuBridgeCapabilityDelegate {
 
     private func presentCapabilityPrompt(
         type: CapabilityType,
+        retryCount: Int = 0,
         completion: @escaping (Bool) -> Void
     ) {
-        guard presentedViewController == nil else {
-            completion(false)
+        if presentedViewController != nil {
+            // System permission dialog may still be dismissing (animation ~0.3s).
+            // Retry a few times before giving up.
+            if retryCount < 5 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+                    self?.presentCapabilityPrompt(type: type, retryCount: retryCount + 1, completion: completion)
+                }
+            } else {
+                completion(false)
+            }
             return
         }
         let title = String(
