@@ -1,12 +1,12 @@
 # 执行计划
 
-## 当前状态（2026-03-12）
+## 当前状态（2026-03-14）
 
 1. 已完成首页项目画廊（搜索、长按菜单、拖拽排序、新建入口）。
 2. 已完成项目运行页（全屏预览 + 悬浮面板 + 退出确认 + 文件入口）。
 3. 已完成项目级设置页（名称/描述修改、项目级模型、工具权限、checkpoint history 入口）。
 4. 已完成 Git checkpoint history（agent loop 前自动保存、实际改动后创建 checkpoint、列表恢复）。
-5. 已完成 Provider 管理全链路（OpenAI Compatible / Anthropic / Gemini，均支持 API Key + OAuth）。
+5. 已完成 Provider 管理全链路（OpenAI Compatible / Anthropic / Gemini / OpenRouter，均支持 API Key + OAuth）。
 6. 已完成 Provider 模型管理（发现/自定义/能力参数编辑）。
 7. 已完成 `LLMModelRegistry` 统一模型能力解析（多级优先级回退）。
 8. 已完成聊天架构升级为 **tool-use agent loop**（替代原 pipeline 三路执行）。
@@ -35,6 +35,7 @@
 31. 已完成聊天模块 UI 重组至 `Features/Chat/` 目录。
 32. 已完成 `ProjectLifecycleCoordinator`：项目生命周期统一入口（create / delete / close / rename），修复删除执行中项目文件丢失、discard 后 session 泄漏、rename 后 session context 不同步三处 Bug。
 33. 已完成 project 状态收口：引入 `ProjectChangeCenter` 统一项目变更广播，引入 `ProjectActivityStore` 统一项目活动状态（building / newVersionAvailable / needsConfirmation / error）。
+34. 已完成数据层完善：`v2_add_indexes` 迁移（`token_usage.created_at` 索引、`message(thread_id, sort_order)` 复合索引）。
 
 ## 已完成阶段回顾
 
@@ -47,7 +48,7 @@
 4. Phase D：运行与编辑入口
    - `WKWebView` 运行页、悬浮面板、刷新与退出流程、文件浏览与编辑。
 5. Phase E：Provider 与认证
-   - Manage Providers、Add Provider、多 Provider（OpenAI/Anthropic/Gemini）、API Key 与 OAuth。
+   - Manage Providers、Add Provider、多 Provider（OpenAI/Anthropic/Gemini/OpenRouter）、API Key 与 OAuth。
 6. Phase F：聊天改工程（Pipeline 阶段）
    - 文件上下文、流式请求、JSON 补丁解析、安全写入、日志排障。
 7. Phase G：Agent 架构升级
@@ -67,7 +68,7 @@
    - 消息流 FlowState 状态机，保证任务期间恰好一条 live 消息。
 10. Phase I：SQLite 迁移
     - 引入 GRDB.swift 7.10.0，建立 `DatabaseManager` 单例（WAL 模式，外键 ON）。
-    - 12 张表覆盖所有结构化数据：项目元数据（`project` + `permission`）、Provider 配置（`llm_provider` + `llm_provider_model`）、三层模型选择、聊天数据（`thread` + `assistant` + `message` + `session_memory`）、token 用量。
+    - 12 张表覆盖所有结构化数据：项目元数据（`project` + `permission`）、Provider 配置（`llm_provider` + `llm_provider_model`）、三层模型选择、聊天数据（`thread` + `assistant` + `message` + `session_memory`）、token 用量。迁移链：`v1_initial_schema` + `v2_add_indexes`。
     - 移除所有 JSON 文件存储（manifest.json, threads_index, thread_messages, project_config, thread_selections）和 UserDefaults 存储（providers, token usage）。
     - 项目磁盘结构升级到 v4：`Documents/Projects/{uuid}/App/` + `AppData/`。
     - 聊天 UI 文件重组到 `Features/Chat/` 目录。

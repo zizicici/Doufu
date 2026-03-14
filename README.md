@@ -38,7 +38,7 @@
    - 优先使用 `Runestone`（若可用）并按后缀启用语法高亮。
 5. Provider 管理：
    - `Settings -> Manage Providers -> Add Provider`。
-   - 支持 `OpenAI Compatible`、`Anthropic`、`Google Gemini`。
+   - 支持 `OpenAI Compatible`、`Anthropic`、`Google Gemini`、`OpenRouter`。
    - 每个 Provider 支持 `API Key` 与 `OAuth` 模式。
    - Provider 元数据在 SQLite，凭证在 `Keychain`。
    - 支持模型列表管理（发现/自定义/编辑能力参数）。
@@ -75,6 +75,10 @@
 10. Web 能力：
     - `WebToolProvider` 支持 web_search（DuckDuckGo / Bing / Google 多引擎）和 web_fetch。
     - Agent 可自主搜索文档、获取网页内容辅助开发。
+11. 项目导入/导出：
+    - `.doufu` 格式：仅导出/导入 `App/` 目录（代码文件）。
+    - `.doufull` 格式：导出/导入 `App/` + `AppData/`（含用户数据）。
+    - 支持重复导入同一归档，每次创建独立项目。
 
 ## 维护规则
 
@@ -82,4 +86,4 @@
 2. 新增用户可见文案时，必须同步 `Localizable.xcstrings`。
 3. 涉及架构调整时，必须同步 `technical-architecture.md` 与 `module-design.md`。
 
-文档已按当前实现同步更新（2026-03-12）。所有结构化数据已迁移到 SQLite（GRDB.swift 7.10.0）。
+文档已按当前实现同步更新（2026-03-14）。所有结构化数据已迁移到 SQLite（GRDB.swift 7.10.0）。

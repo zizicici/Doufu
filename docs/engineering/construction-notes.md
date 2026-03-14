@@ -13,7 +13,7 @@
 2. ViewController 只处理 UI 组装和交互转发。
 3. 业务逻辑进入 Service / Repository。
 4. 项目生命周期操作（create / delete / close / rename）必须通过 `ProjectLifecycleCoordinator` 执行，不可直接调用 `AppProjectStore` 或 `ChatSessionManager`，以保证 session 状态一致性。
-4. 聊天模块位于 `Features/Chat/` 目录，主要文件：`ChatViewController`（UI + 胶水）、`ChatThreadSessionManager`（线程会话）、`ChatMessageStore`（消息状态机）、`ChatModelSelectionManager`（模型选择）、`ChatMenuBuilder`（菜单构建）。
+4. 聊天模块 UI 位于 `Features/Chat/` 目录，主要文件：`ChatViewController`（UI + 胶水）、`ChatMessageStore`（消息状态机）、`ChatMenuBuilder`（菜单构建）。聊天运行时位于 `Core/Chat/` 目录：`ChatSession`、`ChatThreadManager`（线程管理）、`ChatModelSelectionManager`（模型选择）。
 5. 设置页风格优先复用 `Features/Settings/Components` 中的通用 Cell。
 6. 所有用户可见文案必须接入 `Localizable.xcstrings`，禁止新增硬编码显示文本。
 
@@ -40,8 +40,8 @@
 1. 工具定义与执行集中在 `AgentTools.swift` 和 `AgentToolProvider`。
 2. 工具按危险程度分级：
    - `autoAllow`：read_file, list_directory, search_files, grep_files, glob_files, validate_code, diff_file, changed_files
-   - `confirmOnce`：write_file, edit_file, move_file, revert_file
-   - `alwaysConfirm`：delete_file, web_search, web_fetch
+   - `confirmOnce`：write_file, edit_file, revert_file
+   - `alwaysConfirm`：delete_file, move_file, web_search, web_fetch
 3. 三种权限模式：
    - `standard`：默认模式，写入工具首次确认，危险工具每次确认。
    - `autoApproveNonDestructive`：非危险操作自动通过。
@@ -70,10 +70,11 @@
 1. OpenAI Compatible 走 `/responses`。
 2. Anthropic 走 `/messages`（thinking 配置可能被后端拒绝，要可回退）。
 3. Gemini 走 `/models/{model}:generateContent`（thinking config 可能被后端拒绝，要可回退）。
-4. 不同 Provider 的鉴权头不同：
+4. OpenRouter 走 `/chat/completions`（映射消息格式到 OpenRouter 格式）。
+5. 不同 Provider 的鉴权头不同：
    - API Key 模式：Provider 特定 header（例如 `x-api-key`）。
    - OAuth 模式：`Authorization: Bearer ...`。
-5. 模型能力统一通过 `LLMModelRegistry.resolve()` 获取 `ResolvedModelProfile`。
+6. 模型能力统一通过 `LLMModelRegistry.resolve()` 获取 `ResolvedModelProfile`。
 
 ## Git 检查点注意事项
 

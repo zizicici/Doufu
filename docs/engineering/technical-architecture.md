@@ -23,7 +23,7 @@
 1. `Doufu/App/`
    - App 生命周期与根导航。`AppDelegate.setup()` 初始化 `DatabaseManager`。
 2. `Doufu/Core/Database/`
-   - `DatabaseManager`：SQLite 数据库单例，持有 `DatabasePool`，当前保留单个 `v1_initial_schema` 迁移，一次性创建所有现用表结构。
+   - `DatabaseManager`：SQLite 数据库单例，持有 `DatabasePool`，迁移链：`v1_initial_schema`（13 表）、`v2_add_indexes`（`token_usage.created_at` 索引、`message(thread_id, sort_order)` 复合索引）。
    - `DatabaseRecords`：所有 GRDB Record 类型（DBProject, DBPermission, DBProvider, DBProviderModel, DBTokenUsage, DBAppModelSelection, DBProjectModelSelection, DBThreadModelSelection, DBChatThread, DBAssistant, DBChatMessage, DBSessionMemory）及 domain ↔ DB 映射扩展。
    - `DatabaseTimestamp`：Date ↔ Int64 纳秒转换。
 3. `Doufu/Core/Projects/`
@@ -38,17 +38,20 @@
    - `ChatSessionManager`：project-scoped ChatSession 注册表，允许 Workspace 关闭后会话在当前进程内继续执行。
    - `ChatSession`：项目级长生命周期聊天运行时，持有线程/消息状态、执行协调、pending tool confirmation continuation，并消费 `ProjectChangeCenter` 事件。
    - `ChatTaskCoordinator`：单次请求执行协调器；桥接 `ProjectChatOrchestrator`、`ActiveTaskManager`、`PiPProgressManager` 与 `ProjectActivityStore`。
-5. `Doufu/Core/LLM/`
-   - `ProjectChatService`：聊天服务对外入口与数据模型定义。
-   - `LLMModelRegistry`：统一模型能力解析（capabilities + token budgets）。
    - `ChatDataStore`：`final class`，通过 GRDB `DatabasePool` 同步读写聊天数据（线程、消息、助理、会话记忆）。
    - `ChatDataService`：`@MainActor final class`，绑定单个 `projectID`，提供自动持久化。
    - `ChatSessionContext`：分离存储键（`projectID`）、工具执行路径（`workspaceURL` = App/）和 `projectRootURL`。
+   - `ChatThreadManager`：线程生命周期管理（切换、创建、删除、重排序），通过 delegate 通知 ChatSession 加载消息/记忆。
+   - `ChatModelSelectionManager`：消费 `ModelSelectionStateStore`、解析当前有效模型、生成 reasoning/thinking 运行时选项、管理凭证刷新。
    - `ChatDataModels`：聊天数据模型定义，含 `ModelSelection` 统一类型。
    - `SessionMemory`：会话记忆模型。
+5. `Doufu/Core/LLM/`
+   - `ProjectChatService`：聊天服务对外入口与数据模型定义。
+   - `LLMModelRegistry`：统一模型能力解析（capabilities + token budgets）。
    - `ModelSelectionStateStore`：App / Project / Thread 三层模型选择的共享状态源、缓存与变更通知。
    - `ModelSelectionResolver`：三层 `ModelSelection` 解析、校验与归一化。
    - `OpenAIOAuthService`：OpenAI OAuth（PKCE + localhost 回调）。
+   - `OpenRouterOAuthService`：OpenRouter OAuth（PKCE，返回 API Key）。
    - `LLMProviderSettingsStore`：Provider / Model CRUD 通过 GRDB（`llm_provider` + `llm_provider_model` 表）+ Keychain 凭证管理 + 三层 ModelSelection CRUD。
    - `LLMProviderModelDiscoveryService`：Provider 模型列表发现。
    - `ProviderCredentialResolver`：凭证解析（Keychain）。
@@ -62,7 +65,8 @@
      - `LLMStreamingClient`：流式请求客户端
      - `ToolUseRequestModels`：工具调用请求/响应模型
      - `LLMProviderProtocol`：Provider 请求适配协议
-     - `OpenAIProvider` / `AnthropicProvider` / `GeminiProvider`：各 Provider 实现
+     - `ChatPipelineModels`：请求/响应共享模型（`ResponsesRequest`、`JSONValue` 等）
+     - `OpenAIProvider` / `AnthropicProvider` / `GeminiProvider` / `OpenRouterProvider`：各 Provider 实现
      - `WebToolProvider`：Web 搜索与网页抓取
      - `CodeValidator`：隐藏 WKWebView 代码验证
      - `ProjectPathResolver`：项目路径安全解析
@@ -70,16 +74,16 @@
    - 首页画廊与排序页，消费 `ProjectActivityStore` 展示项目状态标签。
 7. `Doufu/Features/Chat/`
    - `ChatViewController`：聊天页 UI 布局与胶水代码（线程切换、输入处理、coordinator delegate 转发）。
-   - `ChatThreadSessionManager`：线程会话管理。
-   - `ChatMessageStore`：消息数组管理与 FlowState 状态机（idle / progress / streaming），通过 delegate 回调驱动 UI。
-   - `ChatModelSelectionManager`：消费 `ModelSelectionStateStore`、解析当前有效模型、生成 reasoning/thinking 运行时选项。
+   - `ChatMessageStore`：消息数组管理与 FlowState 状态机（idle / progress / streaming / tool），通过 delegate 回调驱动 UI。
    - `ChatMenuBuilder`：所有 UIMenu 构建（static 方法，无状态）。
    - `ChatMessage`：聊天消息模型。
    - `ChatMessageCell`：聊天消息气泡渲染。
+   - `ChatToolMessageCell`：工具消息气泡渲染（展示 summary，点击展开详情）。
    - `MarkdownRenderer`：Markdown 渲染。
    - `ModelConfigurationViewController`：共享模型配置页（App / Project / Thread）。
    - `ThreadManagementViewController`：线程管理页。
    - `MessageDetailViewController`：消息详情页。
+   - `ToolActivityDetailViewController`：工具活动详情页（结构化卡片展示工具调用结果）。
    - 聊天页负责在重新出现时恢复 pending tool confirmation 展示，并在 checkpoint restore 后与新的 thread 上下文对齐。
 8. `Doufu/Features/ProjectRuntime/`
    - `ProjectWorkspaceViewController`：项目运行页与悬浮面板，订阅 `ProjectChangeCenter` 刷新预览，并仅在真正可见时消费 `newVersionAvailable`。
@@ -99,7 +103,9 @@
    - `DefaultModelSelectionViewController`：默认模型选择。
    - `LLMQuickSetupViewController`：首次使用快速设置。
    - `TokenUsageViewController`：全局 token usage Dashboard。
+   - `ToolPermissionPickerViewController`：工具权限选择器。
    - `SettingsPickerViewController`：通用选项选择器。
+   - `SettingsSpecificationsViewController`：App 规格与第三方许可。
 10. `Doufu/Features/Settings/Components/`
    - 设置风格复用 Cell 组件。
 11. `Doufu/Core/`（其他）
@@ -118,7 +124,7 @@
    - `id`（纯 UUID，无前缀）, `name`, `projectURL`, `createdAt`, `updatedAt`
    - 计算属性：`appURL`（projectURL/App/）、`dataURL`（projectURL/AppData/）、`entryFileURL`（appURL/index.html）
 2. `LLMProviderRecord`
-   - `id`, `kind`, `authMode`, `label`, `baseURLString`, `autoAppendV1`, `extra`
+   - `id`, `kind`, `authMode`, `label`, `baseURLString`, `autoAppendV1`, `chatGPTAccountID?`, `modelID?`, `models`
 3. `LLMProviderModelRecord`
    - Provider 关联的模型记录，含 `source`（discovered / custom）和 `capabilities`。
 4. `ResolvedModelProfile`
@@ -140,7 +146,7 @@
    - 聊天线程、助理（每线程一个）、消息、会话记忆。
    - CASCADE：删除线程 → 自动删除关联的助理、消息、会话记忆。
    - `message.assistant_id` 可空（NULL = 用户消息）。
-   - `message.message_type`：0=system, 1=normal, 2=progress。
+   - `message.message_type`：0=system, 1=normal, 2=progress, 3=tool。
    - `message.token_usage_id` FK → `token_usage`。
 
 ## 本地存储约定
@@ -197,8 +203,8 @@
    - 接近迭代预算上限时注入系统提示收尾。
 4. 工具执行
    - 只读工具（`read_file`, `list_directory`, `search_files`, `grep_files`, `glob_files`, `diff_file`, `changed_files`）使用 TaskGroup 并行执行。
-   - 写入工具（`write_file`, `edit_file`, `move_file`, `revert_file`）顺序执行。
-   - 危险工具（`delete_file`, `web_search`, `web_fetch`）需用户确认。
+   - 写入工具（`write_file`, `edit_file`, `revert_file`）顺序执行。
+   - 危险工具（`delete_file`, `move_file`, `web_search`, `web_fetch`）需用户确认，顺序执行。
    - `validate_code` 使用共享 WKWebView，不可并行。
 5. 上下文管理
    - 4 阶段自适应压缩：
@@ -259,7 +265,10 @@
 3. Google Gemini
    - 走 `/models/{model}:generateContent`。
    - 支持 thinking budget；若后端拒绝则自动降级。
-4. 聊天页按 Provider/Model 维度选择模型与参数：
+4. OpenRouter
+   - 走 `/chat/completions`。
+   - 支持 reasoning effort；映射消息格式到 OpenRouter 格式。
+5. 聊天页按 Provider/Model 维度选择模型与参数：
    - `App / Project / Thread` 三层共享同一份 `ModelSelection(provider, model, reasoning, thinking)` 结构
    - OpenAI Compatible：`reasoning effort`
    - Anthropic/Gemini：`thinking` 开关
@@ -269,7 +278,9 @@
 1. OpenAI OAuth
    - `SFSafariViewController` + PKCE + `localhost:1455/auth/callback`。
    - 回调成功后自动填充 Base URL 和 Bearer Token。
-2. Anthropic / Gemini OAuth
+2. OpenRouter OAuth
+   - PKCE 流程，返回 API Key（非 Bearer Token）。
+3. Anthropic / Gemini OAuth
    - 当前为外部登录页跳转 + 手动填写 Token 的配置流（无本地 callback 交换）。
 
 ## 安全边界

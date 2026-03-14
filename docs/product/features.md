@@ -36,8 +36,8 @@
    - 基于 tool-use agent loop 架构，模型自主调用工具迭代完成任务。
    - 内置 15 种工具：
      - 只读：`read_file`、`list_directory`、`search_files`、`grep_files`、`glob_files`、`diff_file`、`changed_files`
-     - 写入：`write_file`、`edit_file`、`move_file`、`revert_file`
-     - 危险：`delete_file`、`web_search`、`web_fetch`
+     - 写入：`write_file`、`edit_file`、`revert_file`
+     - 危险：`delete_file`、`move_file`、`web_search`、`web_fetch`
      - 验证：`validate_code`
    - 工具权限三级分层：autoAllow / confirmOnce / alwaysConfirm。
    - 三种权限模式：standard / autoApproveNonDestructive / fullAutoApprove。

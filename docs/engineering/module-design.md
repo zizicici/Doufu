@@ -11,14 +11,14 @@
 3. `Project Chat`
    - 主要文件：
      - `Features/Chat/ChatViewController.swift`：UI 布局、View 生命周期、UITableViewDataSource、输入处理、线程管理协调、ChatTaskCoordinatorDelegate 转发。
-     - `Features/Chat/ChatThreadSessionManager.swift`：线程会话管理。
-     - `Features/Chat/ChatMessageStore.swift`：消息数组管理、FlowState 状态机（idle / progress / streaming 三态）、追加/finalize/streaming 生命周期、持久化。
-     - `Features/Chat/ChatModelSelectionManager.swift`：消费共享模型状态、解析当前有效模型、生成运行时凭证与 reasoning/thinking 选项。
+     - `Features/Chat/ChatMessageStore.swift`：消息数组管理、FlowState 状态机（idle / progress / streaming / tool 四态）、追加/finalize/streaming 生命周期、持久化。
      - `Features/Chat/ChatMenuBuilder.swift`：所有 UIMenu 构建（thread / more / model），纯 static 方法，不持有状态。
      - `Features/Chat/ChatMessage.swift`：聊天消息模型。
      - `Features/Chat/ChatMessageCell.swift`：聊天消息气泡渲染。
+     - `Features/Chat/ChatToolMessageCell.swift`：工具消息气泡渲染（展示 summary，点击展开详情）。
      - `Features/Chat/MarkdownRenderer.swift`：Markdown 渲染。
      - `Features/Chat/MessageDetailViewController.swift`：消息详情页。
+     - `Features/Chat/ToolActivityDetailViewController.swift`：工具活动详情页（结构化卡片展示工具调用结果）。
      - `Features/Chat/ThreadManagementViewController.swift`：线程管理页。
    - 责任：聊天消息流、线程管理、模型配置、进度展示、取消请求、extended thinking 展示、工具活动摘要展示，以及 pending tool confirmation 的挂起恢复。
    - 消息流状态机：`ChatMessageStore.FlowState` 保证任务执行期间恰好有一条消息处于 live 状态（`finishedAt == nil`），streaming 与 progress 消息通过原子状态转换交替出现。
@@ -51,7 +51,7 @@
     - 责任：通用选项选择器，替代各功能专用 Picker。
 13. `Database`
     - 主要文件：`Core/Database/DatabaseManager.swift`、`DatabaseRecords.swift`、`DatabaseTimestamp.swift`
-    - 责任：SQLite 数据库初始化与迁移、GRDB Record 类型定义、domain ↔ DB 映射。
+    - 责任：SQLite 数据库初始化与迁移（`v1_initial_schema` + `v2_add_indexes`）、索引优化、GRDB Record 类型定义、domain ↔ DB 映射。
 14. `Project Storage`
     - 主要文件：`Core/Projects/AppProjectStore.swift`
     - 责任：项目元数据 CRUD（GRDB `project` + `permission` 表）、模板写入、权限读写。
@@ -77,11 +77,11 @@
    - 主要文件：`Core/LLM/ModelSelectionStateStore.swift`、`Core/LLM/ModelSelectionResolver.swift`
    - 责任：App / Project / Thread 三层 `ModelSelection` 的共享状态源、缓存、变更通知、解析与归一化。从 `LLMProviderSettingsStore` 读取数据（不再依赖 `ChatDataService`）。
 22. `Chat Data Storage`
-   - 主要文件：`Core/LLM/ChatDataStore.swift`、`Core/LLM/ChatDataService.swift`、`Core/LLM/ChatSessionContext.swift`
+   - 主要文件：`Core/Chat/ChatDataStore.swift`、`Core/Chat/ChatDataService.swift`、`Core/Chat/ChatSessionContext.swift`
    - 责任：`ChatDataStore`（`final class`）通过 GRDB 同步读写聊天数据；`ChatDataService`（`@MainActor`）绑定单个 projectID 提供自动持久化。
 23. `OAuth Service`
-   - 主要文件：`Core/LLM/OpenAIOAuthService.swift`
-   - 责任：OpenAI OAuth 流程（授权 URL、callback、token 交换、结果回传）。
+   - 主要文件：`Core/LLM/OpenAIOAuthService.swift`、`Core/LLM/OpenRouterOAuthService.swift`
+   - 责任：OpenAI OAuth（PKCE + localhost 回调，返回 Bearer Token）；OpenRouter OAuth（PKCE，返回 API Key）。
 24. `Agent Chat Pipeline`
    - 主要文件：`Core/LLM/ProjectChatService.swift` + `Core/LLM/ChatPipeline/*`
    - 责任：对外 `sendAndApply`、agent loop 控制、工具定义与执行、流式请求、上下文压缩、进度事件。
