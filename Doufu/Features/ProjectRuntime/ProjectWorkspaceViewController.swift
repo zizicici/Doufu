@@ -94,6 +94,9 @@ final class ProjectWorkspaceViewController: UIViewController {
     private var locationGetCompletions: [(Result<String, DoufuBridgeCapabilityError>) -> Void] = []
     private var activeWatchIDs: Set<String> = []
     private var nextWatchID: Int = 1
+    private var activeToasts: [CapabilityType: CapabilityToastView] = [:]
+    private var toastDismissTimers: [CapabilityType: DispatchWorkItem] = [:]
+    private var persistentToastTypes: Set<CapabilityType> = []
     private lazy var mediaSessionManager: MediaSessionManager = {
         let m = MediaSessionManager()
         m.bridge = doufuBridge
@@ -1096,6 +1099,7 @@ extension ProjectWorkspaceViewController: WKNavigationDelegate {
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         mediaSessionManager.stopAll()
         cleanUpPhotosTmp()
+        clearAllCapabilityToasts()
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -1343,6 +1347,89 @@ extension ProjectWorkspaceViewController: DoufuBridgeCapabilityDelegate {
         }
     }
 
+    // MARK: - Capability Toast
+
+    private static let toastSpacing: CGFloat = 6
+
+    private func showCapabilityToast(type: CapabilityType, persistent: Bool) {
+        // Cancel any existing dismiss timer for this type
+        toastDismissTimers[type]?.cancel()
+        toastDismissTimers[type] = nil
+
+        if persistent {
+            persistentToastTypes.insert(type)
+        }
+
+        if activeToasts[type] == nil {
+            let toast = CapabilityToastView(capabilityType: type)
+            toast.alpha = 0
+            view.addSubview(toast)
+            activeToasts[type] = toast
+            layoutToasts()
+
+            UIView.animate(withDuration: 0.2, delay: 0, options: .curveEaseOut) {
+                toast.alpha = 1
+            }
+        }
+
+        // Only schedule auto-dismiss if this type is not persistently active
+        if !persistent && !persistentToastTypes.contains(type) {
+            let work = DispatchWorkItem { [weak self] in
+                self?.hideCapabilityToast(type: type)
+            }
+            toastDismissTimers[type] = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: work)
+        }
+    }
+
+    private func hideCapabilityToast(type: CapabilityType) {
+        toastDismissTimers[type]?.cancel()
+        toastDismissTimers[type] = nil
+        persistentToastTypes.remove(type)
+
+        guard let toast = activeToasts.removeValue(forKey: type) else { return }
+        UIView.animate(withDuration: 0.2, delay: 0, options: .curveEaseOut, animations: {
+            toast.alpha = 0
+        }) { _ in
+            toast.removeFromSuperview()
+        }
+        layoutToasts()
+    }
+
+    private func clearAllCapabilityToasts() {
+        for (type, _) in activeToasts {
+            toastDismissTimers[type]?.cancel()
+            toastDismissTimers[type] = nil
+        }
+        for (_, toast) in activeToasts {
+            toast.removeFromSuperview()
+        }
+        activeToasts.removeAll()
+        toastDismissTimers.removeAll()
+        persistentToastTypes.removeAll()
+    }
+
+    private func layoutToasts() {
+        let safe = currentSafeFrame()
+        var y = safe.minY
+
+        // Sort by CapabilityType for stable ordering
+        let sortedTypes = activeToasts.keys.sorted { $0.dbKey < $1.dbKey }
+        for type in sortedTypes {
+            guard let toast = activeToasts[type] else { continue }
+            let size = toast.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize)
+            let frame = CGRect(x: safe.minX, y: y, width: size.width, height: size.height)
+            if toast.frame == .zero {
+                toast.frame = frame
+            } else {
+                UIView.animate(withDuration: 0.2, delay: 0, options: .curveEaseOut) {
+                    toast.frame = frame
+                }
+            }
+            y += size.height + Self.toastSpacing
+        }
+    }
+
     // MARK: - Capability Execution
 
     /// Actions that represent meaningful service usage (not control/teardown).
@@ -1378,14 +1465,17 @@ extension ProjectWorkspaceViewController: DoufuBridgeCapabilityDelegate {
         }
         switch type {
         case .clipboardRead:
+            showCapabilityToast(type: .clipboardRead, persistent: false)
             executeClipboardRead(completion: completion)
         case .clipboardWrite:
+            showCapabilityToast(type: .clipboardWrite, persistent: false)
             executeClipboardWrite(options: options, completion: completion)
         case .location:
             executeLocation(action: action, options: options, completion: completion)
         case .camera:
             switch action {
             case "stop":
+                hideCapabilityToast(type: .camera)
                 mediaSessionManager.stopCamera()
                 completion(.success("null"))
             case "focus":
@@ -1407,9 +1497,12 @@ extension ProjectWorkspaceViewController: DoufuBridgeCapabilityDelegate {
                 completion(.success("null"))
             default: // "start"
                 let facing = options["facing"] as? String ?? "user"
-                mediaSessionManager.startCamera(facing: facing, options: options) { result in
+                mediaSessionManager.startCamera(facing: facing, options: options) { [weak self] result in
                     switch result {
                     case .success:
+                        if self?.mediaSessionManager.isCameraActive == true {
+                            self?.showCapabilityToast(type: .camera, persistent: true)
+                        }
                         completion(.success("null"))
                     case .failure(let error):
                         completion(.failure(error))
@@ -1418,12 +1511,16 @@ extension ProjectWorkspaceViewController: DoufuBridgeCapabilityDelegate {
             }
         case .microphone:
             if action == "stop" {
+                hideCapabilityToast(type: .microphone)
                 mediaSessionManager.stopMicrophone()
                 completion(.success("null"))
             } else {
-                mediaSessionManager.startMicrophone { result in
+                mediaSessionManager.startMicrophone { [weak self] result in
                     switch result {
                     case .success:
+                        if self?.mediaSessionManager.isMicActive == true {
+                            self?.showCapabilityToast(type: .microphone, persistent: true)
+                        }
                         completion(.success("null"))
                     case .failure(let error):
                         completion(.failure(error))
@@ -1431,6 +1528,7 @@ extension ProjectWorkspaceViewController: DoufuBridgeCapabilityDelegate {
                 }
             }
         case .photoSave:
+            showCapabilityToast(type: .photoSave, persistent: false)
             switch action {
             case "saveVideo":
                 executeVideoSave(options: options, completion: completion)
@@ -1608,6 +1706,7 @@ extension ProjectWorkspaceViewController: DoufuBridgeCapabilityDelegate {
     ) {
         switch action {
         case "get":
+            showCapabilityToast(type: .location, persistent: false)
             locationGetCompletions.append(completion)
             locationService.delegate = self
             if activeWatchIDs.isEmpty {
@@ -1619,6 +1718,7 @@ extension ProjectWorkspaceViewController: DoufuBridgeCapabilityDelegate {
             let watchId = String(nextWatchID)
             nextWatchID += 1
             activeWatchIDs.insert(watchId)
+            showCapabilityToast(type: .location, persistent: true)
             completion(.success("\"\(watchId)\""))
             locationService.delegate = self
             locationService.startUpdatingLocation()
@@ -1628,6 +1728,7 @@ extension ProjectWorkspaceViewController: DoufuBridgeCapabilityDelegate {
             activeWatchIDs.remove(watchId)
             if activeWatchIDs.isEmpty && locationGetCompletions.isEmpty {
                 locationService.stopUpdatingLocation()
+                hideCapabilityToast(type: .location)
             }
             completion(.success("null"))
 
