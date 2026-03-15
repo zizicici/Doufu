@@ -1,6 +1,83 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "capability.activity_log.detail.allowed" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Allowed"
+          }
+        }
+      }
+    },
+    "capability.activity_log.detail.denied" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Denied"
+          }
+        }
+      }
+    },
+    "capability.activity_log.empty" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "No activity yet"
+          }
+        }
+      }
+    },
+    "capability.activity_log.event.changed" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Changed"
+          }
+        }
+      }
+    },
+    "capability.activity_log.event.requested" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Requested"
+          }
+        }
+      }
+    },
+    "capability.activity_log.event.service_used" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Used"
+          }
+        }
+      }
+    },
+    "capability.activity_log.title" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Activity Log"
+          }
+        }
+      }
+    },
     "capability.detail.no_projects" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -291,6 +368,35 @@
         }
       }
     },
+    "capability.name.microphone" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Microphone"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "麦克风"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "麥克風"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "麥克風"
+          }
+        }
+      }
+    },
     "capability.name.photo_pick" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -345,35 +451,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "儲存相片"
-          }
-        }
-      }
-    },
-    "capability.name.microphone" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Microphone"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "麦克风"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "麥克風"
-          }
-        },
-        "zh-HK" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "麥克風"
           }
         }
       }
@@ -11973,6 +12050,64 @@
         }
       }
     },
+    "settings.permissions.clipboard_read" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Clipboard Read"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "剪贴板读取"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "剪貼簿讀取"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "剪貼簿讀取"
+          }
+        }
+      }
+    },
+    "settings.permissions.clipboard_write" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Clipboard Write"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "剪贴板写入"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "剪貼簿寫入"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "剪貼簿寫入"
+          }
+        }
+      }
+    },
     "settings.permissions.location" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -12056,64 +12191,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "儲存相片"
-          }
-        }
-      }
-    },
-    "settings.permissions.clipboard_read" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Clipboard Read"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "剪贴板读取"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "剪貼簿讀取"
-          }
-        },
-        "zh-HK" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "剪貼簿讀取"
-          }
-        }
-      }
-    },
-    "settings.permissions.clipboard_write" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Clipboard Write"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "剪贴板写入"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "剪貼簿寫入"
-          }
-        },
-        "zh-HK" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "剪貼簿寫入"
           }
         }
       }

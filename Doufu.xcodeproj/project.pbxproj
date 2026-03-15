@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		1425E85D2F62DF77009A38B0 /* AppInfo in Frameworks */ = {isa = PBXBuildFile; productRef = 1425E85C2F62DF77009A38B0 /* AppInfo */; };
 		1425EA302F644A84009A38B0 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 1425EA2F2F644A84009A38B0 /* GRDB */; };
+		148639B52F6649920029C2BA /* WebRTC in Frameworks */ = {isa = PBXBuildFile; productRef = 14A0BC022F75000000AA3002 /* WebRTC */; };
 		14A5B8432F5D305000758F69 /* SwiftGitX in Frameworks */ = {isa = PBXBuildFile; productRef = 14C0A0022F5CC00000AA1001 /* SwiftGitX */; };
 		14A5BA102F5D65D200758F69 /* Markdown in Frameworks */ = {isa = PBXBuildFile; productRef = 14D0MD022F5D000000AA2002 /* Markdown */; };
 		14B7E4342F5A8AB200BB3324 /* Runestone in Frameworks */ = {isa = PBXBuildFile; productRef = 14B7E4332F5A8AB200BB3324 /* Runestone */; };
@@ -67,6 +68,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				148639B52F6649920029C2BA /* WebRTC in Frameworks */,
 				14A5BA102F5D65D200758F69 /* Markdown in Frameworks */,
 				14A5B8432F5D305000758F69 /* SwiftGitX in Frameworks */,
 				14B7E4342F5A8AB200BB3324 /* Runestone in Frameworks */,
@@ -567,6 +569,14 @@
 				minimumVersion = 7.10.0;
 			};
 		};
+		14A0BC012F75000000AA3001 /* XCRemoteSwiftPackageReference "WebRTC" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/stasel/WebRTC.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 130.0.0;
+			};
+		};
 		14B7E4322F5A8AB200BB3324 /* XCRemoteSwiftPackageReference "Runestone" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/simonbs/Runestone.git";
@@ -599,14 +609,6 @@
 				minimumVersion = 0.5.0;
 			};
 		};
-		14A0BC012F75000000AA3001 /* XCRemoteSwiftPackageReference "WebRTC" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/stasel/WebRTC.git";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 130.0.0;
-			};
-		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -619,6 +621,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 1425EA2E2F644A83009A38B0 /* XCRemoteSwiftPackageReference "GRDB" */;
 			productName = GRDB;
+		};
+		14A0BC022F75000000AA3002 /* WebRTC */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 14A0BC012F75000000AA3001 /* XCRemoteSwiftPackageReference "WebRTC" */;
+			productName = WebRTC;
 		};
 		14B7E4332F5A8AB200BB3324 /* Runestone */ = {
 			isa = XCSwiftPackageProductDependency;
@@ -674,11 +681,6 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 14D0MD012F5D000000AA2002 /* XCRemoteSwiftPackageReference "swift-markdown" */;
 			productName = Markdown;
-		};
-		14A0BC022F75000000AA3002 /* WebRTC */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 14A0BC012F75000000AA3001 /* XCRemoteSwiftPackageReference "WebRTC" */;
-			productName = WebRTC;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

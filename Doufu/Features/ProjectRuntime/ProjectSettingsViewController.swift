@@ -193,9 +193,23 @@ final class ProjectSettingsViewController: UITableViewController {
                     type: capType,
                     state: newState
                 )
+                CapabilityActivityStore.shared.recordEvent(
+                    projectID: self.projectID,
+                    capability: capType,
+                    event: .changed,
+                    detail: newValue ? "allowed" : "denied"
+                )
                 self.projectCapabilities = self.capabilityStore.loadRequestedCapabilities(projectID: self.projectID)
                 self.applySnapshot()
             }
+            return cell
+
+        case .capabilityActivityLog:
+            let cell = tableView.dequeueReusableCell(withIdentifier: "CheckpointCell", for: indexPath)
+            var configuration = cell.defaultContentConfiguration()
+            configuration.text = String(localized: "capability.activity_log.title", defaultValue: "Activity Log")
+            cell.contentConfiguration = configuration
+            cell.accessoryType = .disclosureIndicator
             return cell
 
         case .checkpointHistory:
@@ -265,6 +279,7 @@ final class ProjectSettingsViewController: UITableViewController {
                 )
             }
             snapshot.appendItems(items, toSection: .capabilities)
+            snapshot.appendItems([.capabilityActivityLog], toSection: .capabilities)
         }
         snapshot.appendItems([.checkpointHistory], toSection: .checkpoints)
         if doufuBridge != nil {
@@ -327,7 +342,7 @@ final class ProjectSettingsViewController: UITableViewController {
         case .projectName, .capability:
             return nil
         case .projectDescription, .defaultModel, .toolPermission, .checkpointHistory,
-             .clearLocalStorage, .clearIndexedDB:
+             .clearLocalStorage, .clearIndexedDB, .capabilityActivityLog:
             return indexPath
         }
     }
@@ -345,6 +360,9 @@ final class ProjectSettingsViewController: UITableViewController {
             presentProjectModelSelection()
         case .toolPermission:
             presentToolPermissionPicker()
+        case .capabilityActivityLog:
+            let vc = CapabilityActivityLogViewController(filter: .project(id: projectID))
+            navigationController?.pushViewController(vc, animated: true)
         case .checkpointHistory:
             openCheckpointsPage()
         case .clearLocalStorage:

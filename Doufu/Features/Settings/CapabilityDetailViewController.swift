@@ -13,12 +13,14 @@ import UIKit
 nonisolated enum CapabilityDetailSectionID: Hashable, Sendable {
     case systemPermission
     case projects
+    case activityLog
 }
 
 nonisolated enum CapabilityDetailItemID: Hashable, Sendable {
     case systemPermission(statusText: String)
     case project(id: String, name: String, isAllowed: Bool)
     case emptyProjects
+    case activityLog
 }
 
 // MARK: - ViewController
@@ -106,6 +108,12 @@ final class CapabilityDetailViewController: UITableViewController {
                     type: self.capabilityType,
                     state: newState
                 )
+                CapabilityActivityStore.shared.recordEvent(
+                    projectID: id,
+                    capability: self.capabilityType,
+                    event: .changed,
+                    detail: newValue ? "allowed" : "denied"
+                )
                 self.reloadData()
             }
             return cell
@@ -117,6 +125,14 @@ final class CapabilityDetailViewController: UITableViewController {
             configuration.textProperties.color = .secondaryLabel
             cell.contentConfiguration = configuration
             cell.selectionStyle = .none
+            return cell
+
+        case .activityLog:
+            let cell = tableView.dequeueReusableCell(withIdentifier: "Cell", for: indexPath)
+            var configuration = cell.defaultContentConfiguration()
+            configuration.text = String(localized: "capability.activity_log.title", defaultValue: "Activity Log")
+            cell.contentConfiguration = configuration
+            cell.accessoryType = .disclosureIndicator
             return cell
         }
     }
@@ -145,6 +161,9 @@ final class CapabilityDetailViewController: UITableViewController {
             snapshot.appendItems(items, toSection: .projects)
         }
 
+        snapshot.appendSections([.activityLog])
+        snapshot.appendItems([.activityLog], toSection: .activityLog)
+
         return snapshot
     }
 
@@ -159,7 +178,7 @@ final class CapabilityDetailViewController: UITableViewController {
     override func tableView(_ tableView: UITableView, willSelectRowAt indexPath: IndexPath) -> IndexPath? {
         guard let itemID = diffableDataSource.itemIdentifier(for: indexPath) else { return nil }
         switch itemID {
-        case .systemPermission: return indexPath
+        case .systemPermission, .activityLog: return indexPath
         case .project, .emptyProjects: return nil
         }
     }
@@ -171,6 +190,9 @@ final class CapabilityDetailViewController: UITableViewController {
         switch itemID {
         case .systemPermission:
             handleSystemPermissionTap()
+        case .activityLog:
+            let vc = CapabilityActivityLogViewController(filter: .capability(type: capabilityType))
+            navigationController?.pushViewController(vc, animated: true)
         case .project, .emptyProjects:
             break
         }
@@ -305,6 +327,8 @@ private final class CapabilityDetailDataSource: UITableViewDiffableDataSource<Ca
             return String(localized: "capability.detail.section.system")
         case .projects:
             return String(localized: "capability.detail.section.projects")
+        case .activityLog:
+            return nil
         }
     }
 

@@ -17,6 +17,7 @@ nonisolated enum ProjectSettingsItemID: Hashable, Sendable {
     case defaultModel
     case toolPermission
     case capability(type: String, isAllowed: Bool)
+    case capabilityActivityLog
     case checkpointHistory
     case clearLocalStorage
     case clearIndexedDB

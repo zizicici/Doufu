@@ -216,5 +216,27 @@ nonisolated final class DatabaseManager {
             }
         }
 
+        migrator.registerMigration("v4_capability_activity") { db in
+            try db.create(table: "capability_activity") { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("project_id", .text).notNull()
+                    .references("project", onDelete: .cascade)
+                t.column("capability", .text).notNull()
+                t.column("event_type", .integer).notNull()
+                t.column("detail", .text)
+                t.column("created_at", .integer).notNull()
+            }
+            try db.create(
+                index: "idx_capability_activity_project",
+                on: "capability_activity",
+                columns: ["project_id", "created_at"]
+            )
+            try db.create(
+                index: "idx_capability_activity_capability",
+                on: "capability_activity",
+                columns: ["capability", "created_at"]
+            )
+        }
+
     }
 }

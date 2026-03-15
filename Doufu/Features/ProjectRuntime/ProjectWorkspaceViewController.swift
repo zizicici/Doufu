@@ -1326,6 +1326,10 @@ extension ProjectWorkspaceViewController: DoufuBridgeCapabilityDelegate {
                     type: type,
                     state: userAllowed ? .allowed : .denied
                 )
+                let stateDetail = userAllowed ? "allowed" : "denied"
+                let activityStore = CapabilityActivityStore.shared
+                activityStore.recordEvent(projectID: self.project.id, capability: type, event: .requested, detail: stateDetail)
+                activityStore.recordEvent(projectID: self.project.id, capability: type, event: .changed, detail: stateDetail)
                 let waiters = self.pendingProjectPermissionWaiters.removeValue(forKey: type) ?? []
                 for w in waiters { w(userAllowed) }
             }
@@ -1341,12 +1345,37 @@ extension ProjectWorkspaceViewController: DoufuBridgeCapabilityDelegate {
 
     // MARK: - Capability Execution
 
+    /// Actions that represent meaningful service usage (not control/teardown).
+    private static let recordableActions: [CapabilityType: Set<String>] = [
+        .camera: ["start", "switch", ""],
+        .microphone: ["start", ""],
+        .location: ["get", "watch"],
+        .clipboardRead: ["read", ""],
+        .clipboardWrite: ["write", ""],
+        .photoSave: ["save", "savePhoto", "saveVideo", ""],
+    ]
+
     private func executeCapability(
         type: CapabilityType,
         action: String,
         options: [String: Any],
         completion: @escaping (Result<String, DoufuBridgeCapabilityError>) -> Void
     ) {
+        if Self.recordableActions[type]?.contains(action) == true {
+            let effectiveAction: String
+            if action.isEmpty {
+                switch type {
+                case .clipboardRead: effectiveAction = "read"
+                case .clipboardWrite: effectiveAction = "write"
+                default: effectiveAction = "start"
+                }
+            } else {
+                effectiveAction = action
+            }
+            CapabilityActivityStore.shared.recordEvent(
+                projectID: project.id, capability: type, event: .serviceUsed, detail: effectiveAction
+            )
+        }
         switch type {
         case .clipboardRead:
             executeClipboardRead(completion: completion)

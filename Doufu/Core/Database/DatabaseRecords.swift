@@ -103,6 +103,39 @@ struct DBProjectCapability: Codable, FetchableRecord, PersistableRecord {
     }
 }
 
+struct DBCapabilityActivity: Codable, FetchableRecord, PersistableRecord {
+    static let databaseTableName = "capability_activity"
+
+    var id: Int64?
+    var projectID: String
+    var capability: String
+    var eventType: Int
+    var detail: String?
+    var createdAt: Int64
+
+    enum Columns: String, ColumnExpression {
+        case id
+        case projectID = "project_id"
+        case capability
+        case eventType = "event_type"
+        case detail
+        case createdAt = "created_at"
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case projectID = "project_id"
+        case capability
+        case eventType = "event_type"
+        case detail
+        case createdAt = "created_at"
+    }
+
+    mutating func didInsert(_ inserted: InsertionSuccess) {
+        id = inserted.rowID
+    }
+}
+
 struct DBPermission: Codable, FetchableRecord, PersistableRecord {
     static let databaseTableName = "permission"
 
