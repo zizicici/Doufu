@@ -6,8 +6,8 @@
    - 主要文件：`HomeViewController.swift`、`Features/Home/ProjectSortViewController.swift`
    - 责任：项目卡片画廊、搜索、长按菜单、排序与新建入口；消费 `ProjectActivityStore` 展示 `正在建造中 / 新版本 / 需要确认 / 出错了` 标签，并在 `需要确认 / 出错了` 时直接路由进聊天页。
 2. `Project Runtime`
-   - 主要文件：`Features/ProjectRuntime/ProjectWorkspaceViewController.swift`
-   - 责任：网页运行、悬浮面板、退出确认、运行时快捷入口、Chat 入口的 App 默认模型检查、`LLMQuickSetup` / `Read Only` 分流、LLM 设置检测与快速设置引导。
+   - 主要文件：`Features/ProjectRuntime/ProjectWorkspaceViewController.swift`、`Core/Media/MediaSessionManager.swift`、`Core/Media/LoopbackSTUNServer.swift`
+   - 责任：网页运行、悬浮面板、退出确认、运行时快捷入口、Chat 入口的 App 默认模型检查、`LLMQuickSetup` / `Read Only` 分流、LLM 设置检测与快速设置引导、WebRTC Camera/Mic loopback 媒体管理（含本地 STUN 服务）。
 3. `Project Chat`
    - 主要文件：
      - `Features/Chat/ChatViewController.swift`：UI 布局、View 生命周期、UITableViewDataSource、输入处理、线程管理协调、ChatTaskCoordinatorDelegate 转发。
@@ -30,7 +30,7 @@
    - 责任：项目文件树浏览、文件编辑与保存（Runestone 优先）。
 6. `Project Settings`
    - 主要文件：`Features/ProjectRuntime/ProjectSettingsViewController.swift`
-   - 责任：项目名/描述修改、项目级模型与工具权限配置、Git checkpoint 历史入口。
+   - 责任：项目名/描述修改、项目级模型与工具权限配置、Git checkpoint 历史入口、设备能力权限 toggle、能力活动记录入口。
 7. `Global Settings`
    - 主要文件：`Features/Settings/SettingsViewController.swift`
    - 责任：全局设置页，分 General / LLM Providers / Project 三组。
@@ -49,12 +49,21 @@
 12. `Settings Picker`
     - 主要文件：`Features/Settings/SettingsPickerViewController.swift`
     - 责任：通用选项选择器，替代各功能专用 Picker。
-13. `Database`
+13a. `Capability Detail`
+    - 主要文件：`Features/Settings/CapabilityDetailViewController.swift`
+    - 责任：单项设备能力详情页（系统权限状态 + Per-Project toggle + 活动记录入口）。
+13b. `Capability Activity Log`
+    - 主要文件：`Features/Settings/CapabilityActivityLogViewController.swift`、`CapabilityActivityLogTypes.swift`
+    - 责任：能力活动记录页（DiffableDataSource，按日期分组，支持按项目 `.project(id:)` 或按能力类型 `.capability(type:)` 过滤）。
+14. `Database`
     - 主要文件：`Core/Database/DatabaseManager.swift`、`DatabaseRecords.swift`、`DatabaseTimestamp.swift`
-    - 责任：SQLite 数据库初始化与迁移（`v1_initial_schema` + `v2_add_indexes`）、索引优化、GRDB Record 类型定义、domain ↔ DB 映射。
-14. `Project Storage`
+    - 责任：SQLite 数据库初始化与迁移（`v1_initial_schema` + `v2_add_indexes` + `v3_project_capabilities` + `v4_capability_activity`）、索引优化、GRDB Record 类型定义、domain ↔ DB 映射。
+15. `Project Storage`
     - 主要文件：`Core/Projects/AppProjectStore.swift`
     - 责任：项目元数据 CRUD（GRDB `project` + `permission` 表）、模板写入、权限读写。
+15a. `Capability Activity Store`
+    - 主要文件：`Core/Projects/CapabilityActivityStore.swift`
+    - 责任：能力活动事件写入 `capability_activity` 表（`recordEvent`），支持按项目或按能力类型查询（JOIN project 取项目名）。
 15. `Project Lifecycle Coordinator`
    - 主要文件：`Core/Projects/ProjectLifecycleCoordinator.swift`
    - 责任：项目生命周期操作（create / delete / close / rename）的统一入口；确保 ChatSession 状态与项目变更一致（delete 前 cancel + flush + endSession；rename 同步 session context；close 时按执行状态决定是否 endSession）。

@@ -23,14 +23,16 @@
 1. `Doufu/App/`
    - App 生命周期与根导航。`AppDelegate.setup()` 初始化 `DatabaseManager`。
 2. `Doufu/Core/Database/`
-   - `DatabaseManager`：SQLite 数据库单例，持有 `DatabasePool`，迁移链：`v1_initial_schema`（13 表）、`v2_add_indexes`（`token_usage.created_at` 索引、`message(thread_id, sort_order)` 复合索引）。
-   - `DatabaseRecords`：所有 GRDB Record 类型（DBProject, DBPermission, DBProvider, DBProviderModel, DBTokenUsage, DBAppModelSelection, DBProjectModelSelection, DBThreadModelSelection, DBChatThread, DBAssistant, DBChatMessage, DBSessionMemory）及 domain ↔ DB 映射扩展。
+   - `DatabaseManager`：SQLite 数据库单例，持有 `DatabasePool`，迁移链：`v1_initial_schema`（13 表）、`v2_add_indexes`、`v3_project_capabilities`（`project_capability` 表）、`v4_capability_activity`（`capability_activity` 表 + 索引）。
+   - `DatabaseRecords`：所有 GRDB Record 类型（DBProject, DBPermission, DBProjectCapability, DBCapabilityActivity, DBProvider, DBProviderModel, DBTokenUsage, DBAppModelSelection, DBProjectModelSelection, DBThreadModelSelection, DBChatThread, DBAssistant, DBChatMessage, DBSessionMemory）及 domain ↔ DB 映射扩展。
    - `DatabaseTimestamp`：Date ↔ Int64 纳秒转换。
 3. `Doufu/Core/Projects/`
    - `AppProjectStore`：项目元数据 CRUD 通过 GRDB（`project` + `permission` 表），创建项目目录与模板文件、读写项目元数据与权限。
    - `ProjectLifecycleCoordinator`：项目生命周期统一入口（create / delete / close / rename）；协调 `AppProjectStore` 与 `ChatSessionManager`，确保 ChatSession 状态与项目变更一致。
    - `ProjectChangeCenter`：project-scoped 变更事件中心，统一广播 `filesChanged`、`checkpointRestored`、`renamed`、`descriptionChanged`、`toolPermissionChanged`、`modelSelectionChanged`；其中 `filesChanged` / `checkpointRestored` 同步维护 `updatedAt`。
    - `ProjectActivityStore`：project-scoped 活动状态源，维护 `idle / building / newVersionAvailable / needsConfirmation / error`，供 Home / Workspace / Chat 共享消费。
+   - `ProjectCapabilityStore`：Per-Project 设备能力权限 CRUD（`project_capability` 表）。
+   - `CapabilityActivityStore`：能力活动事件记录与查询（`capability_activity` 表，JOIN project 取项目名）。
    - `ProjectGitService`：项目级 Git 初始化、agent loop 前自动保存、检查点创建、历史恢复与 undo helper。
    - `ProjectArchiveImportService`：`.doufu` / `.doufull` 导入服务；负责 ZIP 安全解包、结构校验、创建新项目并落盘 `App/`、`AppData/`。
    - `ProjectArchiveExportService`：`.doufu` / `.doufull` 导出服务；负责按格式打包 `App/` 或 `App/ + AppData/`。
@@ -88,7 +90,8 @@
 8. `Doufu/Features/ProjectRuntime/`
    - `ProjectWorkspaceViewController`：项目运行页与悬浮面板，订阅 `ProjectChangeCenter` 刷新预览，并仅在真正可见时消费 `newVersionAvailable`。
    - `ProjectFileBrowserViewController`：文件树浏览与内容编辑。
-   - `ProjectSettingsViewController`：项目设置与 checkpoint history 入口。
+   - `ProjectSettingsViewController`：项目设置与 checkpoint history 入口，含能力权限 toggle 和活动记录入口。
+   - `CapabilityToastView`：设备能力使用浮动提示（纯色胶囊，可拖动）。
    - `ProjectTokenUsageViewController`：项目级 token 使用量。
    - `ProjectModelSelectionViewController`：项目级模型选择。
    - `ProjectOpenTransition`：项目打开转场动画。
@@ -104,6 +107,8 @@
    - `LLMQuickSetupViewController`：首次使用快速设置。
    - `TokenUsageViewController`：全局 token usage Dashboard。
    - `ToolPermissionPickerViewController`：工具权限选择器。
+   - `CapabilityDetailViewController`：单项设备能力详情页。
+   - `CapabilityActivityLogViewController`：能力活动记录页。
    - `SettingsPickerViewController`：通用选项选择器。
    - `SettingsSpecificationsViewController`：App 规格与第三方许可。
 10. `Doufu/Features/Settings/Components/`
@@ -112,6 +117,8 @@
     - `UIColor+Doufu`：自定义颜色扩展。
     - `WKWebView+Doufu`：WKWebView 扩展。
     - `LocalWebServer`：本地 Web 服务，含 CDN 资源代理缓存。
+    - `Core/Media/MediaSessionManager`：WebRTC 摄像头/麦克风管理（per-VC 实例，非 singleton）。
+    - `Core/Media/LoopbackSTUNServer`：本地 STUN 服务器（`127.0.0.1:random`），使 WebRTC ICE 在任何网络状态下通过 loopback srflx candidate 建立连接。
     - `DoufuBridge`：JS 桥接。
     - `ActiveTaskManager`：活跃任务追踪。
     - `PiPProgressManager`：画中画进度管理。
@@ -136,6 +143,8 @@
 
 1. `DBProject` / `DBPermission`
    - 项目元数据与工具权限（UNIQUE FK CASCADE）。
+1a. `DBProjectCapability` / `DBCapabilityActivity`
+   - Per-Project 设备能力权限状态与活动记录（FK CASCADE：删除项目自动清理）。
 2. `DBProvider` / `DBProviderModel`
    - Provider 配置与关联模型（FK CASCADE：删除 Provider 自动删除模型）。
 3. `DBTokenUsage`
@@ -154,7 +163,7 @@
 ### SQLite 数据库
 
 - 路径：`Documents/doufu.sqlite`（WAL 模式，外键 ON）
-- 12 张表：`project`, `permission`, `llm_provider`, `llm_provider_model`, `token_usage`, `app_model_selection`, `project_model_selection`, `thread_model_selection`, `thread`, `assistant`, `message`, `session_memory`
+- 14 张表：`project`, `permission`, `project_capability`, `capability_activity`, `llm_provider`, `llm_provider_model`, `token_usage`, `app_model_selection`, `project_model_selection`, `thread_model_selection`, `thread`, `assistant`, `message`, `session_memory`
 - 所有结构化数据（项目元数据、Provider 配置、模型选择、聊天线程/消息/记忆、token 用量）统一存储在 SQLite 中
 
 ### 项目磁盘结构（v4）
