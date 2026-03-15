@@ -93,10 +93,20 @@ final class DoufuBridge: NSObject {
     /// Registers the bridge's message handlers on the given WKWebView configuration.
     /// Call this before creating the WKWebView.
     func register(on configuration: WKWebViewConfiguration) {
+        // Permission blocking must run in ALL frames (including iframes) to prevent
+        // standard Web APIs from bypassing Doufu's project-level gating.
+        let blockingScript = WKUserScript(
+            source: permissionBlockingJavaScript(),
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: false
+        )
+        configuration.userContentController.addUserScript(blockingScript)
+        // The bridge (doufu.*, storage, media) is main-frame-only to prevent
+        // third-party iframes from accessing native capabilities.
         let bridgeScript = WKUserScript(
             source: bridgeJavaScript(),
             injectionTime: .atDocumentStart,
-            forMainFrameOnly: false
+            forMainFrameOnly: true
         )
         configuration.userContentController.addUserScript(bridgeScript)
         let handler = DoufuBridgeMessageHandler(bridge: self)
@@ -118,10 +128,16 @@ final class DoufuBridge: NSObject {
     func refreshStorageScript(on configuration: WKWebViewConfiguration) {
         let controller = configuration.userContentController
         controller.removeAllUserScripts()
+        let blockingScript = WKUserScript(
+            source: permissionBlockingJavaScript(),
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: false
+        )
+        controller.addUserScript(blockingScript)
         let bridgeScript = WKUserScript(
             source: bridgeJavaScript(),
             injectionTime: .atDocumentStart,
-            forMainFrameOnly: false
+            forMainFrameOnly: true
         )
         controller.addUserScript(bridgeScript)
     }
@@ -239,7 +255,6 @@ final class DoufuBridge: NSObject {
         }
 
         return """
-        \(permissionBlockingJavaScript())
         \(capabilityJavaScript())
         \(mediaJavaScript())
         \(fetchProxyAndLocalStorageJavaScript(storageJSON: storageJSON))
@@ -902,6 +917,16 @@ private nonisolated final class DoufuBridgeMessageHandler: NSObject, WKScriptMes
         didReceive message: WKScriptMessage
     ) {
         // WebKit guarantees this delegate is called on the main thread.
+        // Reject messages from non-main frames to prevent third-party iframes
+        // from accessing the native bridge.
+        let isMainFrame = MainActor.assumeIsolated { message.frameInfo.isMainFrame }
+        guard isMainFrame else { return }
+        // Reject messages from non-local origins (defense-in-depth against external
+        // pages that somehow land in the main frame).
+        let securityOrigin = MainActor.assumeIsolated { message.frameInfo.securityOrigin }
+        let isLocalOrigin = securityOrigin.host == "localhost"
+            || securityOrigin.protocol == "file"
+        guard isLocalOrigin else { return }
         let name = MainActor.assumeIsolated { message.name }
         let body = MainActor.assumeIsolated { message.body }
         Task { @MainActor [weak self] in

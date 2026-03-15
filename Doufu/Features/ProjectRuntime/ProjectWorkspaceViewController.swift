@@ -1098,8 +1098,30 @@ extension ProjectWorkspaceViewController: WKUIDelegate {
 }
 
 extension ProjectWorkspaceViewController: WKNavigationDelegate {
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationAction: WKNavigationAction,
+        decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+    ) {
+        // Only allow main-frame navigations to the local web server or file:// URLs.
+        // This prevents project JS from navigating the top frame to an external URL
+        // that would inherit the native bridge and all granted capabilities.
+        if navigationAction.targetFrame?.isMainFrame == true {
+            if let url = navigationAction.request.url {
+                let isLocal = url.scheme == "file"
+                    || (url.host == "localhost" && url.port == Int(webServer.port))
+                if !isLocal {
+                    decisionHandler(.cancel)
+                    return
+                }
+            }
+        }
+        decisionHandler(.allow)
+    }
+
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         mediaSessionManager.stopAll()
+        stopLocationServices()
         cleanUpPhotosTmp()
         clearAllCapabilityToasts()
     }
