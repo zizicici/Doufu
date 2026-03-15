@@ -494,9 +494,10 @@ final class AppProjectStore {
         ## Selection policy (MUST)
         - Non-content UI text must be non-selectable:
           nav bars, tabs, buttons, chips, badges, card titles, tool labels.
-          Apply `user-select: none; -webkit-touch-callout: none` to these elements.
+          Apply `-webkit-user-select: none; user-select: none; -webkit-touch-callout: none` to these elements.
         - Only content text and form controls (`input`, `textarea`) may allow text selection.
-        - A convenient pattern: set `user-select: none` on the app root, then opt-in with `user-select: text` on content areas.
+        - Recommended pattern: set `-webkit-user-select: none; user-select: none; -webkit-touch-callout: none` on the app root (`body` or top-level container), then opt-in with `-webkit-user-select: text; user-select: text` on content areas that need selection.
+        - Always include the `-webkit-` prefix — it is still required in iOS WKWebView.
 
         ## Scroll model (MUST)
         - Use exactly one primary scroll container for page content.
