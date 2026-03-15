@@ -97,6 +97,8 @@ final class ProjectWorkspaceViewController: UIViewController {
     private var activeToasts: [CapabilityType: CapabilityToastView] = [:]
     private var toastDismissTimers: [CapabilityType: DispatchWorkItem] = [:]
     private var persistentToastTypes: Set<CapabilityType> = []
+    private var toastGroupOffset: CGPoint = .zero
+    private var toastPanStartOffset: CGPoint = .zero
     private lazy var mediaSessionManager: MediaSessionManager = {
         let m = MediaSessionManager()
         m.bridge = doufuBridge
@@ -1363,6 +1365,8 @@ extension ProjectWorkspaceViewController: DoufuBridgeCapabilityDelegate {
         if activeToasts[type] == nil {
             let toast = CapabilityToastView(capabilityType: type)
             toast.alpha = 0
+            let pan = UIPanGestureRecognizer(target: self, action: #selector(handleToastPan(_:)))
+            toast.addGestureRecognizer(pan)
             view.addSubview(toast)
             activeToasts[type] = toast
             layoutToasts()
@@ -1407,19 +1411,21 @@ extension ProjectWorkspaceViewController: DoufuBridgeCapabilityDelegate {
         activeToasts.removeAll()
         toastDismissTimers.removeAll()
         persistentToastTypes.removeAll()
+        toastGroupOffset = .zero
     }
 
-    private func layoutToasts() {
+    private func layoutToasts(animated: Bool = true) {
         let safe = currentSafeFrame()
-        var y = safe.minY
+        var y = safe.minY + toastGroupOffset.y
 
         // Sort by CapabilityType for stable ordering
         let sortedTypes = activeToasts.keys.sorted { $0.dbKey < $1.dbKey }
         for type in sortedTypes {
             guard let toast = activeToasts[type] else { continue }
             let size = toast.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize)
-            let frame = CGRect(x: safe.minX, y: y, width: size.width, height: size.height)
-            if toast.frame == .zero {
+            let x = safe.midX - size.width / 2 + toastGroupOffset.x
+            let frame = CGRect(x: x, y: y, width: size.width, height: size.height)
+            if !animated || toast.frame == .zero {
                 toast.frame = frame
             } else {
                 UIView.animate(withDuration: 0.2, delay: 0, options: .curveEaseOut) {
@@ -1428,6 +1434,49 @@ extension ProjectWorkspaceViewController: DoufuBridgeCapabilityDelegate {
             }
             y += size.height + Self.toastSpacing
         }
+    }
+
+    @objc
+    private func handleToastPan(_ gesture: UIPanGestureRecognizer) {
+        switch gesture.state {
+        case .began:
+            toastPanStartOffset = toastGroupOffset
+        case .changed:
+            let translation = gesture.translation(in: view)
+            toastGroupOffset = CGPoint(
+                x: toastPanStartOffset.x + translation.x,
+                y: toastPanStartOffset.y + translation.y
+            )
+            layoutToasts(animated: false)
+        case .ended, .cancelled:
+            clampToastOffset()
+        default:
+            break
+        }
+    }
+
+    private func clampToastOffset() {
+        let safe = currentSafeFrame()
+        guard let firstToast = activeToasts.values.first else { return }
+        let size = firstToast.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize)
+        let totalHeight = CGFloat(activeToasts.count) * size.height
+            + CGFloat(max(0, activeToasts.count - 1)) * Self.toastSpacing
+
+        // Default position is top-center: x = safe.midX - size.width/2, y = safe.minY
+        // Clamp so at least half remains visible within safe area
+        let minOffsetX = safe.minX - safe.midX + size.width / 2 - size.width / 2
+        let maxOffsetX = safe.maxX - safe.midX + size.width / 2 - size.width / 2
+        let minOffsetY = -totalHeight / 2
+        let maxOffsetY = safe.height - totalHeight / 2
+
+        let clamped = CGPoint(
+            x: min(max(toastGroupOffset.x, minOffsetX), maxOffsetX),
+            y: min(max(toastGroupOffset.y, minOffsetY), maxOffsetY)
+        )
+
+        guard clamped != toastGroupOffset else { return }
+        toastGroupOffset = clamped
+        layoutToasts(animated: true)
     }
 
     // MARK: - Capability Execution
