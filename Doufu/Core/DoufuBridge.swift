@@ -352,7 +352,8 @@ final class DoufuBridge: NSObject {
               focus: function(opts) { return _request('camera', 'focus', opts); },
               exposure: function(opts) { return _request('camera', 'exposure', opts); },
               torch: function(opts) { return _request('camera', 'torch', opts); },
-              zoom: function(opts) { return _request('camera', 'zoom', opts); }
+              zoom: function(opts) { return _request('camera', 'zoom', opts); },
+              mirror: function(opts) { return _request('camera', 'mirror', opts); }
             },
             mic: {
               start: function(opts) { return _request('microphone', 'start', opts); },
@@ -360,7 +361,8 @@ final class DoufuBridge: NSObject {
             },
             photos: {
               pick: function(opts) { return _request('photo_pick', 'pick', opts); },
-              save: function(dataUrl) { return _request('photo_save', 'save', { data: dataUrl }); }
+              savePhoto: function(dataUrl) { return _request('photo_save', 'savePhoto', { data: dataUrl }); },
+              saveVideo: function(dataUrl) { return _request('photo_save', 'saveVideo', { data: dataUrl }); }
             },
             location: {
               get: function() { return _request('location', 'get'); },
@@ -445,6 +447,7 @@ final class DoufuBridge: NSObject {
           var _mediaPc = null;
           var _pendingMedia = {};
           var _activeStreams = {};
+          var _currentFacing = 'user';
 
           window.__doufuMediaSignal = function(signal) {
             if (signal.type === 'offer') {
@@ -469,6 +472,9 @@ final class DoufuBridge: NSObject {
                 // Always create a dedicated stream per track so stopping camera
                 // doesn't kill the mic track (and vice versa).
                 var stream = new MediaStream([e.track]);
+                if (capType === 'camera') {
+                  stream.__doufuMirrored = (_currentFacing === 'user');
+                }
                 _activeStreams[capType] = stream;
                 var cb = _pendingMedia[capType];
                 if (cb) {
@@ -527,6 +533,9 @@ final class DoufuBridge: NSObject {
           // Override doufu.camera.start to return MediaStream via WebRTC ontrack
           var _origCamStart = window.doufu.camera.start;
           window.doufu.camera.start = function(opts) {
+            var facing = (opts && opts.facing) || 'user';
+            _currentFacing = facing;
+
             // Cancel any previous pending camera callback
             var prev = _pendingMedia['camera'];
             if (prev) {
@@ -545,6 +554,7 @@ final class DoufuBridge: NSObject {
                 // Permission granted. If stream already exists (already active / camera switch),
                 // resolve immediately with existing stream.
                 if (_activeStreams['camera']) {
+                  _activeStreams['camera'].__doufuMirrored = (facing === 'user');
                   var cb = _pendingMedia['camera'];
                   if (cb) {
                     clearTimeout(cb.timer);
@@ -623,6 +633,17 @@ final class DoufuBridge: NSObject {
             return window.doufu._rawRequest('microphone', 'stop');
           };
 
+          // Override doufu.camera.mirror to update __doufuMirrored on the active stream
+          var _origMirror = window.doufu.camera.mirror;
+          window.doufu.camera.mirror = function(opts) {
+            return _origMirror(opts).then(function() {
+              var stream = _activeStreams['camera'];
+              if (stream) {
+                stream.__doufuMirrored = !!(opts && opts.enabled);
+              }
+            });
+          };
+
         })();
         """
     }
@@ -645,7 +666,9 @@ final class DoufuBridge: NSObject {
 
     fileprivate func handleMediaSignalFromJS(_ payload: Any) {
         guard let dict = payload as? [String: Any] else { return }
-        mediaDelegate?.handleMediaSignal(dict)
+        Task { @MainActor [weak self] in
+            self?.mediaDelegate?.handleMediaSignal(dict)
+        }
     }
 
     // MARK: - fetch() proxy + localStorage shim

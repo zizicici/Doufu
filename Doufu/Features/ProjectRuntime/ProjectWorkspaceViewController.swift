@@ -76,7 +76,10 @@ final class ProjectWorkspaceViewController: UIViewController {
     private var isDraggingPanel = false
     private var isOverExitTargetPrevious = false
     private lazy var capabilityLocationManager = CLLocationManager()
-    private var capabilityLocationCompletion: ((Bool) -> Void)?
+    /// Batches concurrent system permission requests per capability type.
+    private var pendingSystemPermissionCallbacks: [CapabilityType: [(Bool) -> Void]] = [:]
+    /// Batches concurrent project permission prompts per capability type.
+    private var pendingProjectPermissionWaiters: [CapabilityType: [(Bool) -> Void]] = [:]
 
     // Location service (separate from capabilityLocationManager which is only for permission requests)
     private var _locationService: CLLocationManager?
@@ -96,7 +99,9 @@ final class ProjectWorkspaceViewController: UIViewController {
         m.bridge = doufuBridge
         return m
     }()
-    private var photoPickCompletion: ((Result<String, DoufuBridgeCapabilityError>) -> Void)?
+    private var photoPickContext: (multiple: Bool, completion: (Result<String, DoufuBridgeCapabilityError>) -> Void)?
+    private var capabilityPromptQueue: [(type: CapabilityType, completion: (Bool) -> Void)] = []
+    private var isShowingCapabilityPrompt = false
 
     private lazy var webView: WKWebView = {
         let configuration = WKWebViewConfiguration()
@@ -275,6 +280,7 @@ final class ProjectWorkspaceViewController: UIViewController {
         webServer.stop()
         MainActor.assumeIsolated {
             mediaSessionManager.stopAll()
+            cleanUpPhotosTmp()
         }
         stopLocationServices()
         doufuBridge.unregister(from: webView.configuration)
@@ -435,6 +441,7 @@ final class ProjectWorkspaceViewController: UIViewController {
         }
 
         do {
+            webServer.tmpDirectoryURL = projectURL.appendingPathComponent("tmp", isDirectory: true)
             try webServer.start()
             guard let url = webServer.baseURL else {
                 throw LocalWebServer.ServerError.failedToStart
@@ -1088,6 +1095,7 @@ extension ProjectWorkspaceViewController: WKUIDelegate {
 extension ProjectWorkspaceViewController: WKNavigationDelegate {
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         mediaSessionManager.stopAll()
+        cleanUpPhotosTmp()
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -1135,9 +1143,11 @@ extension ProjectWorkspaceViewController: DoufuBridgeCapabilityDelegate {
         options: [String: Any],
         completion: @escaping (Result<String, DoufuBridgeCapabilityError>) -> Void
     ) {
+        print("[Capability] request: type=\(type.dbKey) action=\(action)")
+
         // Teardown and control actions bypass permission checks — they operate
         // on an already-authorized session and must not re-prompt.
-        let bypassActions: Set<String> = ["stop", "clearWatch", "focus", "exposure", "torch", "zoom"]
+        let bypassActions: Set<String> = ["stop", "clearWatch", "focus", "exposure", "torch", "zoom", "mirror"]
         if bypassActions.contains(action) {
             executeCapability(type: type, action: action, options: options, completion: completion)
             return
@@ -1237,27 +1247,40 @@ extension ProjectWorkspaceViewController: DoufuBridgeCapabilityDelegate {
         for type: CapabilityType,
         completion: @escaping (Bool) -> Void
     ) {
+        // Dedup: if a system permission request for this type is already inflight,
+        // piggyback on it instead of triggering a redundant dialog.
+        if pendingSystemPermissionCallbacks[type] != nil {
+            pendingSystemPermissionCallbacks[type]!.append(completion)
+            return
+        }
+        pendingSystemPermissionCallbacks[type] = [completion]
+
+        let resolveAll: @MainActor (Bool) -> Void = { [weak self] granted in
+            let callbacks = self?.pendingSystemPermissionCallbacks.removeValue(forKey: type) ?? []
+            for cb in callbacks { cb(granted) }
+        }
+
         switch type {
         case .camera:
             AVCaptureDevice.requestAccess(for: .video) { granted in
-                Task { @MainActor in completion(granted) }
+                Task { @MainActor in resolveAll(granted) }
             }
         case .microphone:
             AVCaptureDevice.requestAccess(for: .audio) { granted in
-                Task { @MainActor in completion(granted) }
+                Task { @MainActor in resolveAll(granted) }
             }
         case .location:
-            capabilityLocationCompletion = completion
             capabilityLocationManager.delegate = self
             capabilityLocationManager.requestWhenInUseAuthorization()
+            // locationManagerDidChangeAuthorization drains via pendingSystemPermissionCallbacks
         case .photoSave:
             PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
                 Task { @MainActor in
-                    completion(status == .authorized || status == .limited)
+                    resolveAll(status == .authorized || status == .limited)
                 }
             }
         default:
-            completion(true)
+            resolveAll(true)
         }
     }
 
@@ -1267,18 +1290,15 @@ extension ProjectWorkspaceViewController: DoufuBridgeCapabilityDelegate {
         options: [String: Any],
         completion: @escaping (Result<String, DoufuBridgeCapabilityError>) -> Void
     ) {
+        print("[Capability] checkProjectPermission: type=\(type.dbKey) action=\(action)")
         let store = ProjectCapabilityStore.shared
         let state = store.loadCapability(projectID: project.id, type: type)
 
         switch state {
         case .notRequested:
-            presentCapabilityPrompt(type: type) { [weak self] userAllowed in
+            // Build the callback that maps the prompt result → execute or reject
+            let waiter: (Bool) -> Void = { [weak self] userAllowed in
                 guard let self else { return }
-                store.saveCapability(
-                    projectID: self.project.id,
-                    type: type,
-                    state: userAllowed ? .allowed : .denied
-                )
                 if userAllowed {
                     self.executeCapability(type: type, action: action, options: options, completion: completion)
                 } else {
@@ -1287,6 +1307,25 @@ extension ProjectWorkspaceViewController: DoufuBridgeCapabilityDelegate {
                         name: "NotAllowedError"
                     )))
                 }
+            }
+
+            // Dedup: if a project prompt for this type is already queued/showing,
+            // piggyback instead of enqueuing a duplicate alert.
+            if pendingProjectPermissionWaiters[type] != nil {
+                pendingProjectPermissionWaiters[type]!.append(waiter)
+                return
+            }
+            pendingProjectPermissionWaiters[type] = [waiter]
+
+            presentCapabilityPrompt(type: type) { [weak self] userAllowed in
+                guard let self else { return }
+                store.saveCapability(
+                    projectID: self.project.id,
+                    type: type,
+                    state: userAllowed ? .allowed : .denied
+                )
+                let waiters = self.pendingProjectPermissionWaiters.removeValue(forKey: type) ?? []
+                for w in waiters { w(userAllowed) }
             }
         case .allowed:
             executeCapability(type: type, action: action, options: options, completion: completion)
@@ -1331,6 +1370,10 @@ extension ProjectWorkspaceViewController: DoufuBridgeCapabilityDelegate {
             case "zoom":
                 let factor = options["factor"] as? Double ?? 1.0
                 completeCameraControl(mediaSessionManager.setZoom(factor: factor), completion: completion)
+            case "mirror":
+                let enabled = options["enabled"] as? Bool ?? true
+                mediaSessionManager.setMirrorState(enabled)
+                completion(.success("null"))
             default: // "start"
                 let facing = options["facing"] as? String ?? "user"
                 mediaSessionManager.startCamera(facing: facing, options: options) { result in
@@ -1359,7 +1402,12 @@ extension ProjectWorkspaceViewController: DoufuBridgeCapabilityDelegate {
         case .photoPick:
             executePhotoPick(options: options, completion: completion)
         case .photoSave:
-            executePhotoSave(options: options, completion: completion)
+            switch action {
+            case "saveVideo":
+                executeVideoSave(options: options, completion: completion)
+            default: // "savePhoto"
+                executePhotoSave(options: options, completion: completion)
+            }
         }
     }
 
@@ -1378,7 +1426,7 @@ extension ProjectWorkspaceViewController: DoufuBridgeCapabilityDelegate {
 
         let picker = PHPickerViewController(configuration: config)
         picker.delegate = self
-        photoPickCompletion = completion
+        photoPickContext = (multiple: multiple, completion: completion)
         present(picker, animated: true)
     }
 
@@ -1421,6 +1469,65 @@ extension ProjectWorkspaceViewController: DoufuBridgeCapabilityDelegate {
                 } else {
                     completion(.failure(DoufuBridgeCapabilityError(
                         message: error?.localizedDescription ?? "Failed to save photo.",
+                        name: "NotAllowedError"
+                    )))
+                }
+            }
+        }
+    }
+
+    private func executeVideoSave(
+        options: [String: Any],
+        completion: @escaping (Result<String, DoufuBridgeCapabilityError>) -> Void
+    ) {
+        guard let dataUrl = options["data"] as? String else {
+            completion(.failure(DoufuBridgeCapabilityError(
+                message: "Missing 'data' parameter (data URL string).",
+                name: "TypeError"
+            )))
+            return
+        }
+
+        guard let commaIndex = dataUrl.firstIndex(of: ",") else {
+            completion(.failure(DoufuBridgeCapabilityError(
+                message: "Invalid data URL format.",
+                name: "TypeError"
+            )))
+            return
+        }
+        let base64String = String(dataUrl[dataUrl.index(after: commaIndex)...])
+        guard let videoData = Data(base64Encoded: base64String) else {
+            completion(.failure(DoufuBridgeCapabilityError(
+                message: "Failed to decode video from data URL.",
+                name: "TypeError"
+            )))
+            return
+        }
+
+        // Write to a temp file — PHAssetCreationRequest requires a file URL for video
+        let tmpDir = FileManager.default.temporaryDirectory
+        let tmpFile = tmpDir.appendingPathComponent(UUID().uuidString + ".mp4")
+        do {
+            try videoData.write(to: tmpFile)
+        } catch {
+            completion(.failure(DoufuBridgeCapabilityError(
+                message: "Failed to write video to temp file.",
+                name: "NotReadableError"
+            )))
+            return
+        }
+
+        PHPhotoLibrary.shared().performChanges({
+            PHAssetCreationRequest.forAsset().addResource(with: .video, fileURL: tmpFile, options: nil)
+        }) { success, error in
+            // Clean up temp file regardless of outcome
+            try? FileManager.default.removeItem(at: tmpFile)
+            Task { @MainActor in
+                if success {
+                    completion(.success("null"))
+                } else {
+                    completion(.failure(DoufuBridgeCapabilityError(
+                        message: error?.localizedDescription ?? "Failed to save video.",
                         name: "NotAllowedError"
                     )))
                 }
@@ -1534,38 +1641,51 @@ extension ProjectWorkspaceViewController: DoufuBridgeCapabilityDelegate {
 
     private func presentCapabilityPrompt(
         type: CapabilityType,
-        retryCount: Int = 0,
         completion: @escaping (Bool) -> Void
     ) {
+        capabilityPromptQueue.append((type: type, completion: completion))
+        drainCapabilityPromptQueue()
+    }
+
+    private func drainCapabilityPromptQueue() {
+        guard !isShowingCapabilityPrompt, !capabilityPromptQueue.isEmpty else {
+            print("[Capability] drainQueue: skip (showing=\(isShowingCapabilityPrompt) queueCount=\(capabilityPromptQueue.count))")
+            return
+        }
+
+        // Wait for any system alert or other presented VC to dismiss first.
+        // No timeout — capability prompts must never be silently denied.
         if presentedViewController != nil {
-            // System permission dialog may still be dismissing (animation ~0.3s).
-            // Retry a few times before giving up.
-            if retryCount < 5 {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
-                    self?.presentCapabilityPrompt(type: type, retryCount: retryCount + 1, completion: completion)
-                }
-            } else {
-                completion(false)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+                self?.drainCapabilityPromptQueue()
             }
             return
         }
+
+        let item = capabilityPromptQueue.removeFirst()
+        isShowingCapabilityPrompt = true
+
         let title = String(
             format: String(localized: "capability.prompt.title_format"),
             projectName,
-            type.displayName
+            item.type.displayName
         )
         let alert = UIAlertController(title: title, message: nil, preferredStyle: .alert)
         alert.addAction(UIAlertAction(
             title: String(localized: "capability.prompt.allow"),
             style: .default
-        ) { _ in
-            completion(true)
+        ) { [weak self] _ in
+            self?.isShowingCapabilityPrompt = false
+            item.completion(true)
+            self?.drainCapabilityPromptQueue()
         })
         alert.addAction(UIAlertAction(
             title: String(localized: "capability.prompt.deny"),
             style: .cancel
-        ) { _ in
-            completion(false)
+        ) { [weak self] _ in
+            self?.isShowingCapabilityPrompt = false
+            item.completion(false)
+            self?.drainCapabilityPromptQueue()
         })
         present(alert, animated: true)
     }
@@ -1577,8 +1697,8 @@ extension ProjectWorkspaceViewController: CLLocationManagerDelegate {
         let status = manager.authorizationStatus
         guard status != .notDetermined else { return }
         let granted = (status == .authorizedWhenInUse || status == .authorizedAlways)
-        capabilityLocationCompletion?(granted)
-        capabilityLocationCompletion = nil
+        let callbacks = pendingSystemPermissionCallbacks.removeValue(forKey: .location) ?? []
+        for cb in callbacks { cb(granted) }
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
@@ -1624,61 +1744,98 @@ extension ProjectWorkspaceViewController: PHPickerViewControllerDelegate {
     func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
         picker.dismiss(animated: true)
 
-        guard let completion = photoPickCompletion else { return }
-        photoPickCompletion = nil
+        guard let context = photoPickContext else { return }
+        photoPickContext = nil
 
+        let multiple = context.multiple
+        let completion = context.completion
+
+        // Cancel → resolve null (single) or [] (multiple) instead of rejecting
         if results.isEmpty {
-            completion(.failure(DoufuBridgeCapabilityError(
-                message: "User cancelled photo selection.",
-                name: "AbortError"
-            )))
+            completion(.success(multiple ? "[]" : "null"))
             return
         }
 
+        // Ensure tmp/photos directory exists
+        let photosDir = photosTmpDirectory()
+
         let group = DispatchGroup()
-        var dataUrls: [String] = []
+        var urls: [String] = []
         let lock = NSLock()
 
         for result in results {
             group.enter()
             result.itemProvider.loadObject(ofClass: UIImage.self) { object, _ in
                 defer { group.leave() }
-                guard let image = object as? UIImage,
-                      let jpegData = image.jpegData(compressionQuality: 0.9) else { return }
-                let base64 = jpegData.base64EncodedString()
-                let dataUrl = "data:image/jpeg;base64,\(base64)"
-                lock.lock()
-                dataUrls.append(dataUrl)
-                lock.unlock()
+                guard let image = object as? UIImage else { return }
+
+                // Downscale if needed (max 2048px on longest edge)
+                let scaled = Self.downscaleIfNeeded(image, maxDimension: 2048)
+                guard let jpegData = scaled.jpegData(compressionQuality: 0.9) else { return }
+
+                let filename = UUID().uuidString + ".jpg"
+                let fileURL = photosDir.appendingPathComponent(filename)
+                do {
+                    try jpegData.write(to: fileURL)
+                    let urlPath = "/__doufu_tmp__/photos/\(filename)"
+                    lock.lock()
+                    urls.append(urlPath)
+                    lock.unlock()
+                } catch {
+                    // Skip failed writes
+                }
             }
         }
 
         group.notify(queue: .main) {
-            if dataUrls.isEmpty {
+            if urls.isEmpty {
                 completion(.failure(DoufuBridgeCapabilityError(
                     message: "Failed to load selected photos.",
                     name: "NotReadableError"
                 )))
                 return
             }
-            // Single pick → return string directly; multiple → return JSON array
-            if results.count == 1 {
-                // Encode as JSON string so JS receives a proper string value
-                if let jsonData = try? JSONEncoder().encode(dataUrls[0]),
-                   let json = String(data: jsonData, encoding: .utf8) {
-                    completion(.success(json))
-                } else {
-                    completion(.success("\"\(dataUrls[0])\""))
-                }
-            } else {
-                if let jsonData = try? JSONEncoder().encode(dataUrls),
+            // Use `multiple` flag (not results.count) to decide return format
+            if multiple {
+                if let jsonData = try? JSONEncoder().encode(urls),
                    let json = String(data: jsonData, encoding: .utf8) {
                     completion(.success(json))
                 } else {
                     completion(.success("[]"))
                 }
+            } else {
+                if let jsonData = try? JSONEncoder().encode(urls[0]),
+                   let json = String(data: jsonData, encoding: .utf8) {
+                    completion(.success(json))
+                } else {
+                    completion(.success("null"))
+                }
             }
         }
+    }
+
+    private func photosTmpDirectory() -> URL {
+        let dir = projectURL.appendingPathComponent("tmp/photos", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    private static func downscaleIfNeeded(_ image: UIImage, maxDimension: CGFloat) -> UIImage {
+        let size = image.size
+        let longest = max(size.width, size.height)
+        guard longest > maxDimension else { return image }
+        let scale = maxDimension / longest
+        let newSize = CGSize(width: size.width * scale, height: size.height * scale)
+        let renderer = UIGraphicsImageRenderer(size: newSize)
+        return renderer.image { _ in
+            image.draw(in: CGRect(origin: .zero, size: newSize))
+        }
+    }
+
+    /// Removes all temporary picked photos. Called on page navigation.
+    func cleanUpPhotosTmp() {
+        let dir = projectURL.appendingPathComponent("tmp/photos", isDirectory: true)
+        try? FileManager.default.removeItem(at: dir)
     }
 }
 

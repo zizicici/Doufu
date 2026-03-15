@@ -1814,16 +1814,46 @@ final class AgentToolProvider {
             ## doufu.camera
 
             ```js
-            // Start camera (returns a standard MediaStream)
+            // Start camera (returns a MediaStream with one video track)
             const stream = await doufu.camera.start({facing: 'user'});
             // facing: 'user' (front camera, default) or 'environment' (back camera)
             // Optional: {facing: 'user', width: 1920, height: 1440, fps: 30}
             // Default is 4:3 (1920×1440) to match native sensor. Use 1920×1080 for 16:9.
 
-            // Use with a <video> element (must have playsinline attribute)
+            // IMPORTANT: <video> element MUST have the `playsinline` attribute.
+            // Without it, iOS will not display the camera feed inline.
+            // Example: <video id="cam" playsinline autoplay muted></video>
             const video = document.querySelector('video');
             video.srcObject = stream;
             video.play();
+
+            // Record video using MediaRecorder
+            const recorder = new MediaRecorder(stream, { mimeType: 'video/mp4' });
+            const chunks = [];
+            recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+            recorder.start(200);
+            // ... later:
+            recorder.stop();
+            recorder.onstop = () => {
+              const blob = new Blob(chunks, { type: recorder.mimeType });
+              // To save to photo library: convert to data URL and call doufu.photos.saveVideo()
+            };
+
+            // Record video WITH audio: combine both streams
+            const micStream = await doufu.mic.start();
+            const combined = new MediaStream([
+              ...stream.getVideoTracks(),
+              ...micStream.getAudioTracks()
+            ]);
+            const avRecorder = new MediaRecorder(combined, { mimeType: 'video/mp4' });
+
+            // Capture a still frame to canvas
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            canvas.getContext('2d').drawImage(video, 0, 0);
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+            // Save to photo library: await doufu.photos.savePhoto(dataUrl);
 
             // Switch camera (restarts with new facing direction)
             const newStream = await doufu.camera.start({facing: 'environment'});
@@ -1843,61 +1873,109 @@ final class AgentToolProvider {
             // Zoom (1.0 = no zoom, clamped to device max)
             await doufu.camera.zoom({factor: 2.0});
 
+            // Mirror hint: front camera streams have stream.__doufuMirrored = true
+            // (back camera = false). Use CSS to apply: video.style.transform = stream.__doufuMirrored ? 'scaleX(-1)' : '';
+            // To change: await doufu.camera.mirror({enabled: false});
+            // This updates stream.__doufuMirrored on the active stream.
+            await doufu.camera.mirror({enabled: true});
+
             // Stop camera
             await doufu.camera.stop();
             ```
 
             Returns a MediaStream with one video track. Requires system camera permission.
+            The returned stream has a `__doufuMirrored` property (boolean) indicating whether
+            the video should be displayed mirrored. Front camera defaults to `true`, back to `false`.
+            Apply mirroring in CSS: `video.style.transform = stream.__doufuMirrored ? 'scaleX(-1)' : ''`.
             Do NOT use getUserMedia or any browser media API — they are blocked.
-            If microphone is also needed, start both independently.
-            To save a captured frame to the photo library, use `doufu.photos.save()`.
+            If microphone is also needed, start both independently — see the combined recording example above.
+            To save a captured frame to the photo library, use `doufu.photos.savePhoto()`.
+
+            **IMPORTANT — WebRTC remote track:**
+            The stream is delivered via WebRTC loopback. Display via `video.srcObject` and
+            recording via `MediaRecorder` both work correctly. However, do NOT feed it into
+            `AudioContext.createMediaStreamSource()` — it will produce silence (see microphone docs).
+            For frame processing, draw the `<video>` element onto a `<canvas>` instead.
             """,
         "microphone": """
             ## doufu.mic
 
             ```js
-            // Start microphone (returns a standard MediaStream)
+            // Start microphone (returns a MediaStream)
             const stream = await doufu.mic.start();
 
-            // Use with Web Audio API
-            const ctx = new AudioContext();
-            const source = ctx.createMediaStreamSource(stream);
-            source.connect(ctx.destination); // or connect to analyser, etc.
+            // Record audio using MediaRecorder (recommended)
+            const recorder = new MediaRecorder(stream, {
+              mimeType: MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+                ? 'audio/webm;codecs=opus' : 'audio/mp4'
+            });
+            const chunks = [];
+            recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+            recorder.start(200); // collect chunks every 200ms
 
-            // Or attach to <audio> element
-            const audio = document.querySelector('audio');
-            audio.srcObject = stream;
+            // Stop recording → get audio Blob
+            recorder.stop();
+            recorder.onstop = () => {
+              const blob = new Blob(chunks, { type: recorder.mimeType });
+              const url = URL.createObjectURL(blob);
+              // use url for playback, download, etc.
+            };
 
-            // Stop microphone
+            // Stop microphone (call when done)
             await doufu.mic.stop();
             ```
 
             Returns a MediaStream with one audio track. Requires system microphone permission.
             Do NOT use getUserMedia or any browser media API — they are blocked.
+
+            **IMPORTANT — Web Audio API limitation:**
+            The returned stream is delivered via WebRTC loopback (remote track).
+            `AudioContext.createMediaStreamSource(stream)` will produce **silence** —
+            `ScriptProcessorNode` / `AudioWorklet` will receive all-zero buffers.
+            Do NOT use createMediaStreamSource for recording, audio processing, or visualizers.
+            Always use `MediaRecorder` to capture audio from this stream.
+            For audio visualization, use `MediaRecorder` + `decodeAudioData` on recorded chunks,
+            or implement a simple amplitude display based on recording duration/state (no real-time waveform).
             """,
         "photos": """
             ## doufu.photos
 
             ```js
             // Pick a single photo from the system photo picker (no permission needed)
-            const dataUrl = await doufu.photos.pick();
-            img.src = dataUrl;  // data:image/jpeg;base64,...
+            const url = await doufu.photos.pick();
+            // Returns a URL path string, e.g. "/__doufu_tmp__/photos/xxx.jpg"
+            // Returns null if user cancels
+            if (url) img.src = url;
 
             // Pick multiple photos (up to limit)
             const photos = await doufu.photos.pick({multiple: true, limit: 5});
-            photos.forEach(url => { /* ... */ });
+            // Returns an array of URL path strings (empty array if cancelled)
+            photos.forEach(u => { /* ... */ });
 
-            // Save a data URL image to the iOS photo library
+            // Save an image to the iOS photo library
             // Requires "Save Photos" permission (add-only, cannot read library)
-            await doufu.photos.save(canvas.toDataURL('image/jpeg', 0.9));
+            await doufu.photos.savePhoto(canvas.toDataURL('image/jpeg', 0.9));
+
+            // Save a video to the iOS photo library
+            // Pass a data URL from a recorded Blob (e.g. from MediaRecorder)
+            const blob = new Blob(chunks, { type: 'video/mp4' });
+            const reader = new FileReader();
+            reader.onload = () => doufu.photos.saveVideo(reader.result);
+            reader.readAsDataURL(blob);
             ```
 
             `pick()` uses the system photo picker (PHPicker) — completely private,
             no photo library permission required. The user selects which photos to share.
-            Returns a data URL string (single) or array of data URL strings (multiple).
+            Returns a URL path string (single) or array of URL path strings (multiple).
+            Large images are automatically downscaled (max 2048px).
+            Picked photo URLs are temporary and cleared on page navigation.
 
-            `save()` writes an image to the photo library. Requires system "Add Photos Only"
+            `savePhoto()` writes an image to the photo library. Requires system "Add Photos Only"
             permission. Pass a data URL (e.g. from canvas.toDataURL() or a picked photo).
+
+            `saveVideo()` writes a video to the photo library. Same permission as savePhoto.
+            Pass a data URL of the video (e.g. from FileReader.readAsDataURL on a recorded Blob).
+            Best for short recordings — large videos may cause memory pressure during base64 encoding.
             """,
     ]
 

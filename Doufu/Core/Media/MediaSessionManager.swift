@@ -105,6 +105,7 @@ final class MediaSessionManager: NSObject {
 
         isCameraActive = true
         currentFacing = position
+        isMirrored = (position == .front)
         pendingCameraCompletion = completion
 
         let width = options["width"] as? Int ?? 1920
@@ -251,20 +252,15 @@ final class MediaSessionManager: NSObject {
         }
     }
 
-    /// Mirrors the video track horizontally. Front camera is mirrored by default in most apps.
-    func setMirrored(_ mirrored: Bool) -> Result<Void, DoufuBridgeCapabilityError> {
-        guard isCameraActive, let source = videoSource else {
-            return .failure(DoufuBridgeCapabilityError(message: "Camera is not active.", name: "InvalidStateError"))
-        }
-        // RTCVideoSource has an `adaptOutputFormat` but no direct mirror.
-        // Mirror is achieved by setting the capturer's transform. For RTCCameraVideoCapturer,
-        // we apply the mirror via the video source's frame adapter.
-        // Note: Actual mirroring in GoogleWebRTC is typically handled via RTCVideoFrame rotation/mirror.
-        // For now, we return not-supported — mirroring should be done in CSS (transform: scaleX(-1)).
-        return .failure(DoufuBridgeCapabilityError(
-            message: "Use CSS transform: scaleX(-1) on the video element to mirror.",
-            name: "NotSupportedError"
-        ))
+    /// Whether the camera is considered mirrored (display hint for JS).
+    /// Front camera defaults to `true`, back camera to `false`.
+    /// Actual mirroring should be done in CSS (`transform: scaleX(-1)`) based on this flag.
+    private(set) var isMirrored = true
+
+    /// Updates the mirror state. This is a display hint — the native video track is not flipped.
+    /// JS reads `stream.__doufuMirrored` to decide whether to apply CSS mirroring.
+    func setMirrorState(_ mirrored: Bool) {
+        isMirrored = mirrored
     }
 
     private func currentCaptureDevice() -> AVCaptureDevice? {
@@ -366,6 +362,7 @@ final class MediaSessionManager: NSObject {
 
     private func switchCamera(to position: AVCaptureDevice.Position, options: [String: Any] = [:]) {
         currentFacing = position
+        isMirrored = (position == .front)
 
         guard videoCapturer != nil else { return }
 

@@ -22,6 +22,10 @@ final class LocalWebServer: @unchecked Sendable {
     private let urlSession: URLSession
     private(set) var port: UInt16 = 0
 
+    /// Optional secondary directory served under the `/__doufu_tmp__/` path prefix.
+    /// Used for temporary files (e.g. picked photos) that should not live inside the App/ directory.
+    var tmpDirectoryURL: URL?
+
     init(projectURL: URL, projectID: String) {
         self.projectURL = projectURL
         self.preferredPort = Self.stablePort(for: projectID)
@@ -161,11 +165,16 @@ final class LocalWebServer: @unchecked Sendable {
         }
     }
 
+    private static let tmpPathPrefix = "/__doufu_tmp__/"
+
     private func routeRequest(_ request: HTTPRequest, on connection: NWConnection) {
         if request.path == "/__doufu_proxy__" {
             handleProxyRequest(request) { [weak self] response in
                 self?.sendResponse(response, on: connection)
             }
+        } else if request.path.hasPrefix(Self.tmpPathPrefix) {
+            let response = handleTmpFileRequest(request)
+            sendResponse(response, on: connection)
         } else {
             let response = handleStaticFileRequest(request)
             sendResponse(response, on: connection)
@@ -399,6 +408,47 @@ final class LocalWebServer: @unchecked Sendable {
         }
 
         return buildResponse(statusCode: 200, statusText: "OK", body: body, contentType: contentType)
+    }
+
+    // MARK: - Tmp File Serving
+
+    /// Serves files from `tmpDirectoryURL` under the `/__doufu_tmp__/` path prefix.
+    /// No URL rewriting is applied (these are binary assets like images).
+    private func handleTmpFileRequest(_ request: HTTPRequest) -> Data {
+        guard request.method == "GET" || request.method == "HEAD" else {
+            return buildResponse(statusCode: 405, statusText: "Method Not Allowed",
+                                 body: Data("Method Not Allowed".utf8), contentType: "text/plain")
+        }
+
+        guard let baseURL = tmpDirectoryURL else {
+            return buildResponse(statusCode: 404, statusText: "Not Found",
+                                 body: Data("Not Found".utf8), contentType: "text/plain")
+        }
+
+        // Strip the /__doufu_tmp__/ prefix to get the relative path
+        let relativePath = String(request.path.dropFirst(Self.tmpPathPrefix.count))
+        let decoded = relativePath.removingPercentEncoding ?? relativePath
+
+        // Prevent directory traversal
+        let resolved = baseURL.appendingPathComponent(decoded).standardizedFileURL.resolvingSymlinksInPath()
+        let basePath = baseURL.standardizedFileURL.resolvingSymlinksInPath().path
+        let resolvedPath = resolved.path
+        let prefix = basePath.hasSuffix("/") ? basePath : basePath + "/"
+
+        guard resolvedPath == basePath || resolvedPath.hasPrefix(prefix) else {
+            return buildResponse(statusCode: 403, statusText: "Forbidden",
+                                 body: Data("Forbidden".utf8), contentType: "text/plain")
+        }
+
+        guard FileManager.default.fileExists(atPath: resolved.path),
+              let fileData = try? Data(contentsOf: resolved) else {
+            return buildResponse(statusCode: 404, statusText: "Not Found",
+                                 body: Data("Not Found".utf8), contentType: "text/plain")
+        }
+
+        let ext = resolved.pathExtension.lowercased()
+        let contentType = mimeType(for: ext)
+        return buildResponse(statusCode: 200, statusText: "OK", body: fileData, contentType: contentType)
     }
 
     // MARK: - Response Builder
