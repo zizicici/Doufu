@@ -491,7 +491,11 @@ final class DoufuBridge: NSObject {
 
           function _handleOffer(signal) {
             if (!_mediaPc) {
-              _mediaPc = new RTCPeerConnection({iceServers: []});
+              var iceConfig = {iceServers: []};
+              if (signal.stunPort) {
+                iceConfig.iceServers = [{urls: 'stun:127.0.0.1:' + signal.stunPort}];
+              }
+              _mediaPc = new RTCPeerConnection(iceConfig);
 
               _mediaPc.ontrack = function(e) {
                 var kind = e.track.kind;
@@ -676,7 +680,7 @@ final class DoufuBridge: NSObject {
     }
 
     /// Sends a WebRTC signaling message from native to JS.
-    func sendMediaSignal(type: String, sdp: String? = nil, candidate: [String: Any]? = nil) {
+    func sendMediaSignal(type: String, sdp: String? = nil, candidate: [String: Any]? = nil, stunPort: UInt16? = nil) {
         var parts = ["type:'\(type.escapedForJS)'"]
         if let sdp {
             parts.append("sdp:'\(sdp.escapedForJS)'")
@@ -685,6 +689,9 @@ final class DoufuBridge: NSObject {
            let data = try? JSONSerialization.data(withJSONObject: candidate),
            let str = String(data: data, encoding: .utf8) {
             parts.append("candidate:\(str)")
+        }
+        if let stunPort {
+            parts.append("stunPort:\(stunPort)")
         }
         let joined = parts.joined(separator: ",")
         let js = "window.__doufuMediaSignal({\(joined)});"

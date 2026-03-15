@@ -47,6 +47,12 @@ final class MediaSessionManager: NSObject {
         )
     }()
 
+    // MARK: - Loopback STUN (shared)
+
+    /// Local STUN server on 127.0.0.1 so ICE discovers loopback srflx candidates
+    /// regardless of WiFi/cellular/airplane-mode state.
+    private static let stunServer = LoopbackSTUNServer()
+
     // MARK: - State
 
     private var peerConnection: RTCPeerConnection?
@@ -454,7 +460,11 @@ final class MediaSessionManager: NSObject {
         guard peerConnection == nil else { return true }
 
         let config = RTCConfiguration()
-        config.iceServers = [] // Loopback — no external STUN/TURN needed
+        if let stun = Self.stunServer {
+            config.iceServers = [RTCIceServer(urlStrings: ["stun:127.0.0.1:\(stun.port)"])]
+        } else {
+            config.iceServers = []
+        }
         config.sdpSemantics = .unifiedPlan
 
         let constraints = RTCMediaConstraints(
@@ -506,10 +516,11 @@ final class MediaSessionManager: NSObject {
                             )
                             return
                         }
-                        // Send offer to JS
+                        // Send offer to JS (include local STUN port so JS uses the same server)
                         self.bridge?.sendMediaSignal(
                             type: "offer",
-                            sdp: sdp.sdp
+                            sdp: sdp.sdp,
+                            stunPort: Self.stunServer?.port
                         )
                         // Complete pending callbacks — the native pipeline is running.
                         // JS will resolve its own promise via `ontrack`.
