@@ -41,7 +41,7 @@ final class CapabilityActivityLogViewController: UITableViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        title = String(localized: "capability.activity_log.title", defaultValue: "Activity Log")
+        title = String(localized: "capability.activity_log.title")
         tableView.backgroundColor = .doufuBackground
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "Cell")
         configureDiffableDataSource()
@@ -148,7 +148,7 @@ final class CapabilityActivityLogViewController: UITableViewController {
 
         case .empty:
             var configuration = UIListContentConfiguration.cell()
-            configuration.text = String(localized: "capability.activity_log.empty", defaultValue: "No activity yet")
+            configuration.text = String(localized: "capability.activity_log.empty")
             configuration.textProperties.color = .secondaryLabel
             cell.contentConfiguration = configuration
             cell.selectionStyle = .none
@@ -188,11 +188,11 @@ final class CapabilityActivityLogViewController: UITableViewController {
     private func eventTypeLabel(_ type: CapabilityActivityEventType) -> String {
         switch type {
         case .requested:
-            return String(localized: "capability.activity_log.event.requested", defaultValue: "Requested")
+            return String(localized: "capability.activity_log.event.requested")
         case .changed:
-            return String(localized: "capability.activity_log.event.changed", defaultValue: "Changed")
+            return String(localized: "capability.activity_log.event.changed")
         case .serviceUsed:
-            return String(localized: "capability.activity_log.event.service_used", defaultValue: "Used")
+            return String(localized: "capability.activity_log.event.service_used")
         }
     }
 
@@ -219,10 +219,10 @@ final class CapabilityActivityLogViewController: UITableViewController {
         switch eventType {
         case .requested, .changed:
             switch detail {
-            case "allowed":
-                return String(localized: "capability.activity_log.detail.allowed", defaultValue: "Allowed")
-            case "denied":
-                return String(localized: "capability.activity_log.detail.denied", defaultValue: "Denied")
+            case CapabilityActivityDetail.allowed:
+                return String(localized: "capability.activity_log.detail.allowed")
+            case CapabilityActivityDetail.denied:
+                return String(localized: "capability.activity_log.detail.denied")
             default:
                 return detail
             }

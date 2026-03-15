@@ -14,6 +14,11 @@ enum CapabilityActivityEventType: Int, Sendable {
     case serviceUsed = 2
 }
 
+enum CapabilityActivityDetail {
+    static let allowed = "allowed"
+    static let denied = "denied"
+}
+
 struct CapabilityActivityEntry: Sendable {
     let id: Int64
     let projectID: String

@@ -197,7 +197,7 @@ final class ProjectSettingsViewController: UITableViewController {
                     projectID: self.projectID,
                     capability: capType,
                     event: .changed,
-                    detail: newValue ? "allowed" : "denied"
+                    detail: newValue ? CapabilityActivityDetail.allowed : CapabilityActivityDetail.denied
                 )
                 self.projectCapabilities = self.capabilityStore.loadRequestedCapabilities(projectID: self.projectID)
                 self.applySnapshot()
@@ -207,7 +207,7 @@ final class ProjectSettingsViewController: UITableViewController {
         case .capabilityActivityLog:
             let cell = tableView.dequeueReusableCell(withIdentifier: "CheckpointCell", for: indexPath)
             var configuration = cell.defaultContentConfiguration()
-            configuration.text = String(localized: "capability.activity_log.title", defaultValue: "Activity Log")
+            configuration.text = String(localized: "capability.activity_log.title")
             cell.contentConfiguration = configuration
             cell.accessoryType = .disclosureIndicator
             return cell

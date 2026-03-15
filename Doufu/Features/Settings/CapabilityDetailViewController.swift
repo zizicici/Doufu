@@ -112,7 +112,7 @@ final class CapabilityDetailViewController: UITableViewController {
                     projectID: id,
                     capability: self.capabilityType,
                     event: .changed,
-                    detail: newValue ? "allowed" : "denied"
+                    detail: newValue ? CapabilityActivityDetail.allowed : CapabilityActivityDetail.denied
                 )
                 self.reloadData()
             }
@@ -130,7 +130,7 @@ final class CapabilityDetailViewController: UITableViewController {
         case .activityLog:
             let cell = tableView.dequeueReusableCell(withIdentifier: "Cell", for: indexPath)
             var configuration = cell.defaultContentConfiguration()
-            configuration.text = String(localized: "capability.activity_log.title", defaultValue: "Activity Log")
+            configuration.text = String(localized: "capability.activity_log.title")
             cell.contentConfiguration = configuration
             cell.accessoryType = .disclosureIndicator
             return cell

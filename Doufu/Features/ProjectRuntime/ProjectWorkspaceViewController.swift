@@ -1332,7 +1332,7 @@ extension ProjectWorkspaceViewController: DoufuBridgeCapabilityDelegate {
                     type: type,
                     state: userAllowed ? .allowed : .denied
                 )
-                let stateDetail = userAllowed ? "allowed" : "denied"
+                let stateDetail = userAllowed ? CapabilityActivityDetail.allowed : CapabilityActivityDetail.denied
                 let activityStore = CapabilityActivityStore.shared
                 activityStore.recordEvent(projectID: self.project.id, capability: type, event: .requested, detail: stateDetail)
                 activityStore.recordEvent(projectID: self.project.id, capability: type, event: .changed, detail: stateDetail)
