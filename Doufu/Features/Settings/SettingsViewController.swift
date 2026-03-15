@@ -130,6 +130,24 @@ final class SettingsViewController: UITableViewController {
             cell.contentConfiguration = configuration
             return cell
 
+        case .clipboardReadPermission(let secondaryText):
+            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
+            cell.accessoryType = .disclosureIndicator
+            var configuration = UIListContentConfiguration.valueCell()
+            configuration.text = String(localized: "settings.permissions.clipboard_read")
+            configuration.secondaryText = secondaryText
+            cell.contentConfiguration = configuration
+            return cell
+
+        case .clipboardWritePermission(let secondaryText):
+            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
+            cell.accessoryType = .disclosureIndicator
+            var configuration = UIListContentConfiguration.valueCell()
+            configuration.text = String(localized: "settings.permissions.clipboard_write")
+            configuration.secondaryText = secondaryText
+            cell.contentConfiguration = configuration
+            return cell
+
         case .manageProviders(let secondaryText):
             let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
             cell.accessoryType = .disclosureIndicator
@@ -297,6 +315,8 @@ final class SettingsViewController: UITableViewController {
             .microphonePermission(secondaryText: microphonePermissionStatus()),
             .locationPermission(secondaryText: locationPermissionStatus()),
             .photoSavePermission(secondaryText: photoSavePermissionStatus()),
+            .clipboardReadPermission(secondaryText: projectPermissionSummary(for: .clipboardRead)),
+            .clipboardWritePermission(secondaryText: projectPermissionSummary(for: .clipboardWrite)),
         ], toSection: .permissions)
 
         // Contact
@@ -345,6 +365,14 @@ final class SettingsViewController: UITableViewController {
 
         case .photoSavePermission:
             let vc = CapabilityDetailViewController(capabilityType: .photoSave)
+            navigationController?.pushViewController(vc, animated: true)
+
+        case .clipboardReadPermission:
+            let vc = CapabilityDetailViewController(capabilityType: .clipboardRead)
+            navigationController?.pushViewController(vc, animated: true)
+
+        case .clipboardWritePermission:
+            let vc = CapabilityDetailViewController(capabilityType: .clipboardWrite)
             navigationController?.pushViewController(vc, animated: true)
 
         case .manageProviders:
@@ -529,6 +557,15 @@ final class SettingsViewController: UITableViewController {
         @unknown default:
             return String(localized: "settings.permissions.status.not_requested")
         }
+    }
+
+    private func projectPermissionSummary(for type: CapabilityType) -> String {
+        let entries = ProjectCapabilityStore.shared.loadProjectsWithCapability(type: type)
+        if entries.isEmpty { return "" }
+        return String(
+            format: String(localized: "settings.permissions.project_count_format"),
+            entries.count
+        )
     }
 
     private func openSystemSettings() {

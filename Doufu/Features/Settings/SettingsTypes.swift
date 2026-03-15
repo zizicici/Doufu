@@ -54,6 +54,8 @@ nonisolated enum SettingsItemID: Hashable, Sendable {
     case microphonePermission(secondaryText: String)
     case locationPermission(secondaryText: String)
     case photoSavePermission(secondaryText: String)
+    case clipboardReadPermission(secondaryText: String)
+    case clipboardWritePermission(secondaryText: String)
 
     // LLM Providers
     case manageProviders(secondaryText: String)

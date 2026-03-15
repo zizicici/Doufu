@@ -22,6 +22,14 @@ protocol DoufuBridgeCapabilityDelegate: AnyObject {
         options: [String: Any],
         completion: @escaping (Result<String, DoufuBridgeCapabilityError>) -> Void
     )
+
+    /// Called when JS requests photo picking. PHPicker is privacy-safe and
+    /// requires no system or project permission — no permission checks needed.
+    func bridge(
+        _ bridge: DoufuBridge,
+        didRequestPhotoPick options: [String: Any],
+        completion: @escaping (Result<String, DoufuBridgeCapabilityError>) -> Void
+    )
 }
 
 struct DoufuBridgeCapabilityError: Error {
@@ -394,8 +402,7 @@ final class DoufuBridge: NSObject {
             return
         }
 
-        guard let capabilityKey = dict["capability"] as? String,
-              let type = CapabilityType.from(dbKey: capabilityKey) else {
+        guard let capabilityKey = dict["capability"] as? String else {
             rejectCallback(callbackID: callbackID, message: "Unknown capability.", name: "NotSupportedError")
             return
         }
@@ -405,8 +412,28 @@ final class DoufuBridge: NSObject {
             return
         }
 
-        let action = dict["action"] as? String ?? ""
         let options = dict["options"] as? [String: Any] ?? [:]
+
+        // PHPicker is privacy-safe — bypass the CapabilityType permission system entirely.
+        if capabilityKey == "photo_pick" {
+            delegate.bridge(self, didRequestPhotoPick: options) { [weak self] result in
+                guard let self else { return }
+                switch result {
+                case .success(let data):
+                    self.resolveCallback(callbackID: callbackID, data: data)
+                case .failure(let error):
+                    self.rejectCallback(callbackID: callbackID, message: error.message, name: error.name)
+                }
+            }
+            return
+        }
+
+        guard let type = CapabilityType.from(dbKey: capabilityKey) else {
+            rejectCallback(callbackID: callbackID, message: "Unknown capability.", name: "NotSupportedError")
+            return
+        }
+
+        let action = dict["action"] as? String ?? ""
 
         delegate.bridge(self, didRequestCapability: type, action: action, options: options) { [weak self] result in
             guard let self else { return }

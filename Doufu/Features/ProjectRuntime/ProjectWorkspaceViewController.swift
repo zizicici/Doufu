@@ -1138,6 +1138,14 @@ extension ProjectWorkspaceViewController: WKScriptMessageHandler {
 extension ProjectWorkspaceViewController: DoufuBridgeCapabilityDelegate {
     func bridge(
         _ bridge: DoufuBridge,
+        didRequestPhotoPick options: [String: Any],
+        completion: @escaping (Result<String, DoufuBridgeCapabilityError>) -> Void
+    ) {
+        executePhotoPick(options: options, completion: completion)
+    }
+
+    func bridge(
+        _ bridge: DoufuBridge,
         didRequestCapability type: CapabilityType,
         action: String,
         options: [String: Any],
@@ -1149,12 +1157,6 @@ extension ProjectWorkspaceViewController: DoufuBridgeCapabilityDelegate {
         // on an already-authorized session and must not re-prompt.
         let bypassActions: Set<String> = ["stop", "clearWatch", "focus", "exposure", "torch", "zoom", "mirror"]
         if bypassActions.contains(action) {
-            executeCapability(type: type, action: action, options: options, completion: completion)
-            return
-        }
-
-        // PHPicker is privacy-safe (user picks what to share) — skip all permission checks.
-        if type == .photoPick {
             executeCapability(type: type, action: action, options: options, completion: completion)
             return
         }
@@ -1230,7 +1232,7 @@ extension ProjectWorkspaceViewController: DoufuBridgeCapabilityDelegate {
             case .authorized, .limited: completion(.authorized)
             default: completion(.denied)
             }
-        case .photoPick, .clipboardRead, .clipboardWrite:
+        case .clipboardRead, .clipboardWrite:
             completion(.authorized)
         }
     }
@@ -1399,8 +1401,6 @@ extension ProjectWorkspaceViewController: DoufuBridgeCapabilityDelegate {
                     }
                 }
             }
-        case .photoPick:
-            executePhotoPick(options: options, completion: completion)
         case .photoSave:
             switch action {
             case "saveVideo":

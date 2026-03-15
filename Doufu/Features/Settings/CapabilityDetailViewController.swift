@@ -188,7 +188,7 @@ final class CapabilityDetailViewController: UITableViewController {
             return locationPermissionStatusText()
         case .photoSave:
             return photoSavePermissionStatusText()
-        case .photoPick, .clipboardRead, .clipboardWrite:
+        case .clipboardRead, .clipboardWrite:
             return ""
         }
     }
@@ -224,7 +224,7 @@ final class CapabilityDetailViewController: UITableViewController {
             handleLocationPermissionTap()
         case .photoSave:
             handlePhotoSavePermissionTap()
-        case .photoPick, .clipboardRead, .clipboardWrite:
+        case .clipboardRead, .clipboardWrite:
             break
         }
     }

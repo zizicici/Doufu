@@ -14,7 +14,6 @@ enum CapabilityType: CaseIterable, Sendable {
     case location
     case clipboardRead
     case clipboardWrite
-    case photoPick
     case photoSave
 
     var dbKey: String {
@@ -24,7 +23,6 @@ enum CapabilityType: CaseIterable, Sendable {
         case .location: return "location"
         case .clipboardRead: return "clipboard_read"
         case .clipboardWrite: return "clipboard_write"
-        case .photoPick: return "photo_pick"
         case .photoSave: return "photo_save"
         }
     }
@@ -36,17 +34,15 @@ enum CapabilityType: CaseIterable, Sendable {
         case .location: return String(localized: "capability.name.location")
         case .clipboardRead: return String(localized: "capability.name.clipboard_read")
         case .clipboardWrite: return String(localized: "capability.name.clipboard_write")
-        case .photoPick: return String(localized: "capability.name.photo_pick")
         case .photoSave: return String(localized: "capability.name.photo_save")
         }
     }
 
     /// Whether this capability requires a system-level permission (camera/mic/location/photoSave).
-    /// photoPick uses PHPicker which requires no system permission.
     var hasSystemPermission: Bool {
         switch self {
         case .camera, .microphone, .location, .photoSave: return true
-        case .clipboardRead, .clipboardWrite, .photoPick: return false
+        case .clipboardRead, .clipboardWrite: return false
         }
     }
 
@@ -122,13 +118,14 @@ final class ProjectCapabilityStore: Sendable {
                     FROM project_capability pc
                     JOIN project p ON p.id = pc.project_id
                     WHERE pc.capability = ? AND pc.state != 0
-                    ORDER BY pc.updated_at DESC
+                    ORDER BY p.title ASC
                 """, arguments: [type.dbKey])
             }
             return rows.compactMap { row in
-                guard let projectID = row["project_id"] as? String,
-                      let title = row["title"] as? String,
-                      let stateInt = row["state"] as? Int,
+                let projectID: String? = row["project_id"]
+                let title: String? = row["title"]
+                let stateInt: Int? = row["state"]
+                guard let projectID, let title, let stateInt,
                       let state = CapabilityState(rawValue: stateInt) else { return nil }
                 return (projectID: projectID, projectName: title, state: state)
             }
