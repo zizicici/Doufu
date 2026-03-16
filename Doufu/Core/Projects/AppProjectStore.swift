@@ -548,8 +548,6 @@ final class AppProjectStore {
         # DOUFU.MD
 
         ## Project Identity
-        - Name: \(name)
-        - Project ID: \(projectID)
         - Entry: index.html
         - Created At: \(isoFormatter.string(from: now))
 

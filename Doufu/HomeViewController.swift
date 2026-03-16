@@ -215,10 +215,13 @@ final class HomeViewController: UIViewController {
             defer { self.importTask = nil }
 
             do {
-                let result = try await self.archiveImportService.importArchive(from: url)
-                guard !Task.isCancelled else { return }
-                self.reloadProjects()
-                self.presentImportSuccessAlert(for: result.project)
+                // Phase 1: Extract to temp for preview — project is NOT created yet
+                let preview = try await self.archiveImportService.extractForPreview(from: url)
+                guard !Task.isCancelled else {
+                    self.archiveImportService.cleanupPreview(preview)
+                    return
+                }
+                self.presentImportScanVC(preview: preview)
             } catch is CancellationError {
                 return
             } catch {
@@ -275,29 +278,56 @@ final class HomeViewController: UIViewController {
         UTType(exportedAs: "com.zizicici.doufull.archive"),
     ]
 
-    private func presentImportSuccessAlert(for project: AppProjectRecord) {
-        let alert = UIAlertController(
-            title: String(
-                localized: "home.alert.import_success.title",
-                defaultValue: "Import Complete"
-            ),
-            message: String(
-                format: String(
-                    localized: "home.alert.import_success.message_format",
-                    defaultValue: "Imported as a new project: \"%@\"."
-                ),
-                project.name
-            ),
-            preferredStyle: .alert
-        )
-        alert.addAction(UIAlertAction(title: String(localized: "common.action.cancel"), style: .cancel))
-        alert.addAction(UIAlertAction(
-            title: String(localized: "common.action.open", defaultValue: "Open"),
-            style: .default
-        ) { [weak self] _ in
-            self?.openProject(project, cellIndexPath: nil)
-        })
-        present(alert, animated: true)
+    private func presentImportScanVC(preview: ProjectArchiveImportService.PreviewResult) {
+        let scanVC = ImportScanViewController(preview: preview)
+
+        scanVC.onConfirmImport = { [weak self] preview in
+            guard let self else { return }
+            self.dismiss(animated: true) {
+                self.completeImportAfterScan(preview: preview)
+            }
+        }
+
+        scanVC.onCancel = { [weak self] in
+            guard let self else { return }
+            self.archiveImportService.cleanupPreview(preview)
+            self.dismiss(animated: true)
+        }
+
+        let nav = UINavigationController(rootViewController: scanVC)
+        if let sheet = nav.sheetPresentationController {
+            sheet.detents = [.large()]
+            sheet.prefersGrabberVisible = true
+        }
+        present(nav, animated: true)
+    }
+
+    private func completeImportAfterScan(preview: ProjectArchiveImportService.PreviewResult) {
+        importTask?.cancel()
+        importTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                self.importTask = nil
+                self.archiveImportService.cleanupPreview(preview)
+            }
+
+            do {
+                let result = try await self.archiveImportService.completeImport(preview: preview)
+                guard !Task.isCancelled else { return }
+                self.reloadProjects()
+                self.openProject(result.project, cellIndexPath: nil)
+            } catch is CancellationError {
+                return
+            } catch {
+                self.showPlaceholderAlert(
+                    title: String(
+                        localized: "home.alert.import_failed.title",
+                        defaultValue: "Import Failed"
+                    ),
+                    message: error.localizedDescription
+                )
+            }
+        }
     }
 
     private var reloadTask: Task<Void, Never>?

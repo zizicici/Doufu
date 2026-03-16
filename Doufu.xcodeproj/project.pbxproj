@@ -22,8 +22,8 @@
 		14B7E5612F5AB2C100BB3324 /* TreeSitterMarkdownRunestone in Frameworks */ = {isa = PBXBuildFile; productRef = 14B7E5602F5AB2C100BB3324 /* TreeSitterMarkdownRunestone */; };
 		14B7E5622F5AB2C100BB3324 /* TreeSitterSwiftRunestone in Frameworks */ = {isa = PBXBuildFile; productRef = 14B7E5632F5AB2C100BB3324 /* TreeSitterSwiftRunestone */; };
 		337080BA27868A1192D105F8 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D1965CC88DACDE03D200C85F /* Foundation.framework */; };
-		E82F6FE04B4364C8645479E1 /* IndexedDBShimTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FACF42D50224C986996F5C7 /* IndexedDBShimTests.swift */; };
 		D0FDB1234567890B /* DoufuDbAPITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0FDB1234567890A /* DoufuDbAPITests.swift */; };
+		E82F6FE04B4364C8645479E1 /* IndexedDBShimTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FACF42D50224C986996F5C7 /* IndexedDBShimTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -38,9 +38,9 @@
 
 /* Begin PBXFileReference section */
 		1FACF42D50224C986996F5C7 /* IndexedDBShimTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = IndexedDBShimTests.swift; sourceTree = "<group>"; };
-		D0FDB1234567890A /* DoufuDbAPITests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DoufuDbAPITests.swift; sourceTree = "<group>"; };
 		450D41E02F40B7430025E0BB /* Doufu.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Doufu.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		CFB4F7CBB440E654D0D8A993 /* DoufuTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DoufuTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		D0FDB1234567890A /* DoufuDbAPITests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DoufuDbAPITests.swift; sourceTree = "<group>"; };
 		D1965CC88DACDE03D200C85F /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
 /* End PBXFileReference section */
 

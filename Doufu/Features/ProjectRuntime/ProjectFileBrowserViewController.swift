@@ -46,13 +46,17 @@ final class ProjectFileBrowserViewController: UITableViewController {
         let name: String
         let url: URL
         let isDirectory: Bool
+        let isHidden: Bool
         let fileSize: Int?
     }
 
     private let projectName: String
     private let rootURL: URL
     private let projectRootURL: URL?
+    private let appURL: URL?
     private let directoryURL: URL
+    private let showHiddenFiles: Bool
+    private let readOnly: Bool
     private var items: [Item] = []
     private let fileManager: FileManager
     private let archiveExportService = ProjectArchiveExportService.shared
@@ -62,13 +66,19 @@ final class ProjectFileBrowserViewController: UITableViewController {
         projectName: String,
         rootURL: URL,
         projectRootURL: URL? = nil,
+        appURL: URL? = nil,
         directoryURL: URL? = nil,
+        showHiddenFiles: Bool = false,
+        readOnly: Bool = false,
         fileManager: FileManager = .default
     ) {
         self.projectName = projectName
         self.rootURL = rootURL
         self.projectRootURL = projectRootURL
+        self.appURL = appURL
         self.directoryURL = directoryURL ?? rootURL
+        self.showHiddenFiles = showHiddenFiles
+        self.readOnly = readOnly
         self.fileManager = fileManager
         super.init(style: .insetGrouped)
     }
@@ -88,7 +98,7 @@ final class ProjectFileBrowserViewController: UITableViewController {
         tableView.backgroundColor = .doufuBackground
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "ProjectFileRow")
 
-        if directoryURL.standardizedFileURL == rootURL.standardizedFileURL {
+        if !readOnly, directoryURL.standardizedFileURL == rootURL.standardizedFileURL {
             navigationItem.rightBarButtonItem = UIBarButtonItem(
                 image: UIImage(systemName: "square.and.arrow.up"),
                 style: .plain,
@@ -130,19 +140,17 @@ final class ProjectFileBrowserViewController: UITableViewController {
             }
             let values = try? childURL.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey, .isHiddenKey])
             let hidden = values?.isHidden ?? false
-            if hidden {
+            if hidden, !showHiddenFiles {
                 return nil
             }
 
             let isDirectory = values?.isDirectory == true
-            if childURL.lastPathComponent == ".git", isDirectory {
-                return nil
-            }
 
             return Item(
                 name: childURL.lastPathComponent,
                 url: childURL,
                 isDirectory: isDirectory,
+                isHidden: hidden || childURL.lastPathComponent.hasPrefix("."),
                 fileSize: values?.fileSize
             )
         }
@@ -196,7 +204,13 @@ final class ProjectFileBrowserViewController: UITableViewController {
             cell.accessoryType = .none
         } else {
             let item = items[indexPath.row]
-            configuration.text = item.name
+            if item.isHidden {
+                let tag = String(localized: "file_browser.hidden_tag", defaultValue: "[hidden]")
+                configuration.text = "\(tag) \(item.name)"
+                configuration.textProperties.color = .secondaryLabel
+            } else {
+                configuration.text = item.name
+            }
             if item.isDirectory {
                 configuration.secondaryText = String(localized: "file_browser.item.folder")
                 configuration.image = UIImage(systemName: "folder")
@@ -224,14 +238,17 @@ final class ProjectFileBrowserViewController: UITableViewController {
                 projectName: projectName,
                 rootURL: rootURL,
                 projectRootURL: projectRootURL,
+                appURL: appURL,
                 directoryURL: item.url,
+                showHiddenFiles: showHiddenFiles,
+                readOnly: readOnly,
                 fileManager: fileManager
             )
             navigationController?.pushViewController(controller, animated: true)
             return
         }
 
-        let viewer = ProjectFileContentViewController(fileURL: item.url, rootURL: rootURL)
+        let viewer = ProjectFileContentViewController(fileURL: item.url, rootURL: rootURL, readOnly: readOnly)
         navigationController?.pushViewController(viewer, animated: true)
     }
 
@@ -239,28 +256,19 @@ final class ProjectFileBrowserViewController: UITableViewController {
 
     @objc private func didTapShare() {
         let alert = UIAlertController(
-            title: String(
-                localized: "file_browser.export.title",
-                defaultValue: "Export Project"
-            ),
+            title: String(localized: "home.menu.export", defaultValue: "Export"),
             message: nil,
             preferredStyle: .actionSheet
         )
         alert.addAction(UIAlertAction(
-            title: String(
-                localized: "file_browser.export.code",
-                defaultValue: "Export Code"
-            ),
+            title: ".doufu — " + String(localized: "home.menu.export.doufu.subtitle", defaultValue: "Code only"),
             style: .default
         ) { [weak self] _ in
             self?.export(.code)
         })
         if canExportProjectBackup {
             alert.addAction(UIAlertAction(
-                title: String(
-                    localized: "file_browser.export.project_backup",
-                    defaultValue: "Export Project Backup"
-                ),
+                title: ".doufull — " + String(localized: "home.menu.export.doufull.subtitle", defaultValue: "Code and data"),
                 style: .default
             ) { [weak self] _ in
                 self?.export(.projectBackup)
@@ -272,8 +280,7 @@ final class ProjectFileBrowserViewController: UITableViewController {
     }
 
     private var canExportProjectBackup: Bool {
-        guard let projectRootURL else { return false }
-        return projectRootURL.standardizedFileURL != rootURL.standardizedFileURL
+        projectRootURL != nil
     }
 
     private func export(_ kind: ExportKind) {
@@ -292,10 +299,11 @@ final class ProjectFileBrowserViewController: UITableViewController {
             }()
 
             do {
+                let exportAppURL = self.appURL ?? self.rootURL.appendingPathComponent("App", isDirectory: true)
                 let payload = try await self.archiveExportService.exportArchive(
                     kind: archiveKind,
                     projectName: self.projectName,
-                    appURL: self.rootURL,
+                    appURL: exportAppURL,
                     projectRootURL: self.projectRootURL
                 )
                 guard !Task.isCancelled else {
@@ -342,6 +350,7 @@ final class ProjectFileBrowserViewController: UITableViewController {
 private final class ProjectFileContentViewController: UIViewController {
     private let fileURL: URL
     private let rootURL: URL
+    private let readOnly: Bool
     private var originalText: String = ""
     private var canEditFile = false
     private var isSaving = false {
@@ -409,9 +418,10 @@ private final class ProjectFileContentViewController: UIViewController {
     }()
 #endif
 
-    init(fileURL: URL, rootURL: URL) {
+    init(fileURL: URL, rootURL: URL, readOnly: Bool = false) {
         self.fileURL = fileURL
         self.rootURL = rootURL
+        self.readOnly = readOnly
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -426,7 +436,9 @@ private final class ProjectFileContentViewController: UIViewController {
         title = fileURL.lastPathComponent
         navigationItem.largeTitleDisplayMode = .never
         navigationItem.prompt = nil
-        navigationItem.rightBarButtonItem = saveBarButtonItem
+        if !readOnly {
+            navigationItem.rightBarButtonItem = saveBarButtonItem
+        }
         view.addSubview(editorView)
         NSLayoutConstraint.activate([
             editorView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
@@ -473,8 +485,8 @@ private final class ProjectFileContentViewController: UIViewController {
             case .success(let text):
                 self.originalText = text
                 self.setEditorText(text)
-                self.canEditFile = true
-                self.setEditorEditable(true)
+                self.canEditFile = !self.readOnly
+                self.setEditorEditable(!self.readOnly)
                 self.isDirty = false
             case .failure(let error):
                 let isNonUTF8 = (error as NSError).domain == "Doufu" && (error as NSError).code == -1

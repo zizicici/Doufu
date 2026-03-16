@@ -27,6 +27,19 @@ nonisolated final class ProjectArchiveImportService {
         let kind: ArchiveKind
     }
 
+    /// Result of extracting an archive for preview/scanning before actual import.
+    struct PreviewResult: Sendable {
+        let archiveName: String
+        let archiveSize: Int64
+        let kind: ArchiveKind
+        let payloadRoot: URL
+        let appURL: URL
+        let fileCount: Int
+        let hasAppData: Bool
+        let workingRoot: URL
+        let sourceURL: URL
+    }
+
     enum ImportError: LocalizedError {
         case unsupportedExtension(String)
         case accessDenied
@@ -76,7 +89,11 @@ nonisolated final class ProjectArchiveImportService {
 
     private init() {}
 
-    func importArchive(from sourceURL: URL) async throws -> ImportResult {
+    // MARK: - Two-Phase Import (Extract → Preview/Scan → Confirm)
+
+    /// Phase 1: Extract archive to a temporary directory for preview and scanning.
+    /// The caller is responsible for calling `cleanupPreview(_:)` when done.
+    func extractForPreview(from sourceURL: URL) async throws -> PreviewResult {
         try Task.checkCancellation()
 
         let ext = sourceURL.pathExtension.lowercased()
@@ -85,15 +102,19 @@ nonisolated final class ProjectArchiveImportService {
         }
 
         let fileManager = FileManager.default
+
+        // Get archive size
+        let archiveSize: Int64 = {
+            let attrs = try? fileManager.attributesOfItem(atPath: sourceURL.path)
+            return (attrs?[.size] as? NSNumber)?.int64Value ?? 0
+        }()
+
         let workingRoot = fileManager.temporaryDirectory
-            .appendingPathComponent("doufu_archive_import_\(UUID().uuidString.lowercased())", isDirectory: true)
+            .appendingPathComponent("doufu_archive_preview_\(UUID().uuidString.lowercased())", isDirectory: true)
         let localArchiveURL = workingRoot.appendingPathComponent("archive.\(kind.rawValue)")
         let extractionRoot = workingRoot.appendingPathComponent("extracted", isDirectory: true)
 
         try fileManager.createDirectory(at: extractionRoot, withIntermediateDirectories: true)
-        defer {
-            try? fileManager.removeItem(at: workingRoot)
-        }
 
         let accessed = sourceURL.startAccessingSecurityScopedResource()
         defer {
@@ -107,12 +128,17 @@ nonisolated final class ProjectArchiveImportService {
                 try Self.copyCoordinatedFile(from: sourceURL, to: localArchiveURL)
             }
         } catch is CancellationError {
+            try? fileManager.removeItem(at: workingRoot)
             throw CancellationError()
         } catch {
+            try? fileManager.removeItem(at: workingRoot)
             throw Self.mapCopyError(error)
         }
 
-        try Task.checkCancellation()
+        do { try Task.checkCancellation() } catch {
+            try? fileManager.removeItem(at: workingRoot)
+            throw error
+        }
 
         do {
             try await Self.runDetachedCancellable(priority: .userInitiated) {
@@ -130,25 +156,73 @@ nonisolated final class ProjectArchiveImportService {
                 )
             }
         } catch is CancellationError {
+            try? fileManager.removeItem(at: workingRoot)
             throw CancellationError()
         } catch let error as ImportError {
+            try? fileManager.removeItem(at: workingRoot)
             throw error
         } catch {
+            try? fileManager.removeItem(at: workingRoot)
             throw ImportError.invalidZip(error.localizedDescription)
         }
 
-        try Task.checkCancellation()
+        do { try Task.checkCancellation() } catch {
+            try? fileManager.removeItem(at: workingRoot)
+            throw error
+        }
 
         let payloadRoot: URL
         do {
             payloadRoot = try Self.resolvePayloadRoot(in: extractionRoot, kind: kind)
-        } catch let error as ImportError {
-            throw error
         } catch {
-            throw ImportError.invalidStructure
+            try? fileManager.removeItem(at: workingRoot)
+            throw (error as? ImportError) ?? ImportError.invalidStructure
         }
 
-        let suggestedName = Self.suggestedProjectName(from: sourceURL)
+        let appURL = payloadRoot.appendingPathComponent("App", isDirectory: true)
+
+        // Count files (include hidden files; skip .git/)
+        let fileCount: Int = {
+            guard let enumerator = fileManager.enumerator(
+                at: appURL,
+                includingPropertiesForKeys: [.isRegularFileKey],
+                options: []
+            ) else { return 0 }
+            var count = 0
+            for case let url as URL in enumerator {
+                let rel = url.path.replacingOccurrences(of: appURL.path + "/", with: "")
+                if rel.hasPrefix(".git/") { continue }
+                if (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true {
+                    count += 1
+                }
+            }
+            return count
+        }()
+
+        let appDataURL = payloadRoot.appendingPathComponent("AppData", isDirectory: true)
+        let hasAppData: Bool = {
+            var isDir: ObjCBool = false
+            return fileManager.fileExists(atPath: appDataURL.path, isDirectory: &isDir) && isDir.boolValue
+        }()
+
+        return PreviewResult(
+            archiveName: sourceURL.deletingPathExtension().lastPathComponent,
+            archiveSize: archiveSize,
+            kind: kind,
+            payloadRoot: payloadRoot,
+            appURL: appURL,
+            fileCount: fileCount,
+            hasAppData: hasAppData,
+            workingRoot: workingRoot,
+            sourceURL: sourceURL
+        )
+    }
+
+    /// Phase 2: Confirm import — create project and install the previously extracted payload.
+    func completeImport(preview: PreviewResult) async throws -> ImportResult {
+        try Task.checkCancellation()
+
+        let suggestedName = Self.suggestedProjectName(from: preview.sourceURL)
         var createdProject: AppProjectRecord?
 
         do {
@@ -157,14 +231,14 @@ nonisolated final class ProjectArchiveImportService {
 
             try Task.checkCancellation()
 
-            let requiresAppData = kind.requiresAppData
+            let requiresAppData = preview.kind.requiresAppData
             let projectID = project.id
             let projectURL = project.projectURL
             let appDestinationURL = projectURL.appendingPathComponent("App", isDirectory: true)
             let appDataDestinationURL = projectURL.appendingPathComponent("AppData", isDirectory: true)
             try await Self.runDetachedCancellable(priority: .userInitiated) {
                 try Self.installPayload(
-                    payloadRoot: payloadRoot,
+                    payloadRoot: preview.payloadRoot,
                     requiresAppData: requiresAppData,
                     appDestinationURL: appDestinationURL,
                     appDataDestinationURL: appDataDestinationURL
@@ -176,12 +250,12 @@ nonisolated final class ProjectArchiveImportService {
             try ProjectGitService.shared.ensureRepository(at: appDestinationURL)
             _ = try? ProjectGitService.shared.createCheckpoint(
                 repositoryURL: appDestinationURL,
-                userMessage: Self.checkpointMessage(for: kind, sourceURL: sourceURL)
+                userMessage: Self.checkpointMessage(for: preview.kind, sourceURL: preview.sourceURL)
             )
             await MainActor.run {
                 ProjectChangeCenter.shared.notifyFilesChanged(projectID: projectID)
             }
-            return ImportResult(project: project, kind: kind)
+            return ImportResult(project: project, kind: preview.kind)
         } catch is CancellationError {
             if let createdProject {
                 try? await ProjectLifecycleCoordinator.shared.deleteProject(
@@ -197,11 +271,13 @@ nonisolated final class ProjectArchiveImportService {
                     projectURL: createdProject.projectURL
                 )
             }
-            if let importError = error as? ImportError {
-                throw importError
-            }
-            throw ImportError.installationFailed(error.localizedDescription)
+            throw (error as? ImportError) ?? ImportError.installationFailed(error.localizedDescription)
         }
+    }
+
+    /// Clean up the temporary directory created by `extractForPreview`.
+    func cleanupPreview(_ preview: PreviewResult) {
+        try? FileManager.default.removeItem(at: preview.workingRoot)
     }
 
     private static func runDetachedCancellable<T: Sendable>(

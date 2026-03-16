@@ -907,8 +907,10 @@ final class ProjectWorkspaceViewController: UIViewController {
         }
         let controller = ProjectFileBrowserViewController(
             projectName: projectName,
-            rootURL: project.appURL,
-            projectRootURL: project.projectURL
+            rootURL: project.projectURL,
+            projectRootURL: project.projectURL,
+            appURL: project.appURL,
+            showHiddenFiles: true
         )
         let navigationController = UINavigationController(rootViewController: controller)
         navigationController.modalPresentationStyle = .pageSheet
