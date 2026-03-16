@@ -243,6 +243,11 @@ nonisolated final class LLMCodeScanner {
         localStorage for app state, or standard DOM manipulation are NOT security issues. \
         Focus on genuinely suspicious or dangerous patterns.
 
+        IMPORTANT: Your review is a best-effort heuristic, not a guarantee of safety. \
+        Use hedged language like "may", "appears to", "could potentially" rather than absolute statements. \
+        Never claim the code is "safe", "secure", or "free of issues" — instead say "no obvious issues were found" or similar. \
+        Even if no findings are reported, the summary must note that this review has inherent limitations.
+
         CRITICAL: You MUST write all human-readable text (description, recommendation, summary) in the language identified by the code "\(language)". \
         For example, if the language is "zh", write in Chinese; if "ja", write in Japanese; if "en", write in English.
 

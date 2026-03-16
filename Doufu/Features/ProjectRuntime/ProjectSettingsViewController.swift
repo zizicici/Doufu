@@ -93,7 +93,7 @@ final class ProjectSettingsViewController: UITableViewController {
     // MARK: - Diffable DataSource
 
     private func configureDiffableDataSource() {
-        diffableDataSource = UITableViewDiffableDataSource<ProjectSettingsSectionID, ProjectSettingsItemID>(
+        diffableDataSource = ProjectSettingsDataSource(
             tableView: tableView
         ) { [weak self] tableView, indexPath, itemID in
             guard let self else { return UITableViewCell() }
@@ -204,6 +204,22 @@ final class ProjectSettingsViewController: UITableViewController {
             }
             return cell
 
+        case .codeScan:
+            let cell = tableView.dequeueReusableCell(withIdentifier: "ProjectSettingCell", for: indexPath)
+            var configuration = cell.defaultContentConfiguration()
+            configuration.text = String(
+                localized: "project_settings.code_scan.title",
+                defaultValue: "Code Review"
+            )
+            configuration.secondaryText = String(
+                localized: "project_settings.code_scan.subtitle",
+                defaultValue: "Static analysis and LLM review"
+            )
+            configuration.secondaryTextProperties.color = .secondaryLabel
+            cell.contentConfiguration = configuration
+            cell.accessoryType = .disclosureIndicator
+            return cell
+
         case .capabilityActivityLog:
             let cell = tableView.dequeueReusableCell(withIdentifier: "CheckpointCell", for: indexPath)
             var configuration = cell.defaultContentConfiguration()
@@ -266,6 +282,7 @@ final class ProjectSettingsViewController: UITableViewController {
         var snapshot = NSDiffableDataSourceSnapshot<ProjectSettingsSectionID, ProjectSettingsItemID>()
         var sections: [ProjectSettingsSectionID] = [.project, .chat]
         if !projectCapabilities.isEmpty { sections.append(.capabilities) }
+        sections.append(.codeScan)
         sections.append(.checkpoints)
         if doufuBridge != nil { sections.append(.storage) }
         snapshot.appendSections(sections)
@@ -281,6 +298,7 @@ final class ProjectSettingsViewController: UITableViewController {
             snapshot.appendItems(items, toSection: .capabilities)
             snapshot.appendItems([.capabilityActivityLog], toSection: .capabilities)
         }
+        snapshot.appendItems([.codeScan], toSection: .codeScan)
         snapshot.appendItems([.checkpointHistory], toSection: .checkpoints)
         if doufuBridge != nil {
             snapshot.appendItems([.clearLocalStorage, .clearIndexedDB], toSection: .storage)
@@ -294,45 +312,7 @@ final class ProjectSettingsViewController: UITableViewController {
         diffableDataSource.apply(snapshot, animatingDifferences: false)
     }
 
-    // MARK: - Section Headers & Footers
-
-    override func tableView(_ tableView: UITableView, titleForHeaderInSection sectionIndex: Int) -> String? {
-        guard let sectionID = diffableDataSource.sectionIdentifier(for: sectionIndex) else { return nil }
-        switch sectionID {
-        case .project:
-            return String(localized: "project_settings.section.project")
-        case .chat:
-            return String(localized: "project_settings.section.chat")
-        case .capabilities:
-            return String(localized: "project_settings.section.capabilities")
-        case .checkpoints:
-            return String(localized: "project_settings.section.checkpoints")
-        case .storage:
-            return String(
-                localized: "project_settings.section.storage",
-                defaultValue: "Storage"
-            )
-        }
-    }
-
-    override func tableView(_ tableView: UITableView, titleForFooterInSection sectionIndex: Int) -> String? {
-        guard let sectionID = diffableDataSource.sectionIdentifier(for: sectionIndex) else { return nil }
-        switch sectionID {
-        case .project:
-            return String(localized: "project_settings.footer.project_name_usage")
-        case .chat:
-            return String(localized: "project_settings.footer.tool_permission")
-        case .capabilities:
-            return nil
-        case .checkpoints:
-            return String(localized: "project_settings.footer.checkpoints")
-        case .storage:
-            return String(
-                localized: "project_settings.footer.storage",
-                defaultValue: "Clearing storage will reload the web page."
-            )
-        }
-    }
+    // Section headers & footers are handled by ProjectSettingsDataSource.
 
     // MARK: - Selection
 
@@ -341,7 +321,7 @@ final class ProjectSettingsViewController: UITableViewController {
         switch itemID {
         case .projectName, .capability:
             return nil
-        case .projectDescription, .defaultModel, .toolPermission, .checkpointHistory,
+        case .projectDescription, .defaultModel, .toolPermission, .codeScan, .checkpointHistory,
              .clearLocalStorage, .clearIndexedDB, .capabilityActivityLog:
             return indexPath
         }
@@ -360,6 +340,8 @@ final class ProjectSettingsViewController: UITableViewController {
             presentProjectModelSelection()
         case .toolPermission:
             presentToolPermissionPicker()
+        case .codeScan:
+            presentCodeScan()
         case .capabilityActivityLog:
             let vc = CapabilityActivityLogViewController(filter: .project(id: projectID))
             navigationController?.pushViewController(vc, animated: true)
@@ -550,6 +532,20 @@ final class ProjectSettingsViewController: UITableViewController {
         present(alert, animated: true)
     }
 
+    // MARK: - Code Scan
+
+    private func presentCodeScan() {
+        let appURL = projectURL.appendingPathComponent("App", isDirectory: true)
+        let scanVC = ImportScanViewController(appURL: appURL, projectURL: projectURL, projectName: projectNameText)
+        let nav = UINavigationController(rootViewController: scanVC)
+        nav.modalPresentationStyle = .pageSheet
+        if let sheet = nav.sheetPresentationController {
+            sheet.detents = [.large()]
+            sheet.prefersGrabberVisible = true
+        }
+        present(nav, animated: true)
+    }
+
     // MARK: - Actions
 
     private func openCheckpointsPage() {
@@ -560,6 +556,18 @@ final class ProjectSettingsViewController: UITableViewController {
         navigationController?.pushViewController(controller, animated: true)
     }
 
+}
+
+// MARK: - DataSource (header/footer support)
+
+private final class ProjectSettingsDataSource: UITableViewDiffableDataSource<ProjectSettingsSectionID, ProjectSettingsItemID> {
+    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
+        sectionIdentifier(for: section)?.header
+    }
+
+    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
+        sectionIdentifier(for: section)?.footer
+    }
 }
 
 // MARK: - Project Description Editor

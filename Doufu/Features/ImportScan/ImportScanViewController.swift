@@ -19,6 +19,7 @@ final class ImportScanViewController: UIViewController {
 
     private enum BottomBarState {
         case hidden
+        case llmOnly
         case llmOrSkip
         case confirmOrCancel
         case closeOnly
@@ -31,7 +32,14 @@ final class ImportScanViewController: UIViewController {
 
     // MARK: - Properties
 
-    private let preview: ProjectArchiveImportService.PreviewResult
+    private let preview: ProjectArchiveImportService.PreviewResult?
+    private let reviewAppURL: URL?
+    private let reviewProjectURL: URL?
+    private let reviewProjectName: String?
+    private var isReviewOnly: Bool { preview == nil }
+    private var effectiveAppURL: URL { preview?.appURL ?? reviewAppURL! }
+    private var reviewFileCount: Int?
+    private var reviewProjectSize: Int64?
     private let tableView = UITableView(frame: .zero, style: .insetGrouped)
     private var dataSource: UITableViewDiffableDataSource<ImportScanSectionID, ImportScanItemID>!
 
@@ -52,8 +60,21 @@ final class ImportScanViewController: UIViewController {
 
     // MARK: - Init
 
+    /// Import mode: scan an archive before importing.
     init(preview: ProjectArchiveImportService.PreviewResult) {
         self.preview = preview
+        self.reviewAppURL = nil
+        self.reviewProjectURL = nil
+        self.reviewProjectName = nil
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    /// Review mode: scan an existing project (no import actions).
+    init(appURL: URL, projectURL: URL, projectName: String) {
+        self.preview = nil
+        self.reviewAppURL = appURL
+        self.reviewProjectURL = projectURL
+        self.reviewProjectName = projectName
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -66,7 +87,9 @@ final class ImportScanViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .doufuBackground
-        title = String(localized: "scan.title", defaultValue: "Import Review")
+        title = isReviewOnly
+            ? String(localized: "scan.title.review", defaultValue: "Code Review")
+            : String(localized: "scan.title", defaultValue: "Import Review")
 
         setupTableView()
         setupBottomBar()
@@ -74,6 +97,21 @@ final class ImportScanViewController: UIViewController {
 
         presentationController?.delegate = self
         hasLLMCredential = LLMCodeScanner.resolveCredential() != nil
+
+        if isReviewOnly, let projectURL = reviewProjectURL {
+            let url = projectURL
+            Task { [weak self] in
+                let (count, size) = await Task.detached(priority: .userInitiated) {
+                    let count = Self.countFiles(at: url)
+                    let size = Self.directorySize(at: url)
+                    return (count, size)
+                }.value
+                guard let self, !Task.isCancelled else { return }
+                self.reviewFileCount = count
+                self.reviewProjectSize = size
+                self.applySnapshot()
+            }
+        }
 
         applySnapshot()
         runStaticScan()
@@ -167,7 +205,7 @@ final class ImportScanViewController: UIViewController {
     // MARK: - Static Scan
 
     private func runStaticScan() {
-        let appURL = preview.appURL
+        let appURL = effectiveAppURL
         scanTask = Task { [weak self] in
             let result = await Task.detached(priority: .userInitiated) {
                 StaticCodeScanner.scan(appURL: appURL)
@@ -192,7 +230,7 @@ final class ImportScanViewController: UIViewController {
             guard let self else { return }
             do {
                 let result = try await LLMCodeScanner.scan(
-                    appURL: self.preview.appURL,
+                    appURL: self.effectiveAppURL,
                     credential: resolved.credential,
                     modelID: resolved.modelID,
                     onProgress: nil
@@ -394,17 +432,27 @@ final class ImportScanViewController: UIViewController {
     private func applySnapshot() {
         var snapshot = NSDiffableDataSourceSnapshot<ImportScanSectionID, ImportScanItemID>()
 
-        // Archive Info
-        snapshot.appendSections([.archiveInfo])
-        var archiveInfoItems: [ImportScanItemID] = [
-            .archiveName(preview.archiveName),
-            .archiveSize(formattedSize(preview.archiveSize)),
-            .archiveFiles(preview.fileCount),
-        ]
-        if preview.hasAppData {
-            archiveInfoItems.append(.appDataWarning)
+        // Project / Archive Info
+        if let preview {
+            snapshot.appendSections([.archiveInfo])
+            var archiveInfoItems: [ImportScanItemID] = [
+                .archiveName(preview.archiveName),
+                .archiveSize(formattedSize(preview.archiveSize)),
+                .archiveFiles(preview.fileCount),
+            ]
+            if preview.hasAppData {
+                archiveInfoItems.append(.appDataWarning)
+            }
+            snapshot.appendItems(archiveInfoItems, toSection: .archiveInfo)
+        } else if let reviewProjectName {
+            snapshot.appendSections([.projectInfo])
+            let items: [ImportScanItemID] = [
+                .archiveName(reviewProjectName),
+                .archiveSize(formattedSize(reviewProjectSize ?? 0)),
+                .archiveFiles(reviewFileCount ?? 0),
+            ]
+            snapshot.appendItems(items, toSection: .projectInfo)
         }
-        snapshot.appendItems(archiveInfoItems, toSection: .archiveInfo)
 
         // Static Scan: show scanning indicator or findings
         if staticResult == nil {
@@ -481,19 +529,29 @@ final class ImportScanViewController: UIViewController {
 
     private func updateBottomBar() {
         let newState: BottomBarState
-        switch phase {
-        case .staticScan:
-            if staticResult != nil {
-                newState = hasLLMCredential ? .llmOrSkip : .confirmOrCancel
-            } else {
+        if isReviewOnly {
+            // Review mode: only offer LLM scan, no import actions
+            switch phase {
+            case .staticScan:
+                newState = (staticResult != nil && hasLLMCredential) ? .llmOnly : .hidden
+            case .llmRunning, .llmDone, .blocked:
                 newState = .hidden
             }
-        case .llmRunning:
-            newState = .hidden
-        case .llmDone:
-            newState = .confirmOrCancel
-        case .blocked:
-            newState = .closeOnly
+        } else {
+            switch phase {
+            case .staticScan:
+                if staticResult != nil {
+                    newState = hasLLMCredential ? .llmOrSkip : .confirmOrCancel
+                } else {
+                    newState = .hidden
+                }
+            case .llmRunning:
+                newState = .hidden
+            case .llmDone:
+                newState = .confirmOrCancel
+            case .blocked:
+                newState = .closeOnly
+            }
         }
 
         bottomBarState = newState
@@ -503,6 +561,16 @@ final class ImportScanViewController: UIViewController {
             bottomBarContainer.isHidden = true
             tableBottomToBar.isActive = false
             tableBottomToView.isActive = true
+
+        case .llmOnly:
+            primaryButton.setTitle(
+                String(localized: "scan.action.start_llm", defaultValue: "Start LLM Review"),
+                for: .normal
+            )
+            primaryButton.setTitleColor(.systemBlue, for: .normal)
+            secondaryButton.isHidden = true
+            buttonSeparator.isHidden = true
+            showBottomBar()
 
         case .llmOrSkip:
             primaryButton.setTitle(
@@ -554,7 +622,7 @@ final class ImportScanViewController: UIViewController {
 
     @objc private func primaryButtonTapped() {
         switch bottomBarState {
-        case .llmOrSkip: startLLMReview()
+        case .llmOnly, .llmOrSkip: startLLMReview()
         case .confirmOrCancel: handleConfirmImport()
         case .closeOnly: handleClose()
         case .hidden: break
@@ -565,7 +633,7 @@ final class ImportScanViewController: UIViewController {
         switch bottomBarState {
         case .llmOrSkip: handleSkip()
         case .confirmOrCancel: handleCancel()
-        case .closeOnly, .hidden: break
+        case .llmOnly, .closeOnly, .hidden: break
         }
     }
 
@@ -613,7 +681,9 @@ final class ImportScanViewController: UIViewController {
         ) { [weak self] _ in
             guard let self else { return }
             self.onCancel = nil // Suppress dismiss-as-cancel cleanup; confirm path owns the preview lifecycle
-            self.onConfirmImport?(self.preview)
+            if let preview = self.preview {
+                self.onConfirmImport?(preview)
+            }
         })
         present(alert, animated: true)
     }
@@ -643,6 +713,32 @@ final class ImportScanViewController: UIViewController {
         formatter.countStyle = .file
         return formatter.string(fromByteCount: bytes)
     }
+
+    private nonisolated static func countFiles(at url: URL) -> Int {
+        guard let enumerator = FileManager.default.enumerator(
+            at: url, includingPropertiesForKeys: [.isRegularFileKey], options: []
+        ) else { return 0 }
+        var count = 0
+        for case let fileURL as URL in enumerator {
+            if (try? fileURL.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true {
+                count += 1
+            }
+        }
+        return count
+    }
+
+    private nonisolated static func directorySize(at url: URL) -> Int64 {
+        guard let enumerator = FileManager.default.enumerator(
+            at: url, includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey], options: []
+        ) else { return 0 }
+        var total: Int64 = 0
+        for case let fileURL as URL in enumerator {
+            guard let values = try? fileURL.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey]),
+                  values.isRegularFile == true else { continue }
+            total += Int64(values.fileSize ?? 0)
+        }
+        return total
+    }
 }
 
 // MARK: - UITableViewDelegate
@@ -654,11 +750,22 @@ extension ImportScanViewController: UITableViewDelegate {
 
         guard let itemID = dataSource.itemIdentifier(for: indexPath) else { return }
         if case .archiveFiles = itemID {
+            let rootURL: URL
+            let name: String
+            if let preview {
+                rootURL = preview.payloadRoot
+                name = preview.archiveName
+            } else if let reviewProjectURL, let reviewProjectName {
+                rootURL = reviewProjectURL
+                name = reviewProjectName
+            } else {
+                return
+            }
             let browser = ProjectFileBrowserViewController(
-                projectName: preview.archiveName,
-                rootURL: preview.payloadRoot,
+                projectName: name,
+                rootURL: rootURL,
                 showHiddenFiles: true,
-                readOnly: true
+                readOnly: isReviewOnly
             )
             let nav = UINavigationController(rootViewController: browser)
             nav.modalPresentationStyle = .pageSheet
@@ -691,6 +798,8 @@ private final class ImportScanDataSource: UITableViewDiffableDataSource<ImportSc
         switch sectionID {
         case .archiveInfo:
             return String(localized: "scan.section.archive_info", defaultValue: "Archive Information")
+        case .projectInfo:
+            return String(localized: "scan.section.project_info", defaultValue: "Project Information")
         case .scanProgress:
             return String(localized: "scan.section.static", defaultValue: "Static Analysis")
         case .findings(let category):

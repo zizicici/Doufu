@@ -9,6 +9,7 @@ import Foundation
 
 nonisolated enum ImportScanSectionID: Hashable, Sendable {
     case archiveInfo
+    case projectInfo
     case scanProgress
     case findings(FindingCategory)
     case llmStatus
