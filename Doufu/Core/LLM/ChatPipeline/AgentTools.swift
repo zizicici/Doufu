@@ -548,7 +548,7 @@ final class AgentToolProvider {
     private func doufuAPIDocsTool() -> AgentToolDefinition {
         AgentToolDefinition(
             name: "doufu_api_docs",
-            description: "Returns usage documentation for a specific doufu.* native JavaScript API. Standard browser APIs (getUserMedia, geolocation, clipboard) are blocked in Doufu — use this tool to learn the correct doufu.* alternative before writing code that needs these features.",
+            description: "Returns usage documentation for a specific doufu.* native JavaScript API. Standard browser APIs (getUserMedia, geolocation, clipboard) are blocked in Doufu — use this tool to learn the correct doufu.* alternative. Also covers doufu.db for direct SQL storage.",
             parameters: .object([
                 "type": .string("object"),
                 "properties": .object([
@@ -560,7 +560,8 @@ final class AgentToolProvider {
                             .string("clipboard"),
                             .string("camera"),
                             .string("microphone"),
-                            .string("photos")
+                            .string("photos"),
+                            .string("db")
                         ])
                     ])
                 ]),
@@ -1977,6 +1978,50 @@ final class AgentToolProvider {
             Pass a data URL of the video (e.g. from FileReader.readAsDataURL on a recorded Blob).
             Best for short recordings — large videos may cause memory pressure during base64 encoding.
             """,
+        "db": """
+            ## doufu.db — Direct SQL Storage
+
+            A simple key-value or relational store backed by SQLite (sql.js WASM).
+            Each named database is persisted as `AppData/{name}.sqlite` — survives cache clears and app reinstalls.
+            No permissions needed.
+
+            ```js
+            // Open (or create) a named database — returns a handle ID
+            const db = await doufu.db.open('mydata');
+
+            // Create a table
+            await doufu.db.run(db, 'CREATE TABLE IF NOT EXISTS items (id INTEGER PRIMARY KEY, name TEXT, value REAL)');
+
+            // Insert / update (use ? placeholders for parameters)
+            await doufu.db.run(db, 'INSERT INTO items (name, value) VALUES (?, ?)', ['score', 42]);
+            await doufu.db.run(db, 'UPDATE items SET value = ? WHERE name = ?', [100, 'score']);
+
+            // Query — returns array of result sets, each with columns[] and values[][]
+            const results = await doufu.db.exec(db, 'SELECT * FROM items WHERE value > ?', [10]);
+            // results = [{ columns: ['id','name','value'], values: [[1,'score',100]] }]
+            // Empty result → []
+
+            if (results.length > 0) {
+              for (const row of results[0].values) {
+                console.log(row); // [1, 'score', 100]
+              }
+            }
+
+            // Close (flushes to disk immediately)
+            await doufu.db.close(db);
+            ```
+
+            **exec vs run**:
+            - `exec(handle, sql, params?)` — for SELECT queries. Returns result rows. Does NOT trigger persist.
+            - `run(handle, sql, params?)` — for INSERT/UPDATE/DELETE/CREATE. Triggers debounced persist (500ms).
+
+            **Database names**: must match `[a-zA-Z0-9_-]` only.
+
+            **When to use doufu.db vs indexedDB**:
+            - Use `doufu.db` when you need relational queries (JOINs, aggregations, complex WHERE).
+            - Use `indexedDB` when the code already uses it (e.g. libraries like Dexie.js).
+            - Both persist to disk and survive cache clears.
+            """,
     ]
 
     private func executeDoufuAPIDocs(args: [String: Any]) -> ToolExecutionResult {
@@ -1990,7 +2035,7 @@ final class AgentToolProvider {
 
         guard let doc = Self.doufuAPIDocs[capability] else {
             return ToolExecutionResult(
-                output: "Unknown capability: \(capability). Valid values: location, clipboard, camera, microphone, photos.",
+                output: "Unknown capability: \(capability). Valid values: location, clipboard, camera, microphone, photos, db.",
                 isError: true,
                 changedPaths: []
             )

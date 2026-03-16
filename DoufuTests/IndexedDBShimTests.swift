@@ -1,13 +1,14 @@
 import JavaScriptCore
 import XCTest
 
-/// Tests for the IndexedDB JavaScript shim (DoufuIndexedDBShim.js).
+/// Tests for the IndexedDB JavaScript shim (DoufuSqlJsIndexedDB.js).
 ///
 /// The shim runs in a `JSContext` (JavaScriptCore). Because JSC lacks browser
 /// APIs (`window`, `DOMException`, `setTimeout`, `Promise.resolve().then()`
-/// microtask draining), we inject lightweight polyfills and a manual
-/// `__drainAll()` function that deterministically flushes both microtask and
-/// macrotask queues.
+/// microtask draining, `fetch`, `TextEncoder/TextDecoder`), we inject lightweight
+/// polyfills, a `MockSqlJs.js` that provides the sql.js API surface without WASM,
+/// and a manual `__drainAll()` function that deterministically flushes both
+/// microtask and macrotask queues.
 final class IndexedDBShimTests: XCTestCase {
 
     private var ctx: JSContext!
@@ -51,14 +52,52 @@ final class IndexedDBShimTests: XCTestCase {
         };
         Promise = {
             resolve: function(v) { return _FakeResolvedPromise; },
+            reject: function(e) {
+                return {
+                    then: function() { return this; },
+                    catch: function(fn) { __microtasks.push(function() { fn(e); }); return _FakeResolvedPromise; }
+                };
+            },
+            all: function(arr) {
+                var results = [];
+                for (var i = 0; i < arr.length; i++) {
+                    (function(idx) {
+                        if (arr[idx] && typeof arr[idx].then === 'function') {
+                            arr[idx].then(function(v) { results[idx] = v; });
+                        } else {
+                            results[idx] = arr[idx];
+                        }
+                    })(i);
+                }
+                function _chain(val) {
+                    return {
+                        then: function(fn) { return _chain(fn(val)); },
+                        catch: function() { return this; }
+                    };
+                }
+                return _chain(results);
+            },
             // Keep real Promise for databases() which returns a real promise
             _real: _OrigPromise
         };
 
-        function setTimeout(fn) {
+        function setTimeout(fn, delay) {
             __macrotasks.push(fn);
             return __macrotasks.length;
         }
+
+        function clearTimeout(id) {
+            // Simple: just null out the entry
+            if (id > 0 && id <= __macrotasks.length) __macrotasks[id - 1] = null;
+        }
+
+        function setInterval(fn, delay) {
+            // Not truly periodic in test — just push once
+            __macrotasks.push(fn);
+            return __macrotasks.length + 10000;
+        }
+
+        function clearInterval(id) {}
 
         function __drainMicrotasks() {
             var safety = 1000;
@@ -74,22 +113,12 @@ final class IndexedDBShimTests: XCTestCase {
                 __drainMicrotasks();
                 if (__macrotasks.length === 0) break;
                 var batch = __macrotasks.splice(0);
-                for (var i = 0; i < batch.length; i++) batch[i]();
+                for (var i = 0; i < batch.length; i++) {
+                    if (batch[i]) batch[i]();
+                }
             }
             __drainMicrotasks();
         }
-        """)
-
-        // Flush spy
-        ctx.evaluateScript("var __flushed = null;")
-        ctx.evaluateScript("""
-        window.webkit = {
-            messageHandlers: {
-                doufuIndexedDB: {
-                    postMessage: function(data) { __flushed = data; }
-                }
-            }
-        };
         """)
 
         // btoa/atob polyfill (not available in JSC)
@@ -122,15 +151,66 @@ final class IndexedDBShimTests: XCTestCase {
         }
         """)
 
-        // Load shim with empty snapshot
-        let shimURL = productsURL(forResource: "DoufuIndexedDBShim", withExtension: "js")
+        // TextEncoder/TextDecoder polyfill (not available in JSC)
+        ctx.evaluateScript("""
+        function TextEncoder() {}
+        TextEncoder.prototype.encode = function(str) {
+            var arr = [];
+            for (var i = 0; i < str.length; i++) {
+                var code = str.charCodeAt(i);
+                if (code < 0x80) {
+                    arr.push(code);
+                } else if (code < 0x800) {
+                    arr.push(0xC0 | (code >> 6));
+                    arr.push(0x80 | (code & 0x3F));
+                } else {
+                    arr.push(0xE0 | (code >> 12));
+                    arr.push(0x80 | ((code >> 6) & 0x3F));
+                    arr.push(0x80 | (code & 0x3F));
+                }
+            }
+            return new Uint8Array(arr);
+        };
+
+        function TextDecoder() {}
+        TextDecoder.prototype.decode = function(arr) {
+            if (!(arr instanceof Uint8Array)) arr = new Uint8Array(arr);
+            var str = '';
+            for (var i = 0; i < arr.length; ) {
+                var byte = arr[i];
+                if (byte < 0x80) {
+                    str += String.fromCharCode(byte);
+                    i++;
+                } else if ((byte & 0xE0) === 0xC0) {
+                    str += String.fromCharCode(((byte & 0x1F) << 6) | (arr[i+1] & 0x3F));
+                    i += 2;
+                } else {
+                    str += String.fromCharCode(((byte & 0x0F) << 12) | ((arr[i+1] & 0x3F) << 6) | (arr[i+2] & 0x3F));
+                    i += 3;
+                }
+            }
+            return str;
+        };
+        """)
+
+        // Load MockSqlJs (provides initSqlJs and fetch mocks)
+        let mockURL = productsURL(forResource: "MockSqlJs", withExtension: "js", inTests: true)
+        let mockJS = try! String(contentsOf: mockURL)
+        ctx.evaluateScript(mockJS)
+
+        // Load the new shim with placeholders replaced
+        let shimURL = productsURL(forResource: "DoufuSqlJsIndexedDB", withExtension: "js")
         let shimJS = try! String(contentsOf: shimURL)
-            .replacingOccurrences(of: "'__DOUFU_IDB_SNAPSHOT__'", with: "{}")
+            .replacingOccurrences(of: "'__DOUFU_WASMURL__'", with: "'mock://sql-wasm.wasm'")
+            .replacingOccurrences(of: "'__DOUFU_APPDATAURL__'", with: "'mock://appdata'")
         ctx.evaluateScript(shimJS)
+
+        // Drain to complete async initialization (initSqlJs → fetch → _flushPending)
+        drain()
     }
 
-    /// Locate the .js resource from the main bundle, test bundle, or file system.
-    private func productsURL(forResource name: String, withExtension ext: String) -> URL {
+    /// Locate a .js resource from the test bundle or file system.
+    private func productsURL(forResource name: String, withExtension ext: String, inTests: Bool = false) -> URL {
         // Try test bundle first
         if let url = Bundle(for: type(of: self)).url(forResource: name, withExtension: ext) {
             return url
@@ -139,8 +219,9 @@ final class IndexedDBShimTests: XCTestCase {
         let projectRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent() // DoufuTests/
             .deletingLastPathComponent() // project root
+        let subdir = inTests ? "DoufuTests" : "Doufu/Resources"
         let url = projectRoot
-            .appendingPathComponent("Doufu/Resources/\(name).\(ext)")
+            .appendingPathComponent("\(subdir)/\(name).\(ext)")
         precondition(FileManager.default.fileExists(atPath: url.path),
                      "\(name).\(ext) not found at \(url.path)")
         return url
@@ -544,42 +625,6 @@ final class IndexedDBShimTests: XCTestCase {
         XCTAssertTrue(eval("__ok")!.toBool())
     }
 
-    func testTransactionAbortRollback() {
-        openDB(upgrade: "db.createObjectStore('items', { keyPath: 'id' });")
-
-        // Insert baseline
-        eval("""
-        var tx = __db.transaction('items', 'readwrite');
-        tx.objectStore('items').put({ id: 1, name: 'Original' });
-        """)
-        drain()
-
-        // Modify then abort
-        eval("""
-        var tx2 = __db.transaction('items', 'readwrite');
-        var s = tx2.objectStore('items');
-        s.put({ id: 1, name: 'Modified' });
-        s.put({ id: 2, name: 'New' });
-        tx2.abort();
-        """)
-        drain()
-
-        // Verify rollback
-        eval("""
-        var __val = null, __cnt = -1;
-        var tx3 = __db.transaction('items', 'readonly');
-        var s3 = tx3.objectStore('items');
-        var r = s3.get(1);
-        r.onsuccess = function() { __val = r.result; };
-        var r2 = s3.count();
-        r2.onsuccess = function() { __cnt = r2.result; };
-        """)
-        drain()
-
-        XCTAssertEqual(eval("__val.name")!.toString(), "Original")
-        XCTAssertEqual(eval("__cnt")!.toInt32(), 1)
-    }
-
     func testDeleteDatabase() {
         openDB(upgrade: "db.createObjectStore('items', { keyPath: 'id' });")
 
@@ -604,21 +649,6 @@ final class IndexedDBShimTests: XCTestCase {
         drain()
 
         XCTAssertTrue(eval("__newUpgrade")!.toBool())
-    }
-
-    func testFlushOnCommit() {
-        openDB(upgrade: "db.createObjectStore('items', { keyPath: 'id' });")
-
-        eval("__flushed = null;")
-        eval("""
-        var tx = __db.transaction('items', 'readwrite');
-        tx.objectStore('items').put({ id: 1 });
-        """)
-        drain()
-
-        // After drain, the transaction should have committed and flushed.
-        XCTAssertTrue(eval("__flushed !== null")!.toBool())
-        XCTAssertTrue(eval("__flushed.testDB !== undefined")!.toBool())
     }
 
     func testKeyRangeBound() {
@@ -825,43 +855,6 @@ final class IndexedDBShimTests: XCTestCase {
         XCTAssertEqual(eval("__names[2]")!.toString(), "Charlie")
     }
 
-    func testSnapshotReload() {
-        // Simulates: write data → flush → reload from snapshot
-        openDB(upgrade: "db.createObjectStore('items', { keyPath: 'id' });")
-
-        eval("""
-        var tx = __db.transaction('items', 'readwrite');
-        tx.objectStore('items').put({ id: 1, name: 'Persist' });
-        """)
-        drain()
-
-        // Grab the flushed snapshot and re-initialize with it
-        let flushed = eval("JSON.stringify(__flushed)")!.toString()!
-        let shimURL = productsURL(forResource: "DoufuIndexedDBShim", withExtension: "js")
-        let shimJS = try! String(contentsOf: shimURL)
-            .replacingOccurrences(of: "'__DOUFU_IDB_SNAPSHOT__'",
-                                  with: "JSON.parse('\(flushed.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'"))')")
-
-        // Reset context
-        eval("__flushed = null;")
-        ctx.evaluateScript(shimJS)
-
-        // Read data from restored snapshot
-        eval("""
-        var __restored = null;
-        var req = indexedDB.open('testDB', 1);
-        req.onsuccess = function(e) {
-            var db = e.target.result;
-            var tx = db.transaction('items', 'readonly');
-            var r = tx.objectStore('items').get(1);
-            r.onsuccess = function() { __restored = r.result; };
-        };
-        """)
-        drain()
-
-        XCTAssertEqual(eval("__restored.name")!.toString(), "Persist")
-    }
-
     func testArrayBufferRoundTrip() {
         openDB(upgrade: "db.createObjectStore('bin', { keyPath: 'id' });")
 
@@ -917,43 +910,817 @@ final class IndexedDBShimTests: XCTestCase {
         XCTAssertEqual(eval("__f32[0]")!.toDouble(), 1.5)
     }
 
-    func testBinaryFlushAndReload() {
-        openDB(upgrade: "db.createObjectStore('bin', { keyPath: 'id' });")
+    func testTransactionAbortRollback() {
+        openDB(upgrade: "db.createObjectStore('items', { keyPath: 'id' });")
 
+        // Insert baseline
         eval("""
-        var tx = __db.transaction('bin', 'readwrite');
-        tx.objectStore('bin').put({ id: 1, data: new Uint8Array([10, 20, 30]) });
+        var tx = __db.transaction('items', 'readwrite');
+        tx.objectStore('items').put({ id: 1, name: 'Original' });
         """)
         drain()
 
-        // Verify flush contains base64-encoded binary
-        XCTAssertTrue(eval("__flushed !== null")!.toBool())
+        // Modify then abort
+        eval("""
+        var tx2 = __db.transaction('items', 'readwrite');
+        var s = tx2.objectStore('items');
+        s.put({ id: 1, name: 'Modified' });
+        s.put({ id: 2, name: 'New' });
+        tx2.abort();
+        """)
+        drain()
 
-        // Reload from flushed snapshot
-        let flushed = eval("JSON.stringify(__flushed)")!.toString()!
-        let shimURL = productsURL(forResource: "DoufuIndexedDBShim", withExtension: "js")
-        let shimJS = try! String(contentsOf: shimURL)
-            .replacingOccurrences(of: "'__DOUFU_IDB_SNAPSHOT__'",
-                                  with: "JSON.parse('\(flushed.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'"))')")
+        // Verify rollback
+        eval("""
+        var __val = null, __cnt = -1;
+        var tx3 = __db.transaction('items', 'readonly');
+        var s3 = tx3.objectStore('items');
+        var r = s3.get(1);
+        r.onsuccess = function() { __val = r.result; };
+        var r2 = s3.count();
+        r2.onsuccess = function() { __cnt = r2.result; };
+        """)
+        drain()
 
-        eval("__flushed = null;")
-        ctx.evaluateScript(shimJS)
+        XCTAssertEqual(eval("__val.name")!.toString(), "Original")
+        XCTAssertEqual(eval("__cnt")!.toInt32(), 1)
+    }
+
+    // MARK: - Gap Fix Tests
+
+    func testMapSetRoundTrip() {
+        openDB(upgrade: "db.createObjectStore('items', { keyPath: 'id' });")
 
         eval("""
-        var __restored = null;
-        var req = indexedDB.open('testDB', 1);
-        req.onsuccess = function(e) {
-            var db = e.target.result;
-            var tx = db.transaction('bin', 'readonly');
-            var r = tx.objectStore('bin').get(1);
-            r.onsuccess = function() { __restored = r.result; };
+        var tx = __db.transaction('items', 'readwrite');
+        var s = tx.objectStore('items');
+        s.put({ id: 1, tags: new Set(['a', 'b', 'c']), meta: new Map([['x', 1], ['y', 2]]) });
+        """)
+        drain()
+
+        eval("""
+        var __val = null;
+        var tx2 = __db.transaction('items', 'readonly');
+        var r = tx2.objectStore('items').get(1);
+        r.onsuccess = function() { __val = r.result; };
+        """)
+        drain()
+
+        XCTAssertTrue(eval("__val.tags instanceof Set")!.toBool())
+        XCTAssertEqual(eval("__val.tags.size")!.toInt32(), 3)
+        XCTAssertTrue(eval("__val.tags.has('b')")!.toBool())
+        XCTAssertTrue(eval("__val.meta instanceof Map")!.toBool())
+        XCTAssertEqual(eval("__val.meta.get('x')")!.toInt32(), 1)
+    }
+
+    func testRegExpRoundTrip() {
+        openDB(upgrade: "db.createObjectStore('items', { keyPath: 'id' });")
+
+        eval("""
+        var tx = __db.transaction('items', 'readwrite');
+        tx.objectStore('items').put({ id: 1, pattern: /hello\\sworld/gi });
+        """)
+        drain()
+
+        eval("""
+        var __val = null;
+        var tx2 = __db.transaction('items', 'readonly');
+        var r = tx2.objectStore('items').get(1);
+        r.onsuccess = function() { __val = r.result; };
+        """)
+        drain()
+
+        XCTAssertTrue(eval("__val.pattern instanceof RegExp")!.toBool())
+        XCTAssertEqual(eval("__val.pattern.source")!.toString(), "hello\\sworld")
+        XCTAssertTrue(eval("__val.pattern.global")!.toBool())
+        XCTAssertTrue(eval("__val.pattern.ignoreCase")!.toBool())
+    }
+
+    func testInvalidKeyRejected() {
+        openDB(upgrade: "db.createObjectStore('items');")
+
+        // null key should fail
+        eval("""
+        var __err1 = null;
+        var tx = __db.transaction('items', 'readwrite');
+        var r = tx.objectStore('items').put({ x: 1 }, null);
+        r.onerror = function() { __err1 = r.error.name; };
+        """)
+        drain()
+        XCTAssertEqual(eval("__err1")!.toString(), "DataError")
+
+        // boolean key should fail
+        eval("""
+        var __err2 = null;
+        var tx2 = __db.transaction('items', 'readwrite');
+        var r2 = tx2.objectStore('items').put({ x: 1 }, true);
+        r2.onerror = function() { __err2 = r2.error.name; };
+        """)
+        drain()
+        XCTAssertEqual(eval("__err2")!.toString(), "DataError")
+    }
+
+    func testVersionDowngradeRejected() {
+        openDB(name: "vDB", version: 3, upgrade: "db.createObjectStore('s');")
+
+        eval("""
+        var __downgradeErr = null;
+        var req = indexedDB.open('vDB', 1);
+        req.onerror = function() { __downgradeErr = req.error.name; };
+        req.onsuccess = function() {};
+        """)
+        drain()
+
+        XCTAssertEqual(eval("__downgradeErr")!.toString(), "VersionError")
+    }
+
+    func testCursorNextUnique() {
+        openDB(upgrade: """
+        var store = db.createObjectStore('items', { keyPath: 'id' });
+        store.createIndex('by_cat', 'cat');
+        """)
+
+        eval("""
+        var tx = __db.transaction('items', 'readwrite');
+        var s = tx.objectStore('items');
+        s.put({ id: 1, cat: 'A' });
+        s.put({ id: 2, cat: 'A' });
+        s.put({ id: 3, cat: 'B' });
+        s.put({ id: 4, cat: 'B' });
+        s.put({ id: 5, cat: 'C' });
+        """)
+        drain()
+
+        eval("""
+        var __cats = [];
+        var tx2 = __db.transaction('items', 'readonly');
+        var r = tx2.objectStore('items').index('by_cat').openCursor(null, 'nextunique');
+        r.onsuccess = function() {
+            var c = r.result;
+            if (c) { __cats.push(c.key); c.continue(); }
         };
         """)
         drain()
 
-        XCTAssertTrue(eval("__restored.data instanceof Uint8Array")!.toBool())
-        XCTAssertEqual(eval("__restored.data.length")!.toInt32(), 3)
-        XCTAssertEqual(eval("__restored.data[0]")!.toInt32(), 10)
-        XCTAssertEqual(eval("__restored.data[2]")!.toInt32(), 30)
+        XCTAssertEqual(eval("__cats.length")!.toInt32(), 3)
+        XCTAssertEqual(eval("__cats[0]")!.toString(), "A")
+        XCTAssertEqual(eval("__cats[1]")!.toString(), "B")
+        XCTAssertEqual(eval("__cats[2]")!.toString(), "C")
+    }
+
+    func testCompoundIndexKeyPath() {
+        openDB(upgrade: """
+        var store = db.createObjectStore('items', { keyPath: 'id' });
+        store.createIndex('by_cat_name', ['cat', 'name']);
+        """)
+
+        eval("""
+        var tx = __db.transaction('items', 'readwrite');
+        var s = tx.objectStore('items');
+        s.put({ id: 1, cat: 'A', name: 'Alice' });
+        s.put({ id: 2, cat: 'B', name: 'Bob' });
+        """)
+        drain()
+
+        // Query via index — getAll returns records whose compound key matches
+        eval("""
+        var __result = null;
+        var tx2 = __db.transaction('items', 'readonly');
+        var idx = tx2.objectStore('items').index('by_cat_name');
+        var r = idx.get(['A', 'Alice']);
+        r.onsuccess = function() { __result = r.result; };
+        """)
+        drain()
+
+        XCTAssertEqual(eval("__result.id")!.toInt32(), 1)
+    }
+
+    func testErrorBubblesToTransaction() {
+        openDB(upgrade: "db.createObjectStore('items', { keyPath: 'id' });")
+
+        eval("""
+        var tx = __db.transaction('items', 'readwrite');
+        tx.objectStore('items').put({ id: 1 });
+        """)
+        drain()
+
+        eval("""
+        var __txError = false;
+        var tx2 = __db.transaction('items', 'readwrite');
+        tx2.onerror = function() { __txError = true; };
+        tx2.objectStore('items').add({ id: 1 });
+        """)
+        drain()
+
+        XCTAssertTrue(eval("__txError")!.toBool())
+    }
+
+    // MARK: - Blob / File Tests
+
+    func testBlobRoundTrip() {
+        openDB(upgrade: "db.createObjectStore('items', { keyPath: 'id' });")
+
+        eval("""
+        var tx = __db.transaction('items', 'readwrite');
+        tx.objectStore('items').put({ id: 1, data: new Blob(['hello'], { type: 'text/plain' }) });
+        """)
+        drain()
+
+        eval("""
+        var __getResult = null;
+        var tx2 = __db.transaction('items', 'readonly');
+        var r = tx2.objectStore('items').get(1);
+        r.onsuccess = function() { __getResult = r.result; };
+        """)
+        drain()
+
+        XCTAssertTrue(eval("__getResult.data instanceof Blob")!.toBool())
+        XCTAssertEqual(eval("__getResult.data.type")!.toString(), "text/plain")
+
+        // Verify content via arrayBuffer()
+        eval("""
+        var __blobContent = '';
+        __getResult.data.arrayBuffer().then(function(buf) {
+            __blobContent = new TextDecoder().decode(new Uint8Array(buf));
+        });
+        """)
+        XCTAssertEqual(eval("__blobContent")!.toString(), "hello")
+    }
+
+    func testFileRoundTrip() {
+        openDB(upgrade: "db.createObjectStore('items', { keyPath: 'id' });")
+
+        eval("""
+        var tx = __db.transaction('items', 'readwrite');
+        tx.objectStore('items').put({ id: 1, file: new File(['data'], 'test.txt', { type: 'text/plain', lastModified: 12345 }) });
+        """)
+        drain()
+
+        eval("""
+        var __getResult = null;
+        var tx2 = __db.transaction('items', 'readonly');
+        var r = tx2.objectStore('items').get(1);
+        r.onsuccess = function() { __getResult = r.result; };
+        """)
+        drain()
+
+        XCTAssertTrue(eval("__getResult.file instanceof File")!.toBool())
+        XCTAssertEqual(eval("__getResult.file.name")!.toString(), "test.txt")
+        XCTAssertEqual(eval("__getResult.file.type")!.toString(), "text/plain")
+        XCTAssertEqual(eval("__getResult.file.lastModified")!.toInt32(), 12345)
+
+        // Verify content
+        eval("""
+        var __fileContent = '';
+        __getResult.file.arrayBuffer().then(function(buf) {
+            __fileContent = new TextDecoder().decode(new Uint8Array(buf));
+        });
+        """)
+        XCTAssertEqual(eval("__fileContent")!.toString(), "data")
+    }
+
+    func testNestedBlobInObject() {
+        openDB(upgrade: "db.createObjectStore('items', { keyPath: 'id' });")
+
+        eval("""
+        var tx = __db.transaction('items', 'readwrite');
+        tx.objectStore('items').put({ id: 1, nested: { img: new Blob([new Uint8Array([1, 2, 3])], { type: 'image/png' }) } });
+        """)
+        drain()
+
+        eval("""
+        var __getResult = null;
+        var tx2 = __db.transaction('items', 'readonly');
+        var r = tx2.objectStore('items').get(1);
+        r.onsuccess = function() { __getResult = r.result; };
+        """)
+        drain()
+
+        XCTAssertTrue(eval("__getResult.nested.img instanceof Blob")!.toBool())
+        XCTAssertEqual(eval("__getResult.nested.img.type")!.toString(), "image/png")
+        XCTAssertEqual(eval("__getResult.nested.img.size")!.toInt32(), 3)
+    }
+
+    // MARK: - P0/P1 Gap Fix Tests
+
+    func testCursorRequest() {
+        openDB(upgrade: "db.createObjectStore('items', { keyPath: 'id' });")
+
+        eval("""
+        var tx = __db.transaction('items', 'readwrite');
+        tx.objectStore('items').put({ id: 1 });
+        tx.objectStore('items').put({ id: 2 });
+        """)
+        drain()
+
+        eval("""
+        var __cursorReq = null;
+        var __match = false;
+        var tx2 = __db.transaction('items', 'readonly');
+        var r = tx2.objectStore('items').openCursor();
+        __cursorReq = r;
+        r.onsuccess = function() {
+            var cursor = r.result;
+            if (cursor) { __match = (cursor.request === __cursorReq); }
+        };
+        """)
+        drain()
+
+        XCTAssertTrue(eval("__match")!.toBool())
+    }
+
+    func testContinuePrimaryKey() {
+        openDB(upgrade: """
+        var store = db.createObjectStore('items', { keyPath: 'id' });
+        store.createIndex('by_cat', 'cat');
+        """)
+
+        eval("""
+        var tx = __db.transaction('items', 'readwrite');
+        var s = tx.objectStore('items');
+        s.put({ id: 1, cat: 'A' });
+        s.put({ id: 2, cat: 'A' });
+        s.put({ id: 3, cat: 'B' });
+        s.put({ id: 4, cat: 'B' });
+        """)
+        drain()
+
+        eval("""
+        var __pk = null;
+        var tx2 = __db.transaction('items', 'readonly');
+        var r = tx2.objectStore('items').index('by_cat').openCursor();
+        r.onsuccess = function() {
+            var cursor = r.result;
+            if (cursor && __pk === null) {
+                cursor.continuePrimaryKey('B', 4);
+                __pk = 'waiting';
+            } else if (cursor && __pk === 'waiting') {
+                __pk = cursor.primaryKey;
+            }
+        };
+        """)
+        drain()
+
+        XCTAssertEqual(eval("__pk")!.toInt32(), 4)
+    }
+
+    func testCompoundObjectStoreKeyPath() {
+        openDB(upgrade: "db.createObjectStore('items', { keyPath: ['a', 'b'] });")
+
+        eval("""
+        var tx = __db.transaction('items', 'readwrite');
+        tx.objectStore('items').put({ a: 1, b: 2, data: 'hello' });
+        """)
+        drain()
+
+        eval("""
+        var __val = null;
+        var tx2 = __db.transaction('items', 'readonly');
+        var r = tx2.objectStore('items').get([1, 2]);
+        r.onsuccess = function() { __val = r.result; };
+        """)
+        drain()
+
+        XCTAssertEqual(eval("__val.data")!.toString(), "hello")
+    }
+
+    func testTransactionErrorAndAutoAbort() {
+        openDB(upgrade: "db.createObjectStore('items', { keyPath: 'id' });")
+
+        // Insert baseline
+        eval("""
+        var tx = __db.transaction('items', 'readwrite');
+        tx.objectStore('items').put({ id: 1, name: 'Original' });
+        """)
+        drain()
+
+        // Trigger error (duplicate add) — should auto-abort
+        eval("""
+        var __txError = null;
+        var __txAborted = false;
+        var tx2 = __db.transaction('items', 'readwrite');
+        tx2.onerror = function() { __txError = tx2.error; };
+        tx2.onabort = function() { __txAborted = true; };
+        tx2.objectStore('items').put({ id: 1, name: 'Modified' });
+        tx2.objectStore('items').add({ id: 1, name: 'Duplicate' });
+        """)
+        drain()
+
+        XCTAssertTrue(eval("__txError !== null")!.toBool())
+        XCTAssertTrue(eval("__txAborted")!.toBool())
+
+        // Verify data was rolled back
+        eval("""
+        var __val = null;
+        var tx3 = __db.transaction('items', 'readonly');
+        var r = tx3.objectStore('items').get(1);
+        r.onsuccess = function() { __val = r.result; };
+        """)
+        drain()
+
+        XCTAssertEqual(eval("__val.name")!.toString(), "Original")
+    }
+
+    func testPreventDefaultStopsAbort() {
+        openDB(upgrade: "db.createObjectStore('items', { keyPath: 'id' });")
+
+        eval("""
+        var tx = __db.transaction('items', 'readwrite');
+        tx.objectStore('items').put({ id: 1 });
+        """)
+        drain()
+
+        eval("""
+        var __aborted = false;
+        var tx2 = __db.transaction('items', 'readwrite');
+        tx2.onabort = function() { __aborted = true; };
+        var r = tx2.objectStore('items').add({ id: 1 });
+        r.onerror = function(e) { e.preventDefault(); };
+        """)
+        drain()
+
+        XCTAssertFalse(eval("__aborted")!.toBool())
+    }
+
+    func testUndefinedValuePreservation() {
+        openDB(upgrade: "db.createObjectStore('items', { keyPath: 'id' });")
+
+        eval("""
+        var tx = __db.transaction('items', 'readwrite');
+        var s = tx.objectStore('items');
+        s.put({ id: 1, a: 1, b: undefined });
+        s.put({ id: 2, arr: [1, undefined, 3] });
+        """)
+        drain()
+
+        eval("""
+        var __v1 = null, __v2 = null;
+        var tx2 = __db.transaction('items', 'readonly');
+        var s2 = tx2.objectStore('items');
+        var r1 = s2.get(1);
+        r1.onsuccess = function() { __v1 = r1.result; };
+        var r2 = s2.get(2);
+        r2.onsuccess = function() { __v2 = r2.result; };
+        """)
+        drain()
+
+        XCTAssertEqual(eval("__v1.a")!.toInt32(), 1)
+        XCTAssertTrue(eval("'b' in __v1 && __v1.b === undefined")!.toBool())
+        XCTAssertEqual(eval("__v2.arr[0]")!.toInt32(), 1)
+        XCTAssertTrue(eval("__v2.arr[1] === undefined")!.toBool())
+        XCTAssertEqual(eval("__v2.arr[2]")!.toInt32(), 3)
+    }
+
+    func testImageDataRoundTrip() {
+        openDB(upgrade: "db.createObjectStore('items', { keyPath: 'id' });")
+
+        eval("""
+        var tx = __db.transaction('items', 'readwrite');
+        var imgData = new ImageData(2, 2);
+        imgData.data[0] = 255; // R
+        imgData.data[3] = 128; // A of first pixel
+        tx.objectStore('items').put({ id: 1, img: imgData });
+        """)
+        drain()
+
+        eval("""
+        var __val = null;
+        var tx2 = __db.transaction('items', 'readonly');
+        var r = tx2.objectStore('items').get(1);
+        r.onsuccess = function() { __val = r.result; };
+        """)
+        drain()
+
+        XCTAssertTrue(eval("__val.img instanceof ImageData")!.toBool())
+        XCTAssertEqual(eval("__val.img.width")!.toInt32(), 2)
+        XCTAssertEqual(eval("__val.img.height")!.toInt32(), 2)
+        XCTAssertEqual(eval("__val.img.data[0]")!.toInt32(), 255)
+        XCTAssertEqual(eval("__val.img.data[3]")!.toInt32(), 128)
+    }
+
+    func testBlobInsideMap() {
+        openDB(upgrade: "db.createObjectStore('items', { keyPath: 'id' });")
+
+        eval("""
+        var tx = __db.transaction('items', 'readwrite');
+        tx.objectStore('items').put({ id: 1, m: new Map([['k', new Blob(['mapblob'], { type: 'text/plain' })]]) });
+        """)
+        drain()
+
+        eval("""
+        var __val = null;
+        var tx2 = __db.transaction('items', 'readonly');
+        var r = tx2.objectStore('items').get(1);
+        r.onsuccess = function() { __val = r.result; };
+        """)
+        drain()
+
+        XCTAssertTrue(eval("__val.m instanceof Map")!.toBool())
+        XCTAssertTrue(eval("__val.m.get('k') instanceof Blob")!.toBool())
+        XCTAssertEqual(eval("__val.m.get('k').type")!.toString(), "text/plain")
+
+        eval("""
+        var __blobText = '';
+        __val.m.get('k').arrayBuffer().then(function(buf) {
+            __blobText = new TextDecoder().decode(new Uint8Array(buf));
+        });
+        """)
+        XCTAssertEqual(eval("__blobText")!.toString(), "mapblob")
+    }
+
+    func testCircularReferenceError() {
+        openDB(upgrade: "db.createObjectStore('items', { keyPath: 'id' });")
+
+        // Temporarily suppress the global exception handler since the DOMException
+        // thrown synchronously by _clone is caught by put() but still surfaces.
+        ctx.exceptionHandler = nil
+        eval("""
+        var __errName = null;
+        var tx = __db.transaction('items', 'readwrite');
+        var obj = { id: 1 };
+        obj.self = obj;
+        var r = tx.objectStore('items').put(obj);
+        r.onerror = function() { __errName = r.error.name; };
+        """)
+        drain()
+        ctx.exceptionHandler = { _, value in
+            XCTFail("JS exception: \(value?.toString() ?? "nil")")
+        }
+
+        XCTAssertEqual(eval("__errName")!.toString(), "DataCloneError")
+    }
+
+    // MARK: - Fix 1: Transaction lifecycle
+
+    func testTransactionStaysAliveAcrossRequests() {
+        openDB(upgrade: "db.createObjectStore('items', { keyPath: 'id' });")
+
+        eval("""
+        var tx = __db.transaction('items', 'readwrite');
+        var store = tx.objectStore('items');
+        store.put({ id: 1, val: 'first' });
+        """)
+        drain()
+
+        // get → onsuccess → put inside the same tx
+        eval("""
+        var __putOk = false;
+        var tx2 = __db.transaction('items', 'readwrite');
+        var s2 = tx2.objectStore('items');
+        var r = s2.get(1);
+        r.onsuccess = function() {
+            s2.put({ id: 1, val: 'updated' });
+            __putOk = true;
+        };
+        """)
+        drain()
+
+        XCTAssertTrue(eval("__putOk")!.toBool())
+
+        // Verify the update persisted
+        eval("""
+        var __val = null;
+        var tx3 = __db.transaction('items', 'readonly');
+        var r3 = tx3.objectStore('items').get(1);
+        r3.onsuccess = function() { __val = r3.result.val; };
+        """)
+        drain()
+
+        XCTAssertEqual(eval("__val")!.toString(), "updated")
+    }
+
+    func testCursorTransactionAutoCommits() {
+        openDB(upgrade: "db.createObjectStore('items', { keyPath: 'id' });")
+
+        eval("""
+        var tx = __db.transaction('items', 'readwrite');
+        tx.objectStore('items').put({ id: 1, val: 'a' });
+        tx.objectStore('items').put({ id: 2, val: 'b' });
+        """)
+        drain()
+
+        // Cursor-based readwrite tx: update via cursor, then check oncomplete fires
+        eval("""
+        var __complete = false;
+        var tx2 = __db.transaction('items', 'readwrite');
+        tx2.oncomplete = function() { __complete = true; };
+        var r = tx2.objectStore('items').openCursor();
+        r.onsuccess = function() {
+            var cursor = r.result;
+            if (cursor) {
+                cursor.update({ id: cursor.value.id, val: cursor.value.val + '!' });
+                cursor.continue();
+            }
+        };
+        """)
+        drain()
+
+        XCTAssertTrue(eval("__complete")!.toBool())
+
+        // Verify cursor updates persisted
+        eval("""
+        var __vals = [];
+        var tx3 = __db.transaction('items', 'readonly');
+        var r3 = tx3.objectStore('items').openCursor();
+        r3.onsuccess = function() {
+            var c = r3.result;
+            if (c) { __vals.push(c.value.val); c.continue(); }
+        };
+        """)
+        drain()
+
+        XCTAssertEqual(eval("__vals[0]")!.toString(), "a!")
+        XCTAssertEqual(eval("__vals[1]")!.toString(), "b!")
+    }
+
+    // MARK: - Fix 2: Transaction state checks
+
+    func testReadonlyTransactionRejectsWrite() {
+        openDB(upgrade: "db.createObjectStore('items', { keyPath: 'id' });")
+
+        eval("""
+        var __errName = null;
+        try {
+            var tx = __db.transaction('items', 'readonly');
+            tx.objectStore('items').put({ id: 1 });
+        } catch(e) {
+            __errName = e.name;
+        }
+        """)
+
+        XCTAssertEqual(eval("__errName")!.toString(), "ReadOnlyError")
+    }
+
+    func testAbortedTransactionRejectsRequest() {
+        openDB(upgrade: "db.createObjectStore('items', { keyPath: 'id' });")
+
+        eval("""
+        var __errName = null;
+        var tx = __db.transaction('items', 'readwrite');
+        var store = tx.objectStore('items');
+        tx.abort();
+        try {
+            store.get(1);
+        } catch(e) {
+            __errName = e.name;
+        }
+        """)
+
+        XCTAssertEqual(eval("__errName")!.toString(), "TransactionInactiveError")
+    }
+
+    func testClosedDatabaseRejectsTransaction() {
+        openDB(upgrade: "db.createObjectStore('items', { keyPath: 'id' });")
+
+        eval("""
+        var __errName = null;
+        __db.close();
+        try {
+            __db.transaction('items', 'readonly');
+        } catch(e) {
+            __errName = e.name;
+        }
+        """)
+
+        XCTAssertEqual(eval("__errName")!.toString(), "InvalidStateError")
+    }
+
+    func testCreateObjectStoreOutsideVersionchange() {
+        openDB(upgrade: "db.createObjectStore('items');")
+
+        eval("""
+        var __errName = null;
+        try {
+            __db.createObjectStore('extra');
+        } catch(e) {
+            __errName = e.name;
+        }
+        """)
+
+        XCTAssertEqual(eval("__errName")!.toString(), "InvalidStateError")
+    }
+
+    // MARK: - Fix 3: Error bubbles to database
+
+    func testErrorBubblesToDatabase() {
+        openDB(upgrade: "db.createObjectStore('items', { keyPath: 'id' });")
+
+        // Insert initial record
+        eval("""
+        var tx = __db.transaction('items', 'readwrite');
+        tx.objectStore('items').put({ id: 1 });
+        """)
+        drain()
+
+        // Trigger a ConstraintError via duplicate add → should bubble to db.onerror
+        eval("""
+        var __dbErrorFired = false;
+        __db.onerror = function() { __dbErrorFired = true; };
+        var tx2 = __db.transaction('items', 'readwrite');
+        tx2.objectStore('items').add({ id: 1 });
+        """)
+        drain()
+
+        XCTAssertTrue(eval("__dbErrorFired")!.toBool())
+    }
+
+    // MARK: - Fix 4: keyPath + explicit key conflict
+
+    func testInlineKeyPathWithExplicitKeyFails() {
+        openDB(upgrade: "db.createObjectStore('items', { keyPath: 'id' });")
+
+        eval("""
+        var __errName = null;
+        try {
+            var tx = __db.transaction('items', 'readwrite');
+            tx.objectStore('items').put({ id: 1 }, 42);
+        } catch(e) {
+            __errName = e.name;
+        }
+        """)
+
+        XCTAssertEqual(eval("__errName")!.toString(), "DataError")
+    }
+
+    // MARK: - Fix 5: NaN/Infinity/-0 round-trip
+
+    func testNaNInfinityNegZeroRoundTrip() {
+        openDB(upgrade: "db.createObjectStore('items', { keyPath: 'id' });")
+
+        eval("""
+        var tx = __db.transaction('items', 'readwrite');
+        tx.objectStore('items').put({ id: 1, a: NaN, b: -0, c: Infinity, d: -Infinity });
+        """)
+        drain()
+
+        eval("""
+        var __r = null;
+        var tx2 = __db.transaction('items', 'readonly');
+        var r = tx2.objectStore('items').get(1);
+        r.onsuccess = function() { __r = r.result; };
+        """)
+        drain()
+
+        XCTAssertTrue(eval("isNaN(__r.a)")!.toBool())
+        XCTAssertTrue(eval("Object.is(__r.b, -0)")!.toBool())
+        XCTAssertTrue(eval("__r.c === Infinity")!.toBool())
+        XCTAssertTrue(eval("__r.d === -Infinity")!.toBool())
+    }
+
+    // MARK: - Fix 6: objectStore/index rename
+
+    func testObjectStoreRename() {
+        eval("""
+        var __db2 = null;
+        var req = indexedDB.open('renameDB', 1);
+        req.onupgradeneeded = function(e) {
+            var db = e.target.result;
+            var store = db.createObjectStore('oldName', { keyPath: 'id' });
+            store.name = 'newName';
+        };
+        req.onsuccess = function() { __db2 = req.result; };
+        """)
+        drain()
+
+        XCTAssertTrue(eval("__db2.objectStoreNames.contains('newName')")!.toBool())
+        XCTAssertFalse(eval("__db2.objectStoreNames.contains('oldName')")!.toBool())
+    }
+
+    func testIndexRename() {
+        eval("""
+        var __db3 = null;
+        var req = indexedDB.open('renameIdxDB', 1);
+        req.onupgradeneeded = function(e) {
+            var db = e.target.result;
+            var store = db.createObjectStore('items', { keyPath: 'id' });
+            var idx = store.createIndex('oldIdx', 'name');
+            idx.name = 'newIdx';
+        };
+        req.onsuccess = function() { __db3 = req.result; };
+        """)
+        drain()
+
+        eval("""
+        var __hasNew = false, __hasOld = true;
+        var tx = __db3.transaction('items', 'readonly');
+        var s = tx.objectStore('items');
+        __hasNew = s.indexNames.contains('newIdx');
+        __hasOld = s.indexNames.contains('oldIdx');
+        """)
+
+        XCTAssertTrue(eval("__hasNew")!.toBool())
+        XCTAssertFalse(eval("__hasOld")!.toBool())
+    }
+
+    func testGlobalConstructorsExposed() {
+        XCTAssertTrue(eval("typeof IDBDatabase === 'function'")!.toBool())
+        XCTAssertTrue(eval("typeof IDBTransaction === 'function'")!.toBool())
+        XCTAssertTrue(eval("typeof IDBObjectStore === 'function'")!.toBool())
+        XCTAssertTrue(eval("typeof IDBIndex === 'function'")!.toBool())
+        XCTAssertTrue(eval("typeof IDBCursor === 'function'")!.toBool())
+        XCTAssertTrue(eval("typeof IDBRequest === 'function'")!.toBool())
+        XCTAssertTrue(eval("typeof IDBOpenDBRequest === 'function'")!.toBool())
+        XCTAssertTrue(eval("typeof IDBVersionChangeEvent === 'function'")!.toBool())
+        XCTAssertTrue(eval("typeof IDBKeyRange === 'function'")!.toBool())
     }
 }

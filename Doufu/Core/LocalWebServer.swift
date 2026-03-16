@@ -26,6 +26,10 @@ final class LocalWebServer: @unchecked Sendable {
     /// Used for temporary files (e.g. picked photos) that should not live inside the App/ directory.
     var tmpDirectoryURL: URL?
 
+    /// Optional directory for app data files served under the `/__doufu_appdata__/` path prefix.
+    /// Supports GET (read) and PUT (write) for binary file persistence (e.g. SQLite databases).
+    var appDataDirectoryURL: URL?
+
     init(projectURL: URL, projectID: String) {
         self.projectURL = projectURL
         self.preferredPort = Self.stablePort(for: projectID)
@@ -166,6 +170,8 @@ final class LocalWebServer: @unchecked Sendable {
     }
 
     private static let tmpPathPrefix = "/__doufu_tmp__/"
+    private static let appDataPathPrefix = "/__doufu_appdata__/"
+    private static let staticBundlePathPrefix = "/__doufu_static__/"
 
     private func routeRequest(_ request: HTTPRequest, on connection: NWConnection) {
         if request.path == "/__doufu_proxy__" {
@@ -174,6 +180,12 @@ final class LocalWebServer: @unchecked Sendable {
             }
         } else if request.path.hasPrefix(Self.tmpPathPrefix) {
             let response = handleTmpFileRequest(request)
+            sendResponse(response, on: connection)
+        } else if request.path.hasPrefix(Self.appDataPathPrefix) {
+            let response = handleAppDataRequest(request)
+            sendResponse(response, on: connection)
+        } else if request.path.hasPrefix(Self.staticBundlePathPrefix) {
+            let response = handleStaticBundleRequest(request)
             sendResponse(response, on: connection)
         } else {
             let response = handleStaticFileRequest(request)
@@ -449,6 +461,122 @@ final class LocalWebServer: @unchecked Sendable {
         let ext = resolved.pathExtension.lowercased()
         let contentType = mimeType(for: ext)
         return buildResponse(statusCode: 200, statusText: "OK", body: fileData, contentType: contentType)
+    }
+
+    // MARK: - App Data File Serving (GET/PUT/OPTIONS)
+
+    /// Serves and accepts files from `appDataDirectoryURL` under the `/__doufu_appdata__/` path prefix.
+    /// GET reads a file, PUT writes a file (creating intermediate directories), OPTIONS returns CORS headers.
+    private func handleAppDataRequest(_ request: HTTPRequest) -> Data {
+        // OPTIONS preflight
+        if request.method == "OPTIONS" {
+            var header = "HTTP/1.1 204 No Content\r\n"
+            header += "Access-Control-Allow-Origin: *\r\n"
+            header += "Access-Control-Allow-Methods: GET, PUT, OPTIONS\r\n"
+            header += "Access-Control-Allow-Headers: Content-Type\r\n"
+            header += "Access-Control-Max-Age: 86400\r\n"
+            header += "Content-Length: 0\r\n"
+            header += "Connection: close\r\n"
+            header += "\r\n"
+            return Data(header.utf8)
+        }
+
+        guard request.method == "GET" || request.method == "PUT" else {
+            return buildResponse(statusCode: 405, statusText: "Method Not Allowed",
+                                 body: Data("Method Not Allowed".utf8), contentType: "text/plain")
+        }
+
+        guard let baseURL = appDataDirectoryURL else {
+            return buildResponse(statusCode: 404, statusText: "Not Found",
+                                 body: Data("Not Found".utf8), contentType: "text/plain")
+        }
+
+        let relativePath = String(request.path.dropFirst(Self.appDataPathPrefix.count))
+        let decoded = relativePath.removingPercentEncoding ?? relativePath
+
+        // Prevent directory traversal
+        let resolved = baseURL.appendingPathComponent(decoded).standardizedFileURL.resolvingSymlinksInPath()
+        let basePath = baseURL.standardizedFileURL.resolvingSymlinksInPath().path
+        let resolvedPath = resolved.path
+        let prefix = basePath.hasSuffix("/") ? basePath : basePath + "/"
+
+        guard resolvedPath == basePath || resolvedPath.hasPrefix(prefix) else {
+            return buildResponse(statusCode: 403, statusText: "Forbidden",
+                                 body: Data("Forbidden".utf8), contentType: "text/plain")
+        }
+
+        if request.method == "GET" {
+            guard FileManager.default.fileExists(atPath: resolved.path),
+                  let fileData = try? Data(contentsOf: resolved) else {
+                return buildResponse(statusCode: 404, statusText: "Not Found",
+                                     body: Data("Not Found".utf8), contentType: "text/plain")
+            }
+            return buildResponse(statusCode: 200, statusText: "OK",
+                                 body: fileData, contentType: "application/octet-stream")
+        } else {
+            // PUT — write body to file
+            let body = request.body ?? Data()
+            let parentDir = resolved.deletingLastPathComponent()
+            try? FileManager.default.createDirectory(at: parentDir, withIntermediateDirectories: true)
+            do {
+                try body.write(to: resolved, options: .atomic)
+            } catch {
+                return buildResponse(statusCode: 500, statusText: "Internal Server Error",
+                                     body: Data("Write failed".utf8), contentType: "text/plain")
+            }
+            // 204 No Content
+            var header = "HTTP/1.1 204 No Content\r\n"
+            header += "Access-Control-Allow-Origin: *\r\n"
+            header += "Content-Length: 0\r\n"
+            header += "Connection: close\r\n"
+            header += "\r\n"
+            return Data(header.utf8)
+        }
+    }
+
+    // MARK: - Static Bundle File Serving
+
+    /// Serves whitelisted files from the app bundle under the `/__doufu_static__/` path prefix.
+    /// Used for immutable resources like sql-wasm.js and sql-wasm.wasm.
+    private func handleStaticBundleRequest(_ request: HTTPRequest) -> Data {
+        guard request.method == "GET" || request.method == "HEAD" else {
+            return buildResponse(statusCode: 405, statusText: "Method Not Allowed",
+                                 body: Data("Method Not Allowed".utf8), contentType: "text/plain")
+        }
+
+        let relativePath = String(request.path.dropFirst(Self.staticBundlePathPrefix.count))
+        let decoded = relativePath.removingPercentEncoding ?? relativePath
+
+        // Whitelist of allowed bundle files
+        let allowedFiles: Set<String> = ["sql-wasm.js", "sql-wasm.wasm"]
+        guard allowedFiles.contains(decoded) else {
+            return buildResponse(statusCode: 404, statusText: "Not Found",
+                                 body: Data("Not Found".utf8), contentType: "text/plain")
+        }
+
+        let components = decoded.split(separator: ".", maxSplits: 1)
+        guard components.count == 2,
+              let url = Bundle.main.url(forResource: String(components[0]), withExtension: String(components[1])),
+              let fileData = try? Data(contentsOf: url) else {
+            return buildResponse(statusCode: 404, statusText: "Not Found",
+                                 body: Data("Not Found".utf8), contentType: "text/plain")
+        }
+
+        let ext = String(components[1]).lowercased()
+        let contentType = ext == "wasm" ? "application/wasm" : "application/javascript; charset=utf-8"
+
+        // Immutable bundle resources — cache aggressively
+        var header = "HTTP/1.1 200 OK\r\n"
+        header += "Content-Type: \(contentType)\r\n"
+        header += "Content-Length: \(fileData.count)\r\n"
+        header += "Access-Control-Allow-Origin: *\r\n"
+        header += "Cache-Control: public, max-age=31536000, immutable\r\n"
+        header += "Connection: close\r\n"
+        header += "\r\n"
+
+        var response = Data(header.utf8)
+        response.append(fileData)
+        return response
     }
 
     // MARK: - Response Builder

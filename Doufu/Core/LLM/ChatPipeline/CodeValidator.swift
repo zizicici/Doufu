@@ -114,6 +114,7 @@ final class CodeValidator: NSObject {
         collectedConsole = []
 
         let config = WKWebViewConfiguration()
+        config.websiteDataStore = .nonPersistent()
         config.defaultWebpagePreferences.allowsContentJavaScript = true
 
         // Inject the Doufu bridge so fetch proxy + localStorage work during validation

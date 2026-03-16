@@ -119,7 +119,7 @@
     - `LocalWebServer`：本地 Web 服务，含 CDN 资源代理缓存。
     - `Core/Media/MediaSessionManager`：WebRTC 摄像头/麦克风管理（per-VC 实例，非 singleton）。
     - `Core/Media/LoopbackSTUNServer`：本地 STUN 服务器（`127.0.0.1:random`），使 WebRTC ICE 在任何网络状态下通过 loopback srflx candidate 建立连接。
-    - `DoufuBridge`：JS 桥接。
+    - `DoufuBridge`：JS 桥接（注入策略、权限封堵、fetch 代理、localStorage shim、IndexedDB shim、doufu.db API、能力请求、WebRTC 信令）。
     - `ActiveTaskManager`：活跃任务追踪。
     - `PiPProgressManager`：画中画进度管理。
 
@@ -170,7 +170,10 @@
 
 - 根目录：`Documents/Projects/{uuid}/`（projectID 为纯 UUID，无前缀）
 - `App/`：代码文件（index.html, style.css, script.js, AGENTS.md, DOUFU.MD）+ `.git`
-- `AppData/`：用户数据（localStorage.json）— Git 检查点恢复时保留
+- `AppData/`：用户数据 — Git 检查点恢复时保留
+  - `localStorage.json`：localStorage 数据
+  - `indexedDB.sqlite`：IndexedDB 数据（sql.js WASM SQLite）
+  - `{name}.sqlite`：`doufu.db` API 自定义数据库
 - `preview.jpg`：项目预览图（运行页截图写入），位于项目根目录
 
 ### 项目归档格式（v1）
@@ -308,3 +311,68 @@
 4. 容量上限 200 MB，超出按 LRU 淘汰到 150 MB；系统存储压力时可自动清除。
 5. fetch/XHR 发起的 API 请求不带 `cache=1`，不会被缓存。
 6. 提供 `clearCDNCache()` 公开方法供外部调用。
+
+## DoufuBridge 注入与 Shim 层
+
+### 注入策略
+
+1. **权限封堵脚本**：`forMainFrameOnly: false` — 所有 frame（含 iframe）都被封堵标准 Web API（getUserMedia, geolocation, clipboard, Permissions API 返回 denied）。
+2. **Bridge 脚本**：`forMainFrameOnly: false` — 所有 frame 注入，由 JS 侧 origin 守卫决定是否初始化：
+   - `location.protocol === 'file:' || location.hostname === 'localhost'` → 注入
+   - 跨源 iframe（如 `https://example.com`）、`data:`/`blob:`/`about:blank` → 跳过
+3. **Native 消息处理**：`DoufuBridgeMessageHandler` 对所有消息做 origin 校验（`host == "localhost" || protocol == "file"`），非本地来源直接忽略。
+
+| Frame 类型 | 权限封堵 | 存储 shim | fetch proxy | doufu.* API | native 消息 |
+|---|---|---|---|---|---|
+| main frame | ✓ | ✓ | ✓ | ✓ | ✓ |
+| same-origin iframe | ✓ | ✓（代理到 parent） | ✓ | ✓（已知限制） | ✓ |
+| cross-origin iframe | ✓ | ✗ | ✗ | ✗ | ✗ |
+
+> **已知限制**：same-origin iframe 中的 `doufu.*` capability 请求能发出并被 native 处理，但响应通过 `webView.evaluateJavaScript()` 交付到 main frame（WKWebView API 限制），因此 iframe 中的 Promise 不会 resolve。存储和 fetch 不受影响。
+
+### fetch() 代理
+
+1. 覆盖 `window.fetch` 和 `XMLHttpRequest.prototype.open`。
+2. 跨源请求透明改写为 `/__doufu_proxy__?url=<encoded>`，由 `LocalWebServer` 代理。
+3. 同源请求不代理，直接走原始 fetch/XHR。
+4. 每个 frame 独立设置代理（非共享），保证每个 frame 的 `location.origin` 判断正确。
+
+### localStorage 持久化 Shim
+
+1. 使用 `Object.create(null)` 作为 `_data` 后备存储，避免 `toString`/`__proto__` 等原型链 key 冲突。
+2. `Proxy` 覆盖 `window.localStorage`，支持 `getItem`/`setItem`/`removeItem`/`clear`/`key`/`length` 以及属性式访问（`localStorage.foo = 'bar'`、`delete localStorage.foo`、`for...in`、`Object.keys()`）。
+3. 属性访问对不存在的 key 返回 `null`（与原生 Storage named getter 一致）。
+4. 每次写入同步发送完整 `_data` 快照到 native（`doufuStorage` message handler），native 端原子替换 `storageData` 并写入 `AppData/localStorage.json`。
+5. **iframe 共享**：same-origin iframe 通过 `Object.defineProperty(window, 'localStorage', { get: () => window.parent.localStorage })` 代理到 parent frame 的 shim 实例 — 单一 `_data`、单一 flush 路径。
+6. **清除安全**：`clearLocalStorage()` 调用 JS 侧 `__doufuLocalStorageClear()`（清空 `_data` + 禁用 `_flush`），防止 beforeunload 等 handler 在页面卸载期间重新持久化旧数据。
+7. **已知限制**：
+   - 无 `storage` 事件（跨 frame StorageEvent 不触发）
+   - `localStorage instanceof Storage` 返回 `false`
+
+### IndexedDB 持久化 Shim（sql.js 后端）
+
+1. **sql.js（WASM SQLite）** 在文档开始时加载（`sql-wasm.js` + `sql-wasm.wasm`），提供完整的内存 SQLite 引擎。
+2. **API 覆盖面**：`IDBFactory`（open/deleteDatabase/databases/cmp）、`IDBDatabase`、`IDBTransaction`（SAVEPOINT 回滚）、`IDBObjectStore`（put/add/get/getKey/getAll/getAllKeys/delete/clear/count/createIndex/deleteIndex/openCursor/openKeyCursor）、`IDBIndex`（get/getKey/getAll/getAllKeys/count/openCursor/openKeyCursor）、`IDBCursor`（continue/advance/continuePrimaryKey/update/delete）、`IDBKeyRange`（only/lowerBound/upperBound/bound/includes）。
+3. **SQLite Schema**：5 张表 — `databases`、`object_stores`、`indexes`、`records`（value 为 JSON）、`index_records`。
+4. **Key 编码**：二进制编码（类型前缀 + 值），通过 SQLite BLOB 比较保持 IDB 规范排序（number < date < string < binary < array）。数字使用 IEEE 754 sign-flip 编码。
+5. **Structured Clone**：支持 Date、ArrayBuffer、TypedArray（全 9 种）、DataView、Blob、File、Map、Set、RegExp、Error、ImageData、NaN、Infinity、-0、undefined。Blob/File 异步提取 ArrayBuffer 后转 base64 存储。循环引用检测并抛出 DataCloneError。
+6. **持久化**：写事务提交后延迟 500ms HTTP PUT 到 `/__doufu_appdata__/indexedDB.sqlite`；beforeunload/pagehide 使用同步 XHR 确保写入。
+7. **事务**：readwrite/versionchange 事务创建 SAVEPOINT，abort() 时 ROLLBACK，commit 时 RELEASE。自动提交：pending requests 归零时 microtask 调度提交。
+8. **iframe 共享**：same-origin iframe 代理 `window.indexedDB` + 9 个全局构造函数 + `doufu.db` 到 parent，跳过 sql.js WASM 加载。
+9. **清除**：`clearIndexedDB()` 调用 JS 侧 `__doufuIDBCancelPersist()`（取消 flush timer + close db），然后删除 `AppData/indexedDB.sqlite`。
+10. **JSON 迁移**：首次加载时若无 `.sqlite` 但存在 `.json`（旧格式），自动迁移为 SQLite 并持久化。
+11. **已知限制**：
+    - `onupgradeneeded` handler 同步执行，async 操作（如 fetch）会在事务已提交后失败
+    - cursor 一次性快照所有匹配 record，迭代中新增的 record 不可见
+    - 无 `blocked` / `versionchange` 事件（单页面场景无影响）
+    - `instanceof IDBDatabase` 等检查返回 `false`
+    - Blob 与非 Blob 混合写入同一事务时可能产生排序问题（async/sync 混合）
+
+### doufu.db 直接 SQL API
+
+1. `doufu.db.open(name)` → 打开/创建命名数据库，返回 handle ID。
+2. `doufu.db.exec(handle, sql)` / `doufu.db.run(handle, sql, params)` → 执行 SQL。
+3. `doufu.db.close(handle)` → 关闭数据库。
+4. 每个命名数据库独立持久化为 `AppData/{name}.sqlite`（HTTP PUT/GET）。
+5. beforeunload 使用同步 XHR flush 所有打开的数据库。
+6. 数据库名仅允许 `[a-zA-Z0-9_-]`。

@@ -447,6 +447,7 @@ final class ProjectWorkspaceViewController: UIViewController {
 
         do {
             webServer.tmpDirectoryURL = projectURL.appendingPathComponent("tmp", isDirectory: true)
+            webServer.appDataDirectoryURL = project.dataURL
             try webServer.start()
             guard let url = webServer.baseURL else {
                 throw LocalWebServer.ServerError.failedToStart
@@ -682,6 +683,7 @@ final class ProjectWorkspaceViewController: UIViewController {
     @objc
     private func didTapRefresh() {
         scheduleAutoCollapse()
+        doufuBridge.flushAllStorageSync()
         webView.reload()
     }
 
@@ -925,9 +927,11 @@ final class ProjectWorkspaceViewController: UIViewController {
 
         switch change.kind {
         case .filesChanged, .checkpointRestored:
+            doufuBridge.flushAllStorageSync()
             webView.reload()
             consumeVisibleProjectUpdateIfNeeded()
         case .renamed:
+            doufuBridge.flushAllStorageSync()
             webView.reload()
         case .descriptionChanged, .toolPermissionChanged, .modelSelectionChanged:
             break

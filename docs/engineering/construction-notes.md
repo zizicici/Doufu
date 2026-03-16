@@ -91,6 +91,16 @@
 3. `ResolvedModelProfile` 包含：reasoningEfforts, thinkingSupported, thinkingCanDisable, structuredOutputSupported, maxOutputTokens, contextWindowTokens。
 4. 下游消费者不应直接读取 model record，而是使用 resolved profile。
 
+## Bridge / Shim 注意事项
+
+1. Bridge 注入使用 `forMainFrameOnly: false`，由 JS 侧 origin 守卫（`location.hostname === 'localhost'`）区分同源/跨源 iframe。
+2. localStorage shim 中 `_data` 必须用 `Object.create(null)`，不能用 `{}`，否则 `toString`/`__proto__` 等 key 会与原型链冲突。
+3. Same-origin iframe 的 localStorage 和 indexedDB 均代理到 parent frame 的 shim 实例，不创建独立副本。否则会出现跨 frame 数据不一致和全量快照竞争导致的数据丢失。
+4. `clearLocalStorage()` / `clearIndexedDB()` 必须先调用 JS 侧 hook 取消 flush，再删除磁盘文件，防止 beforeunload handler 在页面卸载期间重新持久化旧数据。
+5. IndexedDB shim 的 `onupgradeneeded` 同步执行且事务立即提交——不要在 handler 中使用 async/await。
+6. IndexedDB cursor 在 openCursor 时一次性加载所有匹配 record（快照），cursor.continue() 遍历内存数组。迭代期间通过同事务写入的新 record 不会被 cursor 看到。
+7. Native 消息处理（`DoufuBridgeMessageHandler`）不再检查 `isMainFrame`，改为 origin 校验，以支持 same-origin iframe 的 bridge 通信。
+
 ## CDN 缓存注意事项
 
 1. URL 改写仅作用于 `handleStaticFileRequest` 返回的 HTML/CSS，不影响 JS 动态创建的元素。

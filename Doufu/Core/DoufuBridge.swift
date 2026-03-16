@@ -46,9 +46,11 @@ struct DoufuBridgeCapabilityError: Error {
 /// - **localStorage persistence**: `localStorage` is overridden with an
 ///   in-memory store that async-flushes to a JSON file in the project directory.
 ///   Data survives WKWebView cache clears and app reinstalls.
-/// - **IndexedDB persistence**: `indexedDB` is overridden with a JS shim that
-///   stores all data in-memory and flushes to `AppData/indexedDB.json`.
+/// - **IndexedDB persistence**: `indexedDB` is overridden with a sql.js (WASM SQLite)
+///   backed shim that persists to `AppData/indexedDB.sqlite` via HTTP PUT/GET.
 ///   Survives cache clears, git checkpoint restores, and app reinstalls.
+/// - **doufu.db API**: Direct SQL access via `doufu.db.open/exec/run/close`,
+///   each named database persisted as `AppData/{name}.sqlite`.
 @MainActor
 final class DoufuBridge: NSObject {
 
@@ -68,16 +70,14 @@ final class DoufuBridge: NSObject {
     /// Called from the WKScriptMessageHandler when localStorage changes.
     private var storageData: [String: String] = [:]
 
-    /// Full IndexedDB snapshot: { dbName: { version, stores: { ... } } }
-    private var indexedDBData: [String: Any] = [:]
-
     /// - Parameters:
     ///   - projectURL: The project directory.
     ///   - projectID: The project's unique identifier.
     ///   - projectName: The project's display name.
-    ///   - storageDirectoryOverride: If provided, localStorage and IndexedDB data
-    ///     are persisted here instead of the default `AppData/` location. Useful for
-    ///     validation runs that should not dirty real user data.
+    ///   - storageDirectoryOverride: If provided, localStorage data is persisted
+    ///     here instead of the default `AppData/` location. Useful for validation
+    ///     runs that should not dirty real user data. Note: IndexedDB data is served
+    ///     via the shared LocalWebServer and is not affected by this override.
     init(projectURL: URL, projectID: String = "", projectName: String = "", storageDirectoryOverride: URL? = nil) {
         self.projectURL = projectURL
         self.projectID = projectID
@@ -85,7 +85,6 @@ final class DoufuBridge: NSObject {
         self.storageDirectoryOverride = storageDirectoryOverride
         super.init()
         loadStorage()
-        loadIndexedDB()
     }
 
     // MARK: - WKWebView Integration
@@ -101,31 +100,35 @@ final class DoufuBridge: NSObject {
             forMainFrameOnly: false
         )
         configuration.userContentController.addUserScript(blockingScript)
-        // The bridge (doufu.*, storage, media) is main-frame-only to prevent
-        // third-party iframes from accessing native capabilities.
+        // The bridge (doufu.*, storage, media) is injected into all frames.
+        // A JS-side origin guard in bridgeJavaScript() skips initialization for
+        // cross-origin iframes, while same-origin iframes get the full bridge.
         let bridgeScript = WKUserScript(
             source: bridgeJavaScript(),
             injectionTime: .atDocumentStart,
-            forMainFrameOnly: true
+            forMainFrameOnly: false
         )
         configuration.userContentController.addUserScript(bridgeScript)
         let handler = DoufuBridgeMessageHandler(bridge: self)
         configuration.userContentController.add(handler, name: "doufuStorage")
-        configuration.userContentController.add(handler, name: "doufuIndexedDB")
         configuration.userContentController.add(handler, name: "doufuCapability")
         configuration.userContentController.add(handler, name: "doufuMedia")
     }
 
-    /// Re-adds the bridge user script with the latest `storageData` and `indexedDBData`.
+    /// Re-adds the bridge user script with the latest `storageData`.
     ///
-    /// `WKUserScript` captures its source at creation time, so after storage
+    /// `WKUserScript` captures its source at creation time, so after localStorage
     /// changes the embedded JSON snapshot becomes stale. Call this **before** any
     /// page reload / navigation to ensure the freshly-injected script carries the
-    /// current data.
+    /// current data. IndexedDB data is loaded by the shim via HTTP fetch, so no
+    /// snapshot injection is needed.
     ///
     /// - Important: This calls `removeAllUserScripts()` on the content controller.
     ///   The caller must re-add any non-bridge user scripts afterwards.
     func refreshStorageScript(on configuration: WKWebViewConfiguration) {
+        // Flush pending IndexedDB and doufu.db writes before tearing down scripts.
+        // The old page's JS is still alive at this point.
+        flushAllStorageSync()
         let controller = configuration.userContentController
         controller.removeAllUserScripts()
         let blockingScript = WKUserScript(
@@ -137,7 +140,7 @@ final class DoufuBridge: NSObject {
         let bridgeScript = WKUserScript(
             source: bridgeJavaScript(),
             injectionTime: .atDocumentStart,
-            forMainFrameOnly: true
+            forMainFrameOnly: false
         )
         controller.addUserScript(bridgeScript)
     }
@@ -146,7 +149,6 @@ final class DoufuBridge: NSObject {
     nonisolated func unregister(from configuration: WKWebViewConfiguration) {
         MainActor.assumeIsolated {
             configuration.userContentController.removeScriptMessageHandler(forName: "doufuStorage")
-            configuration.userContentController.removeScriptMessageHandler(forName: "doufuIndexedDB")
             configuration.userContentController.removeScriptMessageHandler(forName: "doufuCapability")
             configuration.userContentController.removeScriptMessageHandler(forName: "doufuMedia")
         }
@@ -160,11 +162,6 @@ final class DoufuBridge: NSObject {
     private var storageFileURL: URL {
         let dataDir = projectDataDirectory()
         return dataDir.appendingPathComponent("localStorage.json")
-    }
-
-    private var indexedDBFileURL: URL {
-        let dataDir = projectDataDirectory()
-        return dataDir.appendingPathComponent("indexedDB.json")
     }
 
     private func projectDataDirectory() -> URL {
@@ -188,25 +185,10 @@ final class DoufuBridge: NSObject {
         storageData = dict
     }
 
-    private func loadIndexedDB() {
-        guard let data = try? Data(contentsOf: indexedDBFileURL),
-              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            indexedDBData = [:]
-            return
-        }
-        indexedDBData = dict
-    }
-
     fileprivate func handleStorageUpdate(_ payload: Any) {
         guard let dict = payload as? [String: String] else { return }
         storageData = dict
         saveStorage()
-    }
-
-    fileprivate func handleIndexedDBUpdate(_ payload: Any) {
-        guard let dict = payload as? [String: Any] else { return }
-        indexedDBData = dict
-        saveIndexedDB()
     }
 
     private func saveStorage() {
@@ -216,23 +198,48 @@ final class DoufuBridge: NSObject {
         try? data.write(to: storageFileURL, options: .atomic)
     }
 
-    private func saveIndexedDB() {
-        guard let data = try? JSONSerialization.data(withJSONObject: indexedDBData, options: []) else {
-            return
-        }
-        try? data.write(to: indexedDBFileURL, options: .atomic)
-    }
-
     /// Clears all localStorage data and writes an empty JSON object to disk.
     func clearLocalStorage() {
         storageData = [:]
         saveStorage()
+        // Cancel JS-side flush so that any write during page teardown
+        // (e.g. beforeunload handler) does not re-persist stale data.
+        webView?.evaluateJavaScript("""
+        (function() {
+            if (typeof __doufuLocalStorageClear === 'function') __doufuLocalStorageClear();
+        })();
+        """, completionHandler: nil)
     }
 
-    /// Clears all IndexedDB data and writes an empty JSON object to disk.
+    /// Flushes all pending storage writes to disk synchronously.
+    ///
+    /// Call before page navigation or WebView teardown to ensure in-memory
+    /// IndexedDB and doufu.db changes are persisted. Unlike `clear*` methods,
+    /// this preserves data — it just forces pending debounced writes to complete.
+    func flushAllStorageSync() {
+        webView?.evaluateJavaScript("""
+        (function() {
+            if (typeof __doufuIDBFlushSync === 'function') __doufuIDBFlushSync();
+            if (typeof __doufuDbFlushAllSync === 'function') __doufuDbFlushAllSync();
+        })();
+        """, completionHandler: nil)
+    }
+
+    /// Clears all IndexedDB data by removing the SQLite file (and legacy JSON file).
+    ///
+    /// Also cancels any pending JS-side persist timer so the in-memory data
+    /// is not flushed back to disk before the webView reloads.
     func clearIndexedDB() {
-        indexedDBData = [:]
-        saveIndexedDB()
+        // Cancel JS-side debounce timer and drop the in-memory DB so that
+        // the upcoming page reload does NOT re-persist stale data.
+        webView?.evaluateJavaScript("""
+        (function() {
+            if (typeof __doufuIDBCancelPersist === 'function') __doufuIDBCancelPersist();
+        })();
+        """, completionHandler: nil)
+        let dir = projectDataDirectory()
+        try? FileManager.default.removeItem(at: dir.appendingPathComponent("indexedDB.sqlite"))
+        try? FileManager.default.removeItem(at: dir.appendingPathComponent("indexedDB.json"))
     }
 
     // MARK: - Bridge JavaScript
@@ -246,19 +253,21 @@ final class DoufuBridge: NSObject {
             storageJSON = "{}"
         }
 
-        let idbJSON: String
-        if let data = try? JSONSerialization.data(withJSONObject: indexedDBData, options: []),
-           let str = String(data: data, encoding: .utf8) {
-            idbJSON = str
-        } else {
-            idbJSON = "{}"
-        }
+        // Skip the sql.js IndexedDB shim for validation bridges so they don't
+        // read/write the real project's AppData. The validation WebView will use
+        // WKWebView's native IndexedDB which is isolated per data store.
+        let idbShim = storageDirectoryOverride == nil ? sqlJsIndexedDBJavaScript() : ""
 
+        // Only initialize the bridge for local origins (localhost / file://).
+        // Cross-origin iframes (e.g. <iframe src="https://example.com">) as well
+        // as data:/blob:/about:blank frames are skipped automatically.
         return """
+        if (location.protocol === 'file:' || location.hostname === 'localhost') {
         \(capabilityJavaScript())
         \(mediaJavaScript())
         \(fetchProxyAndLocalStorageJavaScript(storageJSON: storageJSON))
-        \(indexedDBShimJavaScript(snapshot: idbJSON))
+        \(idbShim)
+        }
         """
     }
 
@@ -778,17 +787,45 @@ final class DoufuBridge: NSObject {
             return _XHROpen.apply(this, arguments);
           };
 
+        })();
+        (function() {
+          'use strict';
+
           // ======== localStorage persistence ========
-          var _data = \(storageJSON);
+          // Same-origin iframes share the parent frame's shim — single _data,
+          // single flush path. Only the main frame creates the authoritative shim.
+          if (window.parent !== window) {
+            try {
+              Object.defineProperty(window, 'localStorage', {
+                get: function() { return window.parent.localStorage; },
+                configurable: true
+              });
+              return;
+            } catch(e) {}
+          }
+
+          // Use null-prototype object so inherited names like toString / __proto__
+          // do not collide with valid localStorage keys.
+          var _data = Object.assign(Object.create(null), \(storageJSON));
           var _apiMethods = ['getItem','setItem','removeItem','clear','key'];
 
+          var _flushEnabled = true;
           function _flush() {
+            if (!_flushEnabled) return;
             try {
               var copy = {};
               for (var k in _data) copy[k] = _data[k];
               window.webkit.messageHandlers.doufuStorage.postMessage(copy);
             } catch(e) {}
           }
+
+          // Called from native before page reload to prevent stale writes
+          // during teardown (e.g. beforeunload handlers re-persisting old data).
+          window.__doufuLocalStorageClear = function() {
+            var keys = Object.keys(_data);
+            for (var i = 0; i < keys.length; i++) delete _data[keys[i]];
+            _flushEnabled = false;
+          };
 
           var _storageTarget = {
             getItem: function(k) {
@@ -828,8 +865,9 @@ final class DoufuBridge: NSObject {
               if (_apiMethods.indexOf(prop) !== -1) return target[prop];
               if (typeof prop === 'symbol') return target[prop];
               // Property-style access: localStorage.myKey
+              // Return null for missing keys to match native Storage named getter.
               var v = _data[prop];
-              return v !== undefined ? v : undefined;
+              return v !== undefined ? v : null;
             },
             set: function(target, prop, value) {
               if (_apiMethods.indexOf(prop) !== -1 || prop === 'length') return true;
@@ -867,24 +905,78 @@ final class DoufuBridge: NSObject {
         """
     }
 
-    // MARK: - IndexedDB shim
+    // MARK: - sql.js IndexedDB shim + doufu.db API
 
-    /// Cached shim template loaded from bundle (DoufuIndexedDBShim.js).
-    private static let indexedDBShimTemplate: String = {
-        guard let url = Bundle.main.url(forResource: "DoufuIndexedDBShim", withExtension: "js"),
+    /// sql.js JS loader (sql-wasm.js) — cached from bundle.
+    private static let sqlJsLoaderScript: String = {
+        guard let url = Bundle.main.url(forResource: "sql-wasm", withExtension: "js"),
               let js = try? String(contentsOf: url) else {
-            assertionFailure("DoufuIndexedDBShim.js not found in bundle")
+            assertionFailure("sql-wasm.js not found in bundle")
             return ""
         }
         return js
     }()
 
-    private func indexedDBShimJavaScript(snapshot: String) -> String {
-        // The .js file contains: var _idb = '__DOUFU_IDB_SNAPSHOT__';
-        // We replace the entire placeholder string (including quotes) with the raw JSON
-        // object literal, producing: var _idb = {"dbName": ...};
-        return Self.indexedDBShimTemplate
-            .replacingOccurrences(of: "'__DOUFU_IDB_SNAPSHOT__'", with: snapshot)
+    /// New IndexedDB shim template (DoufuSqlJsIndexedDB.js) — cached from bundle.
+    private static let sqlJsIDBShimTemplate: String = {
+        guard let url = Bundle.main.url(forResource: "DoufuSqlJsIndexedDB", withExtension: "js"),
+              let js = try? String(contentsOf: url) else {
+            assertionFailure("DoufuSqlJsIndexedDB.js not found in bundle")
+            return ""
+        }
+        return js
+    }()
+
+    /// doufu.db.* direct SQL API template — cached from bundle.
+    private static let doufuDbAPITemplate: String = {
+        guard let url = Bundle.main.url(forResource: "DoufuDbAPI", withExtension: "js"),
+              let js = try? String(contentsOf: url) else {
+            assertionFailure("DoufuDbAPI.js not found in bundle")
+            return ""
+        }
+        return js
+    }()
+
+    private func sqlJsIndexedDBJavaScript() -> String {
+        let shimJS = Self.sqlJsIDBShimTemplate
+            .replacingOccurrences(of: "'__DOUFU_WASMURL__'",
+                                  with: "'/__doufu_static__/sql-wasm.wasm'")
+            .replacingOccurrences(of: "'__DOUFU_APPDATAURL__'",
+                                  with: "'/__doufu_appdata__'")
+        let dbAPI = Self.doufuDbAPITemplate
+            .replacingOccurrences(of: "'__DOUFU_APPDATAURL__'",
+                                  with: "'/__doufu_appdata__'")
+        // Wrap in an outer IIFE so same-origin iframes can delegate to
+        // parent's shim and return early — skipping sql.js WASM load entirely.
+        return """
+        (function() {
+          if (window.parent !== window) {
+            try {
+              Object.defineProperty(window, 'indexedDB', {
+                get: function() { return window.parent.indexedDB; },
+                configurable: true
+              });
+              window.IDBKeyRange = window.parent.IDBKeyRange;
+              window.IDBDatabase = window.parent.IDBDatabase;
+              window.IDBTransaction = window.parent.IDBTransaction;
+              window.IDBObjectStore = window.parent.IDBObjectStore;
+              window.IDBIndex = window.parent.IDBIndex;
+              window.IDBCursor = window.parent.IDBCursor;
+              window.IDBRequest = window.parent.IDBRequest;
+              window.IDBOpenDBRequest = window.parent.IDBOpenDBRequest;
+              window.IDBVersionChangeEvent = window.parent.IDBVersionChangeEvent;
+              if (window.parent.doufu && window.parent.doufu.db) {
+                window.doufu = window.doufu || {};
+                window.doufu.db = window.parent.doufu.db;
+              }
+              return;
+            } catch(e) {}
+          }
+        \(Self.sqlJsLoaderScript)
+        \(shimJS)
+        \(dbAPI)
+        })();
+        """
     }
 }
 
@@ -917,12 +1009,9 @@ private nonisolated final class DoufuBridgeMessageHandler: NSObject, WKScriptMes
         didReceive message: WKScriptMessage
     ) {
         // WebKit guarantees this delegate is called on the main thread.
-        // Reject messages from non-main frames to prevent third-party iframes
-        // from accessing the native bridge.
-        let isMainFrame = MainActor.assumeIsolated { message.frameInfo.isMainFrame }
-        guard isMainFrame else { return }
-        // Reject messages from non-local origins (defense-in-depth against external
-        // pages that somehow land in the main frame).
+        // Accept messages from any frame with a local origin. Same-origin iframes
+        // are part of the same application context and should access the bridge.
+        // Cross-origin iframes are rejected by the origin check below.
         let securityOrigin = MainActor.assumeIsolated { message.frameInfo.securityOrigin }
         let isLocalOrigin = securityOrigin.host == "localhost"
             || securityOrigin.protocol == "file"
@@ -934,8 +1023,6 @@ private nonisolated final class DoufuBridgeMessageHandler: NSObject, WKScriptMes
             switch name {
             case "doufuStorage":
                 bridge.handleStorageUpdate(body)
-            case "doufuIndexedDB":
-                bridge.handleIndexedDBUpdate(body)
             case "doufuCapability":
                 bridge.handleCapabilityRequest(body)
             case "doufuMedia":
