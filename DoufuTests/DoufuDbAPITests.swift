@@ -461,4 +461,68 @@ final class DoufuDbAPITests: XCTestCase {
             XCTAssertTrue(eval("__bad")!.toBool(), "Name '\(name)' should be rejected")
         }
     }
+
+    func testLikeQuery() {
+        eval("""
+        var __likeH = null;
+        doufu.db.open('likeDB').then(function(h) { __likeH = h; });
+        """)
+        drain()
+
+        eval("""
+        doufu.db.run(__likeH, 'CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)');
+        doufu.db.run(__likeH, 'INSERT INTO items (id, name) VALUES (?, ?)', [1, 'apple']);
+        doufu.db.run(__likeH, 'INSERT INTO items (id, name) VALUES (?, ?)', [2, 'banana']);
+        doufu.db.run(__likeH, 'INSERT INTO items (id, name) VALUES (?, ?)', [3, 'apricot']);
+        doufu.db.run(__likeH, 'INSERT INTO items (id, name) VALUES (?, ?)', [4, 'cherry']);
+        """)
+        drain()
+
+        // LIKE with prefix wildcard
+        eval("""
+        var __likeResult = null;
+        doufu.db.exec(__likeH, 'SELECT name FROM items WHERE name LIKE ?', ['ap%']).then(function(r) {
+            __likeResult = r;
+        });
+        """)
+        drain()
+
+        XCTAssertEqual(eval("__likeResult.length")!.toInt32(), 1)
+        XCTAssertEqual(eval("__likeResult[0].values.length")!.toInt32(), 2) // apple, apricot
+
+        // LIKE with infix wildcard
+        eval("""
+        var __likeResult2 = null;
+        doufu.db.exec(__likeH, 'SELECT name FROM items WHERE name LIKE ?', ['%an%']).then(function(r) {
+            __likeResult2 = r;
+        });
+        """)
+        drain()
+
+        XCTAssertEqual(eval("__likeResult2[0].values.length")!.toInt32(), 1) // banana
+
+        // NOT LIKE
+        eval("""
+        var __notLikeResult = null;
+        doufu.db.exec(__likeH, 'SELECT name FROM items WHERE name NOT LIKE ?', ['%a%']).then(function(r) {
+            __notLikeResult = r;
+        });
+        """)
+        drain()
+
+        // 'cherry' is the only one without 'a'
+        XCTAssertEqual(eval("__notLikeResult[0].values.length")!.toInt32(), 1)
+        XCTAssertEqual(eval("__notLikeResult[0].values[0][0]")!.toString(), "cherry")
+
+        // LIKE case insensitivity (SQLite default for ASCII)
+        eval("""
+        var __caseResult = null;
+        doufu.db.exec(__likeH, 'SELECT name FROM items WHERE name LIKE ?', ['AP%']).then(function(r) {
+            __caseResult = r;
+        });
+        """)
+        drain()
+
+        XCTAssertEqual(eval("__caseResult[0].values.length")!.toInt32(), 2) // apple, apricot
+    }
 }

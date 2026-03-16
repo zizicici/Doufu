@@ -431,14 +431,34 @@
     return [{ columns: cols, values: values }];
   };
 
+  // Convert a SQL LIKE pattern to a RegExp.
+  // '%' → '.*', '_' → '.', literal regex chars are escaped.
+  // SQLite LIKE is case-insensitive for ASCII by default.
+  function _likeToRegex(pattern) {
+    var re = '';
+    for (var i = 0; i < pattern.length; i++) {
+      var ch = pattern[i];
+      if (ch === '%') { re += '.*'; }
+      else if (ch === '_') { re += '.'; }
+      else if (/[.*+?^${}()|[\]\\]/.test(ch)) { re += '\\' + ch; }
+      else { re += ch; }
+    }
+    return new RegExp('^' + re + '$', 'i');
+  }
+
   MockDatabase.prototype._parseWhere = function(whereStr, params, paramOffset) {
-    // Simple WHERE parser: supports col = ?, col >= ?, col <= ?, col > ?, col < ?,
+    // Simple WHERE parser: supports col op ? (op: =, >=, <=, >, <, LIKE, NOT LIKE)
     // and AND combinations
     var pIdx = paramOffset || 0;
     var conditions = [];
     var parts = whereStr.split(/\s+AND\s+/i);
     for (var i = 0; i < parts.length; i++) {
       var part = parts[i].trim();
+      var mLike = part.match(/(\w+)\s+(NOT\s+LIKE|LIKE)\s+\?/i);
+      if (mLike) {
+        conditions.push({ col: mLike[1], op: mLike[2].toUpperCase().replace(/\s+/, ' '), val: params[pIdx++] });
+        continue;
+      }
       var m = part.match(/(\w+)\s*(>=|<=|>|<|=)\s*\?/);
       if (m) {
         conditions.push({ col: m[1], op: m[2], val: params[pIdx++] });
@@ -448,12 +468,20 @@
       for (var i = 0; i < conditions.length; i++) {
         var c = conditions[i];
         var rv = row[c.col];
-        var cmp = _blobCompare(rv, c.val);
-        if (c.op === '=' && cmp !== 0) return false;
-        if (c.op === '>=' && cmp < 0) return false;
-        if (c.op === '>' && cmp <= 0) return false;
-        if (c.op === '<=' && cmp > 0) return false;
-        if (c.op === '<' && cmp >= 0) return false;
+        if (c.op === 'LIKE') {
+          var s = (rv === null || rv === undefined) ? '' : String(rv);
+          if (!_likeToRegex(c.val).test(s)) return false;
+        } else if (c.op === 'NOT LIKE') {
+          var s2 = (rv === null || rv === undefined) ? '' : String(rv);
+          if (_likeToRegex(c.val).test(s2)) return false;
+        } else {
+          var cmp = _blobCompare(rv, c.val);
+          if (c.op === '=' && cmp !== 0) return false;
+          if (c.op === '>=' && cmp < 0) return false;
+          if (c.op === '>' && cmp <= 0) return false;
+          if (c.op === '<=' && cmp > 0) return false;
+          if (c.op === '<' && cmp >= 0) return false;
+        }
       }
       return true;
     };
