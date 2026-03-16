@@ -4550,6 +4550,35 @@
         }
       }
     },
+    "file_browser.upload.conflict_folder.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "\"%@\" conflicts with an existing folder and was skipped."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「%@」与已有文件夹同名，已跳过。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「%@」與已有資料夾同名，已跳過。"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「%@」與已有資料夾同名，已跳過。"
+          }
+        }
+      }
+    },
     "file_browser.upload.overwrite.replace" : {
       "extractionState" : "manual",
       "localizations" : {

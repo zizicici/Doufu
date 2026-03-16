@@ -131,10 +131,7 @@ final class ProjectFileBrowserViewController: UITableViewController {
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "ProjectFileRow")
 
         if directoryPickerMode {
-            let selectStyle: UIBarButtonItem.Style = {
-                if #available(iOS 26.0, *) { return .prominent }
-                return .done
-            }()
+            let selectStyle: UIBarButtonItem.Style = .prominent
             navigationItem.rightBarButtonItem = UIBarButtonItem(
                 title: String(localized: "file_browser.move.select_directory"),
                 style: selectStyle,
@@ -710,7 +707,23 @@ extension ProjectFileBrowserViewController: UIDocumentPickerDelegate {
             return
         }
 
-        if fileManager.fileExists(atPath: target.path) {
+        var isDir: ObjCBool = false
+        let exists = fileManager.fileExists(atPath: target.path, isDirectory: &isDir)
+
+        if exists, isDir.boolValue {
+            let alert = UIAlertController(
+                title: String(format: String(localized: "file_browser.upload.conflict_folder.title"), url.lastPathComponent),
+                message: nil,
+                preferredStyle: .alert
+            )
+            alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default) { [weak self] _ in
+                self?.performUpload(urls: urls, index: index + 1, didCopyAny: didCopyAny)
+            })
+            present(alert, animated: true)
+            return
+        }
+
+        if exists {
             let alert = UIAlertController(
                 title: String(format: String(localized: "file_browser.upload.overwrite.title"), url.lastPathComponent),
                 message: nil,
