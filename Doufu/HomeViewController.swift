@@ -537,6 +537,11 @@ final class HomeViewController: UIViewController {
         }
     }
 
+    func openProjectByID(_ projectID: String) {
+        guard let record = AppProjectStore.shared.loadProject(id: projectID) else { return }
+        openProject(record, cellIndexPath: nil, initialRoute: .workspace)
+    }
+
     private func openProject(_ project: HomeProjectItem, at indexPath: IndexPath? = nil) {
         let record = AppProjectRecord(
             id: project.id,

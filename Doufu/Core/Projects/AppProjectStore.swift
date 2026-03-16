@@ -174,6 +174,30 @@ final class AppProjectStore {
         }
     }
 
+    func loadProject(id projectID: String) -> AppProjectRecord? {
+        guard let dbProject = try? dbPool.read({ db in
+            try DBProject.fetchOne(db, key: projectID)
+        }) else {
+            return nil
+        }
+        guard let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            return nil
+        }
+        let projectURL = documentsURL
+            .appendingPathComponent("Projects", isDirectory: true)
+            .appendingPathComponent(projectID, isDirectory: true)
+        guard fileManager.fileExists(atPath: projectURL.path) else {
+            return nil
+        }
+        return AppProjectRecord(
+            id: dbProject.id,
+            name: dbProject.title.isEmpty ? dbProject.id : dbProject.title,
+            projectURL: projectURL,
+            createdAt: DatabaseTimestamp.fromNanos(dbProject.createdAt),
+            updatedAt: DatabaseTimestamp.fromNanos(dbProject.updatedAt)
+        )
+    }
+
     func loadProjectName(projectURL: URL) -> String {
         let projectID = projectURL.lastPathComponent
         guard let title = try? dbPool.read({ db in

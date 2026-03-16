@@ -12,6 +12,7 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     var window: UIWindow?
 
     private static let importableExtensions: Set<String> = ["doufu", "doufull"]
+    private var openProjectObserver: NSObjectProtocol?
 
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
         guard let windowScene = (scene as? UIWindowScene) else { return }
@@ -27,6 +28,23 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         if let url = connectionOptions.urlContexts.first?.url,
            Self.importableExtensions.contains(url.pathExtension.lowercased()) {
             homeViewController.importProjectArchive(from: url)
+        }
+
+        // Listen for App Intent navigation requests
+        openProjectObserver = NotificationCenter.default.addObserver(
+            forName: OpenProjectIntent.openProjectNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let projectID = notification.userInfo?["projectID"] as? String,
+                  let homeVC = self?.navigateToHomeViewController() else { return }
+            homeVC.openProjectByID(projectID)
+        }
+
+        // Handle App Intent that triggered a cold launch
+        if let pendingID = OpenProjectIntent.pendingProjectID {
+            OpenProjectIntent.pendingProjectID = nil
+            homeViewController.openProjectByID(pendingID)
         }
     }
 
@@ -80,7 +98,12 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         return nav.viewControllers.first as? HomeViewController
     }
 
-    func sceneDidDisconnect(_ scene: UIScene) {}
+    func sceneDidDisconnect(_ scene: UIScene) {
+        if let observer = openProjectObserver {
+            NotificationCenter.default.removeObserver(observer)
+            openProjectObserver = nil
+        }
+    }
     func sceneDidBecomeActive(_ scene: UIScene) {}
     func sceneWillResignActive(_ scene: UIScene) {}
     func sceneWillEnterForeground(_ scene: UIScene) {}
