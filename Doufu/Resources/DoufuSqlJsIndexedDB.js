@@ -152,6 +152,35 @@
     return parsed;
   }
 
+  var _CHUNK_SIZE = 500;
+
+  function _parseInChunks(rawValues, transform, callback, errback) {
+    var total = rawValues.length;
+    if (total <= _CHUNK_SIZE) {
+      try {
+        var out = new Array(total);
+        for (var i = 0; i < total; i++) out[i] = transform(rawValues[i]);
+      } catch(e) { if (errback) errback(e); return; }
+      callback(out);
+      return;
+    }
+    var out = new Array(total);
+    var offset = 0;
+    function processChunk() {
+      try {
+        var end = Math.min(offset + _CHUNK_SIZE, total);
+        for (var i = offset; i < end; i++) out[i] = transform(rawValues[i]);
+        offset = end;
+      } catch(e) { if (errback) errback(e); return; }
+      if (offset < total) {
+        setTimeout(processChunk, 0);
+      } else {
+        callback(out);
+      }
+    }
+    processChunk();
+  }
+
   function _clone(v) {
     var json;
     try {
@@ -857,15 +886,13 @@
   };
 
   // Deduplicate records for nextunique/prevunique cursor directions.
-  // Keeps only the first record per key (records are already sorted).
+  // Keeps only the first record per key. Records are already sorted,
+  // so duplicates are adjacent — O(N) single pass.
   function _deduplicateByKey(recs) {
-    var seen = [], out = [];
-    for (var i = 0; i < recs.length; i++) {
-      var dominated = false;
-      for (var j = 0; j < seen.length; j++) {
-        if (_cmp(recs[i].key, seen[j]) === 0) { dominated = true; break; }
-      }
-      if (!dominated) { seen.push(recs[i].key); out.push(recs[i]); }
+    if (recs.length === 0) return recs;
+    var out = [recs[0]];
+    for (var i = 1; i < recs.length; i++) {
+      if (_cmp(recs[i].key, recs[i - 1].key) !== 0) out.push(recs[i]);
     }
     return out;
   }
@@ -1245,13 +1272,14 @@
     if (cnt !== undefined) sql += ' LIMIT ' + parseInt(cnt);
     var params = [this._storeId].concat(rng.params);
     var rows = _db.exec(sql, params);
-    var out = [];
-    if (rows.length > 0) {
-      for (var i = 0; i < rows[0].values.length; i++) {
-        out.push(_parseValue(rows[0].values[i][0]));
-      }
+    if (rows.length === 0 || rows[0].values.length === 0) {
+      req._succeed([]);
+    } else {
+      _parseInChunks(rows[0].values,
+        function(row) { return _parseValue(row[0]); },
+        function(out) { req._succeed(out); },
+        function(err) { req._fail(new DOMException(err.message || 'Parse error', 'DataError')); });
     }
-    req._succeed(out);
     return req;
   };
 
@@ -1266,13 +1294,14 @@
     if (cnt !== undefined) sql += ' LIMIT ' + parseInt(cnt);
     var params = [this._storeId].concat(rng.params);
     var rows = _db.exec(sql, params);
-    var out = [];
-    if (rows.length > 0) {
-      for (var i = 0; i < rows[0].values.length; i++) {
-        out.push(_blobToKey(rows[0].values[i][0]));
-      }
+    if (rows.length === 0 || rows[0].values.length === 0) {
+      req._succeed([]);
+    } else {
+      _parseInChunks(rows[0].values,
+        function(row) { return _blobToKey(row[0]); },
+        function(out) { req._succeed(out); },
+        function(err) { req._fail(new DOMException(err.message || 'Parse error', 'DataError')); });
     }
-    req._succeed(out);
     return req;
   };
 
@@ -1396,16 +1425,24 @@
     var sql = 'SELECT key, value FROM records WHERE object_store_id = ?' + rng.where + ' ORDER BY key ' + order;
     var params = [this._storeId].concat(rng.params);
     var rows = _db.exec(sql, params);
-    var recs = [];
-    if (rows.length > 0) {
-      for (var i = 0; i < rows[0].values.length; i++) {
-        var k = _blobToKey(rows[0].values[i][0]);
-        recs.push({ key: k, primaryKey: k, value: _parseValue(rows[0].values[i][1]) });
-      }
+    var store = this, tx = this._tx, storeId = this._storeId, direction = dir || 'next';
+    if (rows.length === 0 || rows[0].values.length === 0) {
+      var c = new _IDBCursor(store, [], direction, req, tx, storeId, false);
+      c._advance(1);
+    } else {
+      _parseInChunks(rows[0].values,
+        function(row) {
+          var k = _blobToKey(row[0]);
+          return { key: k, primaryKey: k, value: _parseValue(row[1]) };
+        },
+        function(recs) {
+          if (dir === 'nextunique' || dir === 'prevunique') recs = _deduplicateByKey(recs);
+          var c = new _IDBCursor(store, recs, direction, req, tx, storeId, false);
+          c._advance(1);
+        },
+        function(err) { req._fail(new DOMException(err.message || 'Parse error', 'DataError')); });
     }
-    if (dir === 'nextunique' || dir === 'prevunique') recs = _deduplicateByKey(recs);
-    var c = new _IDBCursor(this, recs, dir || 'next', req, this._tx, this._storeId, false);
-    c._advance(1); return req;
+    return req;
   };
 
   _IDBObjectStore.prototype.openKeyCursor = function(query, dir) {
@@ -1419,16 +1456,24 @@
     var sql = 'SELECT key FROM records WHERE object_store_id = ?' + rng.where + ' ORDER BY key ' + order;
     var params = [this._storeId].concat(rng.params);
     var rows = _db.exec(sql, params);
-    var recs = [];
-    if (rows.length > 0) {
-      for (var i = 0; i < rows[0].values.length; i++) {
-        var k = _blobToKey(rows[0].values[i][0]);
-        recs.push({ key: k, primaryKey: k });
-      }
+    var store = this, tx = this._tx, storeId = this._storeId, direction = dir || 'next';
+    if (rows.length === 0 || rows[0].values.length === 0) {
+      var c = new _IDBCursor(store, [], direction, req, tx, storeId, true);
+      c._advance(1);
+    } else {
+      _parseInChunks(rows[0].values,
+        function(row) {
+          var k = _blobToKey(row[0]);
+          return { key: k, primaryKey: k };
+        },
+        function(recs) {
+          if (dir === 'nextunique' || dir === 'prevunique') recs = _deduplicateByKey(recs);
+          var c = new _IDBCursor(store, recs, direction, req, tx, storeId, true);
+          c._advance(1);
+        },
+        function(err) { req._fail(new DOMException(err.message || 'Parse error', 'DataError')); });
     }
-    if (dir === 'nextunique' || dir === 'prevunique') recs = _deduplicateByKey(recs);
-    var c = new _IDBCursor(this, recs, dir || 'next', req, this._tx, this._storeId, true);
-    c._advance(1); return req;
+    return req;
   };
 
   // ---- IDBTransaction ----
@@ -1440,6 +1485,7 @@
     this._dirty = false; this._aborted = false; this._committed = false;
     this._error = null; this._savepointName = null;
     this._pendingRequests = 0;
+    this._holdAutoCommit = false;
     this.oncomplete = null; this.onerror = null; this.onabort = null;
     _mixEvents(this);
     // Create a SAVEPOINT for readwrite/versionchange so abort() can rollback.
@@ -1450,7 +1496,7 @@
     // Auto-commit after current task completes (only if no pending requests)
     var self = this;
     setTimeout(function() {
-      if (self._pendingRequests === 0) self._tryCommit();
+      if (!self._holdAutoCommit && self._pendingRequests === 0) self._tryCommit();
     }, 0);
   }
   Object.defineProperties(_IDBTransaction.prototype, {
@@ -1495,9 +1541,17 @@
   _IDBTransaction.prototype._scheduleCommit = function() {
     var self = this;
     _async(function() {
-      if (self._pendingRequests === 0) self._tryCommit();
+      if (!self._holdAutoCommit && self._pendingRequests === 0) self._tryCommit();
     });
   };
+
+  function _awaitPending(tx, callback) {
+    if (tx._pendingRequests === 0) {
+      callback();
+    } else {
+      _async(function() { _awaitPending(tx, callback); });
+    }
+  }
 
   // ---- IDBDatabase ----
 
@@ -1611,14 +1665,61 @@
 
             var evt = new _VersionChangeEvent('upgradeneeded', oldVersion, targetVersion);
             evt.target = req;
-            if (req.onupgradeneeded) req.onupgradeneeded.call(req, evt);
-            var lisUpgrade = req._listeners && req._listeners['upgradeneeded'];
-            if (lisUpgrade) lisUpgrade.forEach(function(fn) { fn.call(req, evt); });
 
-            tx._dirty = true; tx._tryCommit();
-            db._versionChangeTx = null;
-            req.readyState = 'done'; req.transaction = null;
-            _async(function() { req.dispatchEvent(new _Event('success')); });
+            var _upgradeThenables = [];
+            try {
+              if (req.onupgradeneeded) {
+                var hr = req.onupgradeneeded.call(req, evt);
+                if (hr && typeof hr.then === 'function') _upgradeThenables.push(hr);
+              }
+              var lisUpgrade = req._listeners && req._listeners['upgradeneeded'];
+              if (lisUpgrade) lisUpgrade.forEach(function(fn) {
+                var lr = fn.call(req, evt);
+                if (lr && typeof lr.then === 'function') _upgradeThenables.push(lr);
+              });
+            } catch(upgradeErr) {
+              tx.abort();
+              db._versionChangeTx = null;
+              req.readyState = 'done'; req.transaction = null;
+              req._fail(new DOMException(
+                upgradeErr && upgradeErr.message || 'Upgrade handler threw', 'AbortError'));
+              return;
+            }
+
+            if (_upgradeThenables.length > 0) {
+              var _upgradeThenable = _upgradeThenables.length === 1
+                ? _upgradeThenables[0]
+                : { then: function(res, rej) {
+                    var remaining = _upgradeThenables.length, settled = false;
+                    function onDone() { if (!settled && --remaining === 0) { settled = true; res(); } }
+                    function onFail(e) { if (!settled) { settled = true; rej(e); } }
+                    for (var ti = 0; ti < _upgradeThenables.length; ti++)
+                      _upgradeThenables[ti].then(onDone, onFail);
+                  }};
+              // ---- Async handler path ----
+              tx._holdAutoCommit = true;
+              _upgradeThenable.then(function() {
+                tx._holdAutoCommit = false;
+                tx._dirty = true;
+                _awaitPending(tx, function() {
+                  tx._tryCommit();
+                  db._versionChangeTx = null;
+                  req.readyState = 'done'; req.transaction = null;
+                  _async(function() { req.dispatchEvent(new _Event('success')); });
+                });
+              }, function(err) {
+                tx.abort();
+                db._versionChangeTx = null;
+                req.readyState = 'done'; req.transaction = null;
+                req._fail(new DOMException(err && err.message || 'Upgrade failed', 'AbortError'));
+              });
+            } else {
+              // ---- Sync handler path (unchanged) ----
+              tx._dirty = true; tx._tryCommit();
+              db._versionChangeTx = null;
+              req.readyState = 'done'; req.transaction = null;
+              _async(function() { req.dispatchEvent(new _Event('success')); });
+            }
           } else {
             var db2 = new _IDBDatabase(name, dbInfo.version, dbInfo.id);
             req._succeed(db2);

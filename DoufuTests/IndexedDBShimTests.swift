@@ -1723,4 +1723,439 @@ final class IndexedDBShimTests: XCTestCase {
         XCTAssertTrue(eval("typeof IDBVersionChangeEvent === 'function'")!.toBool())
         XCTAssertTrue(eval("typeof IDBKeyRange === 'function'")!.toBool())
     }
+
+    // MARK: - Async onupgradeneeded
+
+    func testAsyncOnupgradeneeded() {
+        eval("""
+        var __asyncDB = null, __asyncUpgradeRan = false;
+        var req = indexedDB.open('asyncDB', 1);
+        req.onupgradeneeded = function(e) {
+            var db = e.target.result;
+            return { then: function(resolve) {
+                db.createObjectStore('items', { keyPath: 'id' });
+                __asyncUpgradeRan = true;
+                resolve();
+            }};
+        };
+        req.onsuccess = function(e) { __asyncDB = e.target.result; };
+        """)
+        drain()
+
+        XCTAssertTrue(eval("__asyncUpgradeRan")!.toBool())
+        XCTAssertTrue(eval("__asyncDB !== null")!.toBool())
+        XCTAssertTrue(eval("__asyncDB.objectStoreNames.contains('items')")!.toBool())
+    }
+
+    func testAsyncOnupgradeneededViaAddEventListener() {
+        eval("""
+        var __lisDB = null, __lisUpgradeRan = false;
+        var req = indexedDB.open('lisAsyncDB', 1);
+        req.addEventListener('upgradeneeded', function(e) {
+            var db = e.target.result;
+            return { then: function(resolve) {
+                db.createObjectStore('items', { keyPath: 'id' });
+                __lisUpgradeRan = true;
+                resolve();
+            }};
+        });
+        req.onsuccess = function(e) { __lisDB = e.target.result; };
+        """)
+        drain()
+
+        XCTAssertTrue(eval("__lisUpgradeRan")!.toBool())
+        XCTAssertTrue(eval("__lisDB !== null")!.toBool())
+        XCTAssertTrue(eval("__lisDB.objectStoreNames.contains('items')")!.toBool())
+    }
+
+    func testAsyncOnupgradeneededWithPut() {
+        eval("""
+        var __asyncDB2 = null, __asyncPutDone = false;
+        var req = indexedDB.open('asyncDB2', 1);
+        req.onupgradeneeded = function(e) {
+            var db = e.target.result;
+            return { then: function(resolve) {
+                var store = db.createObjectStore('items', { keyPath: 'id' });
+                var putReq = store.put({ id: 1, name: 'Alice' });
+                putReq.onsuccess = function() {
+                    __asyncPutDone = true;
+                    resolve();
+                };
+            }};
+        };
+        req.onsuccess = function(e) { __asyncDB2 = e.target.result; };
+        """)
+        drain()
+
+        XCTAssertTrue(eval("__asyncPutDone")!.toBool())
+        XCTAssertTrue(eval("__asyncDB2 !== null")!.toBool())
+
+        // Verify data is readable
+        eval("""
+        var __asyncGetResult = null;
+        var tx = __asyncDB2.transaction('items', 'readonly');
+        var store = tx.objectStore('items');
+        var gr = store.get(1);
+        gr.onsuccess = function() { __asyncGetResult = gr.result; };
+        """)
+        drain()
+
+        XCTAssertEqual(eval("__asyncGetResult.name")!.toString(), "Alice")
+    }
+
+    func testAsyncUpgradeFailureAborts() {
+        eval("""
+        var __asyncErr = null, __asyncSuccessCalled = false;
+        var req = indexedDB.open('asyncFailDB', 1);
+        req.onupgradeneeded = function(e) {
+            var db = e.target.result;
+            db.createObjectStore('items', { keyPath: 'id' });
+            return { then: function(resolve, reject) {
+                reject(new Error('upgrade failed'));
+            }};
+        };
+        req.onsuccess = function() { __asyncSuccessCalled = true; };
+        req.onerror = function() { __asyncErr = req.error; };
+        """)
+        drain()
+
+        XCTAssertFalse(eval("__asyncSuccessCalled")!.toBool())
+        XCTAssertTrue(eval("__asyncErr !== null")!.toBool())
+        XCTAssertEqual(eval("__asyncErr.name")!.toString(), "AbortError")
+    }
+
+    func testUpgradeHandlerSyncThrowAborts() {
+        eval("""
+        var __throwErr = null, __throwSuccess = false;
+        var req = indexedDB.open('throwDB', 1);
+        req.onupgradeneeded = function(e) {
+            var db = e.target.result;
+            db.createObjectStore('items', { keyPath: 'id' });
+            throw new Error('sync boom');
+        };
+        req.onsuccess = function() { __throwSuccess = true; };
+        req.onerror = function() { __throwErr = req.error; };
+        """)
+        drain()
+
+        XCTAssertFalse(eval("__throwSuccess")!.toBool())
+        XCTAssertTrue(eval("__throwErr !== null")!.toBool())
+        XCTAssertEqual(eval("__throwErr.name")!.toString(), "AbortError")
+        // Store should NOT exist — abort rolled back createObjectStore
+        eval("""
+        var __throwDB2 = null;
+        var req2 = indexedDB.open('throwDB', 1);
+        req2.onupgradeneeded = function(e) {
+            // Fresh upgrade because previous was aborted
+            __throwDB2 = e.target.result;
+        };
+        req2.onsuccess = function(e) { __throwDB2 = e.target.result; };
+        """)
+        drain()
+        // Database should be at version 1 now (fresh)
+        XCTAssertTrue(eval("__throwDB2 !== null")!.toBool())
+    }
+
+    func testAsyncUpgradeDeferredResolve() {
+        // Regression: resolve() deferred via setTimeout — _scheduleCommit must NOT
+        // commit while _holdAutoCommit is true, otherwise the second put would throw
+        // TransactionInactiveError because the transaction was prematurely committed.
+        eval("""
+        var __deferDB = null, __deferPut2Done = false;
+        var req = indexedDB.open('deferDB', 1);
+        req.onupgradeneeded = function(e) {
+            var db = e.target.result;
+            return { then: function(resolve) {
+                var store = db.createObjectStore('items', { keyPath: 'id' });
+                store.put({ id: 1, name: 'first' });
+                // Defer resolve via macrotask — simulates await gap
+                setTimeout(function() {
+                    store.put({ id: 2, name: 'second' });
+                    var pr = store.put({ id: 3, name: 'third' });
+                    pr.onsuccess = function() {
+                        __deferPut2Done = true;
+                        resolve();
+                    };
+                }, 0);
+            }};
+        };
+        req.onsuccess = function(e) { __deferDB = e.target.result; };
+        """)
+        drain()
+
+        XCTAssertTrue(eval("__deferPut2Done")!.toBool())
+        XCTAssertTrue(eval("__deferDB !== null")!.toBool())
+
+        // Verify all three records persisted
+        eval("""
+        var __deferCount = 0;
+        var tx = __deferDB.transaction('items', 'readonly');
+        var store = tx.objectStore('items');
+        var cr = store.count();
+        cr.onsuccess = function() { __deferCount = cr.result; };
+        """)
+        drain()
+
+        XCTAssertEqual(eval("__deferCount")!.toInt32(), 3)
+    }
+
+    // MARK: - Large dataset chunked parsing
+
+    /// Helper: open DB with 'items' store and insert N records.
+    private func openDBWithRecords(_ count: Int, dbName: String = "chunkDB") {
+        eval("""
+        var __chunkDB = null;
+        var req = indexedDB.open('\(dbName)', 1);
+        req.onupgradeneeded = function(e) {
+            var db = e.target.result;
+            db.createObjectStore('items', { keyPath: 'id' });
+        };
+        req.onsuccess = function(e) { __chunkDB = e.target.result; };
+        """)
+        drain()
+
+        // Insert in batches to avoid overly long single script
+        let batchSize = 200
+        var offset = 0
+        while offset < count {
+            let end = min(offset + batchSize, count)
+            var puts = ""
+            for i in offset..<end {
+                puts += "store.put({ id: \(i), value: 'item_\(i)' });\n"
+            }
+            eval("""
+            var tx = __chunkDB.transaction('items', 'readwrite');
+            var store = tx.objectStore('items');
+            \(puts)
+            """)
+            drain()
+            offset = end
+        }
+    }
+
+    func testGetAllLargeDataset() {
+        openDBWithRecords(600)
+
+        eval("""
+        var __allResult = null;
+        var tx = __chunkDB.transaction('items', 'readonly');
+        var store = tx.objectStore('items');
+        var r = store.getAll();
+        r.onsuccess = function() { __allResult = r.result; };
+        """)
+        drain()
+
+        XCTAssertEqual(eval("__allResult.length")!.toInt32(), 600)
+        XCTAssertEqual(eval("__allResult[0].id")!.toInt32(), 0)
+        XCTAssertEqual(eval("__allResult[599].id")!.toInt32(), 599)
+    }
+
+    func testOpenCursorLargeDataset() {
+        openDBWithRecords(600, dbName: "chunkCursorDB")
+
+        eval("""
+        var __cursorCount = 0;
+        var tx = __chunkDB.transaction('items', 'readonly');
+        var store = tx.objectStore('items');
+        var r = store.openCursor();
+        r.onsuccess = function() {
+            var cursor = r.result;
+            if (cursor) {
+                __cursorCount++;
+                cursor.continue();
+            }
+        };
+        """)
+        drain()
+
+        XCTAssertEqual(eval("__cursorCount")!.toInt32(), 600)
+    }
+
+    func testGetAllKeysLargeDataset() {
+        openDBWithRecords(600, dbName: "chunkKeysDB")
+
+        eval("""
+        var __keysResult = null;
+        var tx = __chunkDB.transaction('items', 'readonly');
+        var store = tx.objectStore('items');
+        var r = store.getAllKeys();
+        r.onsuccess = function() { __keysResult = r.result; };
+        """)
+        drain()
+
+        XCTAssertEqual(eval("__keysResult.length")!.toInt32(), 600)
+        XCTAssertEqual(eval("__keysResult[0]")!.toInt32(), 0)
+        XCTAssertEqual(eval("__keysResult[599]")!.toInt32(), 599)
+    }
+
+    func testChunkedGetAllThenPutInSameTransaction() {
+        openDBWithRecords(600, dbName: "chunkTxDB")
+
+        eval("""
+        var __txComplete = false, __putDone = false, __finalCount = 0;
+        var tx = __chunkDB.transaction('items', 'readwrite');
+        var store = tx.objectStore('items');
+        var r = store.getAll();
+        r.onsuccess = function() {
+            // Put a new record after chunked getAll completes
+            var putReq = store.put({ id: 9999, value: 'extra' });
+            putReq.onsuccess = function() { __putDone = true; };
+        };
+        tx.oncomplete = function() { __txComplete = true; };
+        """)
+        drain()
+
+        XCTAssertTrue(eval("__putDone")!.toBool())
+        XCTAssertTrue(eval("__txComplete")!.toBool())
+
+        // Verify the new record persisted
+        eval("""
+        var tx2 = __chunkDB.transaction('items', 'readonly');
+        var store2 = tx2.objectStore('items');
+        var cr = store2.count();
+        cr.onsuccess = function() { __finalCount = cr.result; };
+        """)
+        drain()
+
+        XCTAssertEqual(eval("__finalCount")!.toInt32(), 601)
+    }
+
+    func testOpenKeyCursorLargeDataset() {
+        openDBWithRecords(600, dbName: "chunkKeyCursorDB")
+
+        eval("""
+        var __keyCursorCount = 0, __firstKey = -1, __lastKey = -1;
+        var tx = __chunkDB.transaction('items', 'readonly');
+        var store = tx.objectStore('items');
+        var r = store.openKeyCursor();
+        r.onsuccess = function() {
+            var cursor = r.result;
+            if (cursor) {
+                if (__firstKey === -1) __firstKey = cursor.key;
+                __lastKey = cursor.key;
+                __keyCursorCount++;
+                cursor.continue();
+            }
+        };
+        """)
+        drain()
+
+        XCTAssertEqual(eval("__keyCursorCount")!.toInt32(), 600)
+        XCTAssertEqual(eval("__firstKey")!.toInt32(), 0)
+        XCTAssertEqual(eval("__lastKey")!.toInt32(), 599)
+    }
+
+    func testCursorNextUniqueLargeDataset() {
+        // Insert 600 records with duplicate keys via an index to exercise
+        // _deduplicateByKey inside the _parseInChunks callback.
+        eval("""
+        var __dedupDB = null;
+        var req = indexedDB.open('dedupDB', 1);
+        req.onupgradeneeded = function(e) {
+            var db = e.target.result;
+            var store = db.createObjectStore('items', { keyPath: 'id' });
+            store.createIndex('cat', 'category');
+        };
+        req.onsuccess = function(e) { __dedupDB = e.target.result; };
+        """)
+        drain()
+
+        // 600 records, 200 unique categories → each category has 3 records
+        let batchSize = 200
+        var offset = 0
+        while offset < 600 {
+            let end = min(offset + batchSize, 600)
+            var puts = ""
+            for i in offset..<end {
+                puts += "store.put({ id: \(i), category: \(i % 200) });\n"
+            }
+            eval("""
+            var tx = __dedupDB.transaction('items', 'readwrite');
+            var store = tx.objectStore('items');
+            \(puts)
+            """)
+            drain()
+            offset = end
+        }
+
+        eval("""
+        var __uniqueCount = 0;
+        var tx = __dedupDB.transaction('items', 'readonly');
+        var store = tx.objectStore('items');
+        var idx = store.index('cat');
+        var r = idx.openCursor(null, 'nextunique');
+        r.onsuccess = function() {
+            var cursor = r.result;
+            if (cursor) {
+                __uniqueCount++;
+                cursor.continue();
+            }
+        };
+        """)
+        drain()
+
+        XCTAssertEqual(eval("__uniqueCount")!.toInt32(), 200)
+    }
+
+    // MARK: - Async upgrade event ordering & multi-thenable
+
+    func testAsyncUpgradeEventOrdering() {
+        // IDB spec: oncomplete (on tx) must fire before onsuccess (on open request)
+        eval("""
+        var __eventLog = [];
+        var req = indexedDB.open('orderDB', 1);
+        req.onupgradeneeded = function(e) {
+            var db = e.target.result;
+            var tx = e.target.transaction;
+            tx.oncomplete = function() { __eventLog.push('complete'); };
+            return { then: function(resolve) {
+                db.createObjectStore('items', { keyPath: 'id' });
+                resolve();
+            }};
+        };
+        req.onsuccess = function() { __eventLog.push('success'); };
+        """)
+        drain()
+
+        XCTAssertEqual(eval("__eventLog.length")!.toInt32(), 2)
+        XCTAssertEqual(eval("__eventLog[0]")!.toString(), "complete")
+        XCTAssertEqual(eval("__eventLog[1]")!.toString(), "success")
+    }
+
+    func testAsyncUpgradeMultipleThenables() {
+        // Both onupgradeneeded and addEventListener return thenables —
+        // transaction must wait for both before committing.
+        eval("""
+        var __multiDB = null, __handlerDone = false, __listenerDone = false;
+        var req = indexedDB.open('multiThenDB', 1);
+        req.onupgradeneeded = function(e) {
+            var db = e.target.result;
+            return { then: function(resolve) {
+                db.createObjectStore('store1', { keyPath: 'id' });
+                setTimeout(function() {
+                    __handlerDone = true;
+                    resolve();
+                }, 0);
+            }};
+        };
+        req.addEventListener('upgradeneeded', function(e) {
+            var db = e.target.result;
+            return { then: function(resolve) {
+                db.createObjectStore('store2', { keyPath: 'id' });
+                setTimeout(function() {
+                    __listenerDone = true;
+                    resolve();
+                }, 0);
+            }};
+        });
+        req.onsuccess = function(e) { __multiDB = e.target.result; };
+        """)
+        drain()
+
+        XCTAssertTrue(eval("__handlerDone")!.toBool())
+        XCTAssertTrue(eval("__listenerDone")!.toBool())
+        XCTAssertTrue(eval("__multiDB !== null")!.toBool())
+        XCTAssertTrue(eval("__multiDB.objectStoreNames.contains('store1')")!.toBool())
+        XCTAssertTrue(eval("__multiDB.objectStoreNames.contains('store2')")!.toBool())
+    }
 }

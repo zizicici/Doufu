@@ -45,7 +45,7 @@ final class PromptBuilder {
         - **Validate**: `validate_code` after completing a group of related changes — not after every edit.
 
         ## Doufu Runtime Environment
-        Pages run inside a native iOS app (WKWebView served via localhost). `fetch()` is CORS-free. `localStorage` and `indexedDB` are shimmed and persisted to disk (survive cache clears). **Important**: `indexedDB` `onupgradeneeded` handlers must be synchronous — do NOT use `async`/`await` inside them. For direct SQL access, `doufu.db.open(name)`/`exec`/`run`/`close` is available. See AGENTS.md for details.
+        Pages run inside a native iOS app (WKWebView served via localhost). `fetch()` is CORS-free. `localStorage` and `indexedDB` are shimmed and persisted to disk (survive cache clears). `indexedDB` supports async `onupgradeneeded` handlers (returning a Promise/thenable). For direct SQL access, `doufu.db.open(name)`/`exec`/`run`/`close` is available. See AGENTS.md for details.
         Standard browser APIs for camera, microphone, geolocation, and clipboard are **blocked**. Native alternatives are available via the `doufu.*` JavaScript API — call the `doufu_api_docs` tool to see usage documentation before writing code that uses these features.
 
         ## Device & Layout Context

@@ -356,16 +356,17 @@
 3. **SQLite Schema**：5 张表 — `databases`、`object_stores`、`indexes`、`records`（value 为 JSON）、`index_records`。
 4. **Key 编码**：二进制编码（类型前缀 + 值），通过 SQLite BLOB 比较保持 IDB 规范排序（number < date < string < binary < array）。数字使用 IEEE 754 sign-flip 编码。
 5. **Structured Clone**：支持 Date、ArrayBuffer、TypedArray（全 9 种）、DataView、Blob、File、Map、Set、RegExp、Error、ImageData、NaN、Infinity、-0、undefined。Blob/File 异步提取 ArrayBuffer 后转 base64 存储。循环引用检测并抛出 DataCloneError。
-6. **持久化**：写事务提交后延迟 500ms HTTP PUT 到 `/__doufu_appdata__/indexedDB.sqlite`；beforeunload/pagehide 使用同步 XHR 确保写入。
-7. **事务**：readwrite/versionchange 事务创建 SAVEPOINT，abort() 时 ROLLBACK，commit 时 RELEASE。自动提交：pending requests 归零时 microtask 调度提交。
-8. **iframe 共享**：same-origin iframe 代理 `window.indexedDB` + 9 个全局构造函数 + `doufu.db` 到 parent，跳过 sql.js WASM 加载。
-9. **清除**：`clearIndexedDB()` 调用 JS 侧 `__doufuIDBCancelPersist()`（取消 flush timer + close db），然后删除 `AppData/indexedDB.sqlite`。
-10. **JSON 迁移**：首次加载时若无 `.sqlite` 但存在 `.json`（旧格式），自动迁移为 SQLite 并持久化。
-11. **已知限制**：
-    - `onupgradeneeded` handler 同步执行，async 操作（如 fetch）会在事务已提交后失败
-    - cursor 一次性快照所有匹配 record，迭代中新增的 record 不可见
+6. **持久化**：写事务提交后延迟 80ms HTTP PUT 到 `/__doufu_appdata__/indexedDB.sqlite`；beforeunload/pagehide 使用同步 XHR 确保写入。
+7. **事务**：readwrite/versionchange 事务创建 SAVEPOINT，abort() 时 ROLLBACK，commit 时 RELEASE。自动提交：`_scheduleCommit` 检查 `!_holdAutoCommit && _pendingRequests === 0` 后调用 `_tryCommit()`（幂等）。
+8. **async onupgradeneeded**：检测 `onupgradeneeded` / `addEventListener('upgradeneeded')` handler 返回的 thenable。async 路径通过 `_holdAutoCommit` 阻止 constructor setTimeout 和 `_scheduleCommit` 提前提交，`_awaitPending` 微任务轮询等待所有 IDBRequest 完成后 commit。多 thenable 聚合使用手动计数器 + settled 守卫。handler 同步 throw 被 try/catch 捕获后 abort + fail。
+9. **大数据集分块**：`getAll`/`getAllKeys`/`openCursor`/`openKeyCursor` 对 >500 条结果使用 `_parseInChunks`（每 500 行 `setTimeout(0)` 让出主线程）。分块期间 `_pendingRequests > 0` 阻止事务提前提交。transform 异常由 errback 捕获后 `req._fail(DataError)`，避免事务挂死。
+10. **iframe 共享**：same-origin iframe 代理 `window.indexedDB` + 9 个全局构造函数 + `doufu.db` 到 parent，跳过 sql.js WASM 加载。
+11. **清除**：`clearIndexedDB()` 调用 JS 侧 `__doufuIDBCancelPersist()`（取消 flush timer + close db），然后删除 `AppData/indexedDB.sqlite`。
+12. **JSON 迁移**：首次加载时若无 `.sqlite` 但存在 `.json`（旧格式），自动迁移为 SQLite 并持久化。
+13. **已知限制**：
+    - cursor 一次性快照所有匹配 record，迭代中新增的 record 不可见（符合 IDB spec 快照语义）
     - 无 `blocked` / `versionchange` 事件（单页面场景无影响）
-    - `instanceof IDBDatabase` 等检查返回 `false`
+    - `DOMStringList` / `Event` / `IDBFactory` 的 instanceof 检查失败（核心 IDB 类型如 IDBDatabase/IDBRequest/IDBTransaction 的 instanceof 正常）
     - Blob 与非 Blob 混合写入同一事务时可能产生排序问题（async/sync 混合）
 
 ### doufu.db 直接 SQL API
