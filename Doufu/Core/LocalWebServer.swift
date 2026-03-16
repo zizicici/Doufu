@@ -22,6 +22,10 @@ final class LocalWebServer: @unchecked Sendable {
     private let urlSession: URLSession
     private(set) var port: UInt16 = 0
 
+    /// Per-launch secret token. Required as `__dt` query param on
+    /// `/__doufu_proxy__` and `/__doufu_appdata__/` endpoints.
+    let authToken = UUID().uuidString
+
     /// Optional secondary directory served under the `/__doufu_tmp__/` path prefix.
     /// Used for temporary files (e.g. picked photos) that should not live inside the App/ directory.
     var tmpDirectoryURL: URL?
@@ -188,8 +192,32 @@ final class LocalWebServer: @unchecked Sendable {
     private static let appDataPathPrefix = "/__doufu_appdata__/"
     private static let staticBundlePathPrefix = "/__doufu_static__/"
 
+    /// Validates that the Host header matches localhost or 127.0.0.1 with our port.
+    /// Blocks DNS rebinding attacks where an external domain rebinds to 127.0.0.1
+    /// and tries to access our endpoints.
+    private func isValidHost(_ request: HTTPRequest) -> Bool {
+        guard let host = request.headers["Host"] ?? request.headers["host"] else {
+            return true // No Host header (e.g. HTTP/1.0) — allow
+        }
+        let allowed = ["localhost:\(port)", "127.0.0.1:\(port)", "localhost", "127.0.0.1"]
+        return allowed.contains(host)
+    }
+
     private func routeRequest(_ request: HTTPRequest, on connection: NWConnection) {
+        if !isValidHost(request) {
+            let response = buildResponse(statusCode: 403, statusText: "Forbidden",
+                                         body: Data("Invalid Host header".utf8), contentType: "text/plain")
+            sendResponse(response, on: connection)
+            return
+        }
+
         if request.path == "/__doufu_proxy__" {
+            guard parseQueryParam(named: "__dt", from: request.query) == authToken else {
+                let response = buildResponse(statusCode: 403, statusText: "Forbidden",
+                                              body: Data("Missing or invalid token".utf8), contentType: "text/plain")
+                sendResponse(response, on: connection)
+                return
+            }
             handleProxyRequest(request) { [weak self] response in
                 self?.sendResponse(response, on: connection)
             }
@@ -197,6 +225,15 @@ final class LocalWebServer: @unchecked Sendable {
             let response = handleTmpFileRequest(request)
             sendResponse(response, on: connection)
         } else if request.path.hasPrefix(Self.appDataPathPrefix) {
+            // OPTIONS preflight cannot carry custom query params — skip token check.
+            if request.method != "OPTIONS" {
+                guard parseQueryParam(named: "__dt", from: request.query) == authToken else {
+                    let response = buildResponse(statusCode: 403, statusText: "Forbidden",
+                                                  body: Data("Missing or invalid token".utf8), contentType: "text/plain")
+                    sendResponse(response, on: connection)
+                    return
+                }
+            }
             let response = handleAppDataRequest(request)
             sendResponse(response, on: connection)
         } else if request.path.hasPrefix(Self.staticBundlePathPrefix) {
@@ -306,6 +343,19 @@ final class LocalWebServer: @unchecked Sendable {
             return
         }
 
+        // Block requests targeting localhost / loopback to prevent cross-project
+        // data theft (Project A using proxy to read Project B's server).
+        // Uses getaddrinfo to catch all numeric encodings (hex, octal, short-form).
+        if let host = targetURL.host, Self.isLoopbackOrLocalHost(host) {
+            completion(buildResponse(
+                statusCode: 403,
+                statusText: "Forbidden",
+                body: Data("Proxy cannot target localhost".utf8),
+                contentType: "text/plain"
+            ))
+            return
+        }
+
         let shouldCache = parseQueryParam(named: "cache", from: request.query) == "1"
 
         // If caching is enabled, try returning from disk cache first
@@ -376,7 +426,6 @@ final class LocalWebServer: @unchecked Sendable {
                 header += "\(keyStr): \(value)\r\n"
             }
             header += "Content-Length: \(responseBody.count)\r\n"
-            header += "Access-Control-Allow-Origin: *\r\n"
             header += "Connection: close\r\n"
             header += "\r\n"
 
@@ -384,6 +433,49 @@ final class LocalWebServer: @unchecked Sendable {
             responseData.append(responseBody)
             completion(responseData)
         }.resume()
+    }
+
+    /// Returns `true` when `host` resolves to a loopback (127.0.0.0/8, ::1)
+    /// or unspecified (0.0.0.0, ::) address.  Handles hex (`0x7f000001`),
+    /// octal (`0177.0.0.1`), decimal (`2130706433`), short-form (`127.1`),
+    /// IPv4-mapped IPv6, and DNS hostnames that resolve to loopback.
+    private static func isLoopbackOrLocalHost(_ host: String) -> Bool {
+        let cleaned = (host.hasPrefix("[") && host.hasSuffix("]"))
+            ? String(host.dropFirst().dropLast()) : host
+
+        var hints = addrinfo()
+        hints.ai_socktype = SOCK_STREAM
+        var res: UnsafeMutablePointer<addrinfo>?
+        guard getaddrinfo(cleaned, nil, &hints, &res) == 0, let first = res else { return false }
+        defer { freeaddrinfo(first) }
+
+        var cur: UnsafeMutablePointer<addrinfo>? = first
+        while let info = cur {
+            defer { cur = info.pointee.ai_next }
+            switch info.pointee.ai_family {
+            case AF_INET:
+                var sa = sockaddr_in()
+                memcpy(&sa, info.pointee.ai_addr!, MemoryLayout<sockaddr_in>.size)
+                let ip = UInt32(bigEndian: sa.sin_addr.s_addr)
+                // 127.0.0.0/8 or 0.0.0.0
+                if ip >> 24 == 127 || ip == 0 { return true }
+            case AF_INET6:
+                var sa = sockaddr_in6()
+                memcpy(&sa, info.pointee.ai_addr!, MemoryLayout<sockaddr_in6>.size)
+                var addr = sa.sin6_addr
+                let b = withUnsafeBytes(of: &addr) { Array<UInt8>($0) }
+                // ::1 (loopback)
+                if b.dropLast().allSatisfy({ $0 == 0 }) && b[15] == 1 { return true }
+                // :: (unspecified)
+                if b.allSatisfy({ $0 == 0 }) { return true }
+                // ::ffff:127.x.x.x or ::ffff:0.0.0.0 (IPv4-mapped)
+                if b[0..<10].allSatisfy({ $0 == 0 }) && b[10] == 0xff && b[11] == 0xff {
+                    if b[12] == 127 || b[12..<16].allSatisfy({ $0 == 0 }) { return true }
+                }
+            default: break
+            }
+        }
+        return false
     }
 
     // MARK: - Static File Serving
@@ -483,13 +575,10 @@ final class LocalWebServer: @unchecked Sendable {
     /// Serves and accepts files from `appDataDirectoryURL` under the `/__doufu_appdata__/` path prefix.
     /// GET reads a file, PUT writes a file (creating intermediate directories), OPTIONS returns CORS headers.
     private func handleAppDataRequest(_ request: HTTPRequest) -> Data {
-        // OPTIONS preflight
+        // OPTIONS — all requests are same-origin so CORS headers are not needed.
+        // Returning 204 without ACAO prevents cross-origin iframes from accessing appdata.
         if request.method == "OPTIONS" {
             var header = "HTTP/1.1 204 No Content\r\n"
-            header += "Access-Control-Allow-Origin: *\r\n"
-            header += "Access-Control-Allow-Methods: GET, PUT, OPTIONS\r\n"
-            header += "Access-Control-Allow-Headers: Content-Type\r\n"
-            header += "Access-Control-Max-Age: 86400\r\n"
             header += "Content-Length: 0\r\n"
             header += "Connection: close\r\n"
             header += "\r\n"
@@ -541,7 +630,6 @@ final class LocalWebServer: @unchecked Sendable {
             }
             // 204 No Content
             var header = "HTTP/1.1 204 No Content\r\n"
-            header += "Access-Control-Allow-Origin: *\r\n"
             header += "Content-Length: 0\r\n"
             header += "Connection: close\r\n"
             header += "\r\n"
@@ -584,7 +672,6 @@ final class LocalWebServer: @unchecked Sendable {
         var header = "HTTP/1.1 200 OK\r\n"
         header += "Content-Type: \(contentType)\r\n"
         header += "Content-Length: \(fileData.count)\r\n"
-        header += "Access-Control-Allow-Origin: *\r\n"
         header += "Cache-Control: public, max-age=31536000, immutable\r\n"
         header += "Connection: close\r\n"
         header += "\r\n"
@@ -600,7 +687,6 @@ final class LocalWebServer: @unchecked Sendable {
         var header = "HTTP/1.1 \(statusCode) \(statusText)\r\n"
         header += "Content-Type: \(contentType)\r\n"
         header += "Content-Length: \(body.count)\r\n"
-        header += "Access-Control-Allow-Origin: *\r\n"
         header += "Cache-Control: no-cache\r\n"
         header += "Connection: close\r\n"
         header += "\r\n"
@@ -666,7 +752,7 @@ final class LocalWebServer: @unchecked Sendable {
             var allowed = CharacterSet.urlQueryAllowed
             allowed.remove(charactersIn: "&=?#+")
             let encoded = rawURL.addingPercentEncoding(withAllowedCharacters: allowed) ?? rawURL
-            result += "\(prefix)/__doufu_proxy__?url=\(encoded)&cache=1\(suffix)"
+            result += "\(prefix)/__doufu_proxy__?url=\(encoded)&cache=1&__dt=\(authToken)\(suffix)"
 
             lastEnd = match.range.location + match.range.length
         }

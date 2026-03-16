@@ -267,6 +267,7 @@ final class ProjectWorkspaceViewController: UIViewController {
         )
         self.pendingInitialRoute = initialRoute
         super.init(nibName: nil, bundle: nil)
+        doufuBridge.serverAuthToken = webServer.authToken
     }
 
     @available(*, unavailable)
@@ -452,6 +453,16 @@ final class ProjectWorkspaceViewController: UIViewController {
             guard let url = webServer.baseURL else {
                 throw LocalWebServer.ServerError.failedToStart
             }
+            // Re-inject bridge scripts now that the actual port is known,
+            // so the auth token and origin guard carry the correct values.
+            doufuBridge.expectedPort = Int(webServer.port)
+            doufuBridge.refreshStorageScript(on: webView.configuration)
+            let errorScript = WKUserScript(
+                source: jsErrorBridgeScriptSource(),
+                injectionTime: .atDocumentStart,
+                forMainFrameOnly: false
+            )
+            webView.configuration.userContentController.addUserScript(errorScript)
             webView.load(URLRequest(url: url))
         } catch {
             // Fallback to file:// if the server fails to start.
@@ -844,7 +855,10 @@ final class ProjectWorkspaceViewController: UIViewController {
         let tempStorageDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("doufu_validation", isDirectory: true)
             .appendingPathComponent(projectIdentifier, isDirectory: true)
-        chatController.validationBridge = DoufuBridge(projectURL: projectURL, storageDirectoryOverride: tempStorageDir)
+        let validationBridge = DoufuBridge(projectURL: projectURL, storageDirectoryOverride: tempStorageDir)
+        validationBridge.serverAuthToken = webServer.authToken
+        validationBridge.expectedPort = Int(webServer.port)
+        chatController.validationBridge = validationBridge
 
         let navigationController = UINavigationController(rootViewController: chatController)
         navigationController.modalPresentationStyle = .pageSheet

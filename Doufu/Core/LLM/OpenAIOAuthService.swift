@@ -103,7 +103,7 @@ final class OpenAIOAuthService {
         self.pkce = pkce
         self.expectedState = state
 
-        let callbackServer = LocalhostOAuthCallbackServer(port: 1455, callbackPath: callbackPath)
+        let callbackServer = LocalhostOAuthCallbackServer(callbackPath: callbackPath)
         do {
             try callbackServer.start { [weak self] callbackURL in
                 self?.handleCallbackURL(callbackURL, callbackPort: callbackServer.port)
@@ -140,7 +140,6 @@ final class OpenAIOAuthService {
         let state = Self.generateState()
 
         let callbackServer = LocalhostOAuthCallbackServer(
-            port: 1455,
             callbackPath: callbackPath,
             customSchemeRedirect: "\(appURLScheme)://openai/callback"
         )
@@ -715,7 +714,7 @@ final class LocalhostOAuthCallbackServer {
         case invalidRequest
     }
 
-    private let portValue: UInt16
+    private var portValue: UInt16
     private let callbackPath: String
     /// When non-nil the server responds with a 302 redirect to this base URL
     /// (appending the original query string) instead of an HTML page. This
@@ -727,7 +726,7 @@ final class LocalhostOAuthCallbackServer {
     private var callback: ((URL) -> Void)?
     private var completed = false
 
-    init(port: UInt16, callbackPath: String, customSchemeRedirect: String? = nil) {
+    init(port: UInt16 = 0, callbackPath: String, customSchemeRedirect: String? = nil) {
         self.portValue = port
         self.callbackPath = callbackPath
         self.customSchemeRedirect = customSchemeRedirect
@@ -742,13 +741,18 @@ final class LocalhostOAuthCallbackServer {
             throw ServerError.listenerSetupFailed
         }
 
-        guard let nwPort = NWEndpoint.Port(rawValue: portValue) else {
-            throw ServerError.listenerSetupFailed
-        }
+        let nwPort: NWEndpoint.Port = portValue == 0
+            ? .any
+            : NWEndpoint.Port(rawValue: portValue) ?? .any
+
+        let parameters = NWParameters.tcp
+        // Bind to loopback only — prevents network-adjacent attackers
+        // from intercepting the OAuth callback.
+        parameters.requiredLocalEndpoint = NWEndpoint.hostPort(host: .ipv4(.loopback), port: nwPort)
 
         let listener: NWListener
         do {
-            listener = try NWListener(using: .tcp, on: nwPort)
+            listener = try NWListener(using: parameters, on: nwPort)
         } catch {
             throw ServerError.listenerSetupFailed
         }
@@ -758,8 +762,15 @@ final class LocalhostOAuthCallbackServer {
         self.completed = false
 
         listener.stateUpdateHandler = { [weak self] state in
-            if case .failed = state {
+            switch state {
+            case .ready:
+                if let actualPort = self?.listener?.port?.rawValue {
+                    self?.portValue = actualPort
+                }
+            case .failed:
                 self?.stop()
+            default:
+                break
             }
         }
 
@@ -768,6 +779,17 @@ final class LocalhostOAuthCallbackServer {
         }
 
         listener.start(queue: queue)
+
+        // Wait for the listener to bind so `port` returns the actual value.
+        let deadline = Date().addingTimeInterval(2)
+        while portValue == 0, Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        guard portValue != 0 else {
+            listener.cancel()
+            self.listener = nil
+            throw ServerError.listenerSetupFailed
+        }
     }
 
     func stop() {

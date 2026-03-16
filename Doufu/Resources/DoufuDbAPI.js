@@ -5,6 +5,7 @@
   // Provides simple SQLite access via sql.js, persisted to AppData/{name}.sqlite.
 
   var _APPDATAURL = '__DOUFU_APPDATAURL__';
+  var _TOKEN = '__DOUFU_TOKEN__';
   var _handles = {};     // name → { db, flushTimer, dirty }
   var _nextHandle = 1;
   var _handleMap = {};   // handleId → name
@@ -31,7 +32,7 @@
       h.flushTimer = null;
       if (!h.db) return;
       var data = h.db.export();
-      fetch(_APPDATAURL + '/' + encodeURIComponent(name) + '.sqlite', { method: 'PUT', body: data })
+      fetch(_APPDATAURL + '/' + encodeURIComponent(name) + '.sqlite?__dt=' + _TOKEN, { method: 'PUT', body: data })
         .then(function() { h.dirty = false; })
         .catch(function(e) { console.error('[Doufu] db persist failed:', e); });
     }, 80);
@@ -46,10 +47,10 @@
           var data = h.db.export();
           try {
             var xhr = new XMLHttpRequest();
-            xhr.open('PUT', _APPDATAURL + '/' + encodeURIComponent(name) + '.sqlite', false);
+            xhr.open('PUT', _APPDATAURL + '/' + encodeURIComponent(name) + '.sqlite?__dt=' + _TOKEN, false);
             xhr.send(data);
           } catch(e) {
-            fetch(_APPDATAURL + '/' + encodeURIComponent(name) + '.sqlite', { method: 'PUT', body: data })
+            fetch(_APPDATAURL + '/' + encodeURIComponent(name) + '.sqlite?__dt=' + _TOKEN, { method: 'PUT', body: data })
               .catch(function() {});
           }
           h.dirty = false;
@@ -71,7 +72,7 @@
         }
       }
       return _waitForSQL().then(function(SQL) {
-        return fetch(_APPDATAURL + '/' + encodeURIComponent(name) + '.sqlite')
+        return fetch(_APPDATAURL + '/' + encodeURIComponent(name) + '.sqlite?__dt=' + _TOKEN)
           .then(function(r) {
             if (r.ok) return r.arrayBuffer().then(function(b) {
               return new SQL.Database(new Uint8Array(b));
@@ -122,7 +123,7 @@
       var flushPromise;
       if (h.db) {
         var data = h.db.export();
-        flushPromise = fetch(_APPDATAURL + '/' + encodeURIComponent(name) + '.sqlite', { method: 'PUT', body: data })
+        flushPromise = fetch(_APPDATAURL + '/' + encodeURIComponent(name) + '.sqlite?__dt=' + _TOKEN, { method: 'PUT', body: data })
           .catch(function() {});
       } else {
         flushPromise = Promise.resolve();

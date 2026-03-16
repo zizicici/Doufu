@@ -67,6 +67,14 @@ final class DoufuBridge: NSObject {
     /// Reference to the webView for evaluateJavaScript callbacks.
     weak var webView: WKWebView?
 
+    /// Per-launch auth token injected into JS for authenticating requests
+    /// to `/__doufu_proxy__` and `/__doufu_appdata__/` endpoints.
+    var serverAuthToken: String = ""
+
+    /// Expected localhost port — used to tighten origin checks so that only
+    /// the current project's exact origin is trusted (not any localhost port).
+    var expectedPort: Int = 0
+
     /// Called from the WKScriptMessageHandler when localStorage changes.
     private var storageData: [String: String] = [:]
 
@@ -258,16 +266,22 @@ final class DoufuBridge: NSObject {
         // WKWebView's native IndexedDB which is isolated per data store.
         let idbShim = storageDirectoryOverride == nil ? sqlJsIndexedDBJavaScript() : ""
 
-        // Only initialize the bridge for local origins (localhost / file://).
+        // Only initialize the bridge for the current project's exact origin.
         // Cross-origin iframes (e.g. <iframe src="https://example.com">) as well
-        // as data:/blob:/about:blank frames are skipped automatically.
+        // as data:/blob:/about:blank frames and other localhost ports are skipped.
+        // Wrapped in an IIFE so __doufuToken / __doufuPort stay function-scoped
+        // and are NOT accessible from cross-origin iframe global scope.
         return """
-        if (location.protocol === 'file:' || location.hostname === 'localhost') {
+        (function() {
+        var __doufuToken = '\(serverAuthToken)';
+        var __doufuPort = \(expectedPort);
+        if (location.protocol === 'file:' || location.origin === 'http://localhost:' + __doufuPort) {
         \(capabilityJavaScript())
         \(mediaJavaScript())
         \(fetchProxyAndLocalStorageJavaScript(storageJSON: storageJSON))
         \(idbShim)
         }
+        })();
         """
     }
 
@@ -764,7 +778,7 @@ final class DoufuBridge: NSObject {
             }
 
             if (_isCrossOrigin(url)) {
-              return _originalFetch('/__doufu_proxy__?url=' + encodeURIComponent(url), ri);
+              return _originalFetch('/__doufu_proxy__?url=' + encodeURIComponent(url) + '&__dt=' + __doufuToken, ri);
             }
             return _originalFetch(input, init);
           };
@@ -778,7 +792,7 @@ final class DoufuBridge: NSObject {
 
             if (_isCrossOrigin(resolved)) {
               this._doufuProxied = true;
-              var proxyUrl = '/__doufu_proxy__?url=' + encodeURIComponent(resolved);
+              var proxyUrl = '/__doufu_proxy__?url=' + encodeURIComponent(resolved) + '&__dt=' + __doufuToken;
               return _XHROpen.apply(this, [method, proxyUrl].concat(
                 Array.prototype.slice.call(arguments, 2)
               ));
@@ -943,9 +957,13 @@ final class DoufuBridge: NSObject {
                                   with: "'/__doufu_static__/sql-wasm.wasm'")
             .replacingOccurrences(of: "'__DOUFU_APPDATAURL__'",
                                   with: "'/__doufu_appdata__'")
+            .replacingOccurrences(of: "'__DOUFU_TOKEN__'",
+                                  with: "'\(serverAuthToken)'")
         let dbAPI = Self.doufuDbAPITemplate
             .replacingOccurrences(of: "'__DOUFU_APPDATAURL__'",
                                   with: "'/__doufu_appdata__'")
+            .replacingOccurrences(of: "'__DOUFU_TOKEN__'",
+                                  with: "'\(serverAuthToken)'")
         // Wrap in an outer IIFE so same-origin iframes can delegate to
         // parent's shim and return early — skipping sql.js WASM load entirely.
         return """
@@ -1009,11 +1027,11 @@ private nonisolated final class DoufuBridgeMessageHandler: NSObject, WKScriptMes
         didReceive message: WKScriptMessage
     ) {
         // WebKit guarantees this delegate is called on the main thread.
-        // Accept messages from any frame with a local origin. Same-origin iframes
-        // are part of the same application context and should access the bridge.
-        // Cross-origin iframes are rejected by the origin check below.
+        // Accept messages only from the current project's exact origin or file://.
+        // This prevents iframes from other localhost ports from accessing the bridge.
         let securityOrigin = MainActor.assumeIsolated { message.frameInfo.securityOrigin }
-        let isLocalOrigin = securityOrigin.host == "localhost"
+        let expectedPort = MainActor.assumeIsolated { bridge?.expectedPort ?? 0 }
+        let isLocalOrigin = (securityOrigin.host == "localhost" && securityOrigin.port == expectedPort)
             || securityOrigin.protocol == "file"
         guard isLocalOrigin else { return }
         let name = MainActor.assumeIsolated { message.name }
