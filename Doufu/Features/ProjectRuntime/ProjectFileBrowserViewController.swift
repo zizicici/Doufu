@@ -6,6 +6,7 @@
 //
 
 import UIKit
+import UniformTypeIdentifiers
 #if canImport(Runestone)
 import Runestone
 #endif
@@ -57,10 +58,35 @@ final class ProjectFileBrowserViewController: UITableViewController {
     private let directoryURL: URL
     private let showHiddenFiles: Bool
     private let readOnly: Bool
+    private let directoryPickerMode: Bool
+    private let excludedURL: URL?
+    private var onDirectoryPicked: ((URL) -> Void)?
     private var items: [Item] = []
     private let fileManager: FileManager
     private let archiveExportService = ProjectArchiveExportService.shared
     private var exportTask: Task<Void, Never>?
+
+    private var isInsideAppDirectory: Bool {
+        let effectiveAppURL: URL
+        if let appURL = appURL {
+            effectiveAppURL = appURL
+        } else if let projectRootURL = projectRootURL {
+            effectiveAppURL = projectRootURL.appendingPathComponent("App", isDirectory: true)
+        } else {
+            return true
+        }
+        let appPath = effectiveAppURL.standardizedFileURL.resolvingSymlinksInPath().path
+        let dirPath = directoryURL.standardizedFileURL.resolvingSymlinksInPath().path
+        let prefix = appPath.hasSuffix("/") ? appPath : appPath + "/"
+        return dirPath == appPath || dirPath.hasPrefix(prefix)
+    }
+
+    private var projectID: String? {
+        if let projectRootURL = projectRootURL {
+            return projectRootURL.standardizedFileURL.lastPathComponent
+        }
+        return rootURL.standardizedFileURL.lastPathComponent
+    }
 
     init(
         projectName: String,
@@ -70,6 +96,9 @@ final class ProjectFileBrowserViewController: UITableViewController {
         directoryURL: URL? = nil,
         showHiddenFiles: Bool = false,
         readOnly: Bool = false,
+        directoryPickerMode: Bool = false,
+        excludedURL: URL? = nil,
+        onDirectoryPicked: ((URL) -> Void)? = nil,
         fileManager: FileManager = .default
     ) {
         self.projectName = projectName
@@ -79,6 +108,9 @@ final class ProjectFileBrowserViewController: UITableViewController {
         self.directoryURL = directoryURL ?? rootURL
         self.showHiddenFiles = showHiddenFiles
         self.readOnly = readOnly
+        self.directoryPickerMode = directoryPickerMode
+        self.excludedURL = excludedURL
+        self.onDirectoryPicked = onDirectoryPicked
         self.fileManager = fileManager
         super.init(style: .insetGrouped)
     }
@@ -98,15 +130,52 @@ final class ProjectFileBrowserViewController: UITableViewController {
         tableView.backgroundColor = .doufuBackground
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "ProjectFileRow")
 
-        if !readOnly, directoryURL.standardizedFileURL == rootURL.standardizedFileURL {
+        if directoryPickerMode {
+            let selectStyle: UIBarButtonItem.Style = {
+                if #available(iOS 26.0, *) { return .prominent }
+                return .done
+            }()
             navigationItem.rightBarButtonItem = UIBarButtonItem(
-                image: UIImage(systemName: "square.and.arrow.up"),
-                style: .plain,
+                title: String(localized: "file_browser.move.select_directory"),
+                style: selectStyle,
                 target: self,
-                action: #selector(didTapShare)
+                action: #selector(didTapSelectDirectory)
             )
+            if navigationController?.viewControllers.first === self {
+                navigationItem.leftBarButtonItem = UIBarButtonItem(
+                    title: String(localized: "common.action.cancel"),
+                    style: .plain,
+                    target: self,
+                    action: #selector(didTapCancelPicker)
+                )
+            }
+        } else {
+            var rightItems: [UIBarButtonItem] = []
+            if !readOnly, directoryURL.standardizedFileURL == rootURL.standardizedFileURL {
+                rightItems.append(UIBarButtonItem(
+                    image: UIImage(systemName: "square.and.arrow.up"),
+                    style: .plain,
+                    target: self,
+                    action: #selector(didTapShare)
+                ))
+            }
+            if !readOnly, isInsideAppDirectory {
+                rightItems.append(UIBarButtonItem(
+                    image: UIImage(systemName: "plus"),
+                    style: .plain,
+                    target: self,
+                    action: #selector(didTapAdd)
+                ))
+            }
+            if !rightItems.isEmpty {
+                navigationItem.rightBarButtonItems = rightItems
+            }
         }
 
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
         reloadItems()
     }
 
@@ -155,7 +224,15 @@ final class ProjectFileBrowserViewController: UITableViewController {
             )
         }
 
-        return mapped.sorted { lhs, rhs in
+        var filtered = directoryPickerMode ? mapped.filter(\.isDirectory) : mapped
+        if let excludedURL {
+            let excludedPath = excludedURL.standardizedFileURL.resolvingSymlinksInPath().path
+            filtered = filtered.filter {
+                $0.url.standardizedFileURL.resolvingSymlinksInPath().path != excludedPath
+            }
+        }
+
+        return filtered.sorted { lhs, rhs in
             if lhs.isDirectory != rhs.isDirectory {
                 return lhs.isDirectory && !rhs.isDirectory
             }
@@ -165,7 +242,11 @@ final class ProjectFileBrowserViewController: UITableViewController {
 
     private func isSafeChildURL(_ url: URL) -> Bool {
         let rootPath = rootURL.standardizedFileURL.resolvingSymlinksInPath().path
-        let childPath = url.standardizedFileURL.resolvingSymlinksInPath().path
+        // Resolve only the parent directory (which exists on disk) and re-append the last component.
+        // This avoids resolvingSymlinksInPath() failing to resolve /var → /private/var
+        // for paths where the final component doesn't yet exist on disk.
+        let parentPath = url.deletingLastPathComponent().standardizedFileURL.resolvingSymlinksInPath().path
+        let childPath = parentPath + "/" + url.lastPathComponent
         let prefix = rootPath.hasSuffix("/") ? rootPath : rootPath + "/"
         return childPath.hasPrefix(prefix)
     }
@@ -242,14 +323,34 @@ final class ProjectFileBrowserViewController: UITableViewController {
                 directoryURL: item.url,
                 showHiddenFiles: showHiddenFiles,
                 readOnly: readOnly,
+                directoryPickerMode: directoryPickerMode,
+                excludedURL: excludedURL,
+                onDirectoryPicked: onDirectoryPicked,
                 fileManager: fileManager
             )
             navigationController?.pushViewController(controller, animated: true)
             return
         }
 
+        if directoryPickerMode { return }
+
         let viewer = ProjectFileContentViewController(fileURL: item.url, rootURL: rootURL, readOnly: readOnly)
         navigationController?.pushViewController(viewer, animated: true)
+    }
+
+    override func tableView(
+        _ tableView: UITableView,
+        contextMenuConfigurationForRowAt indexPath: IndexPath,
+        point: CGPoint
+    ) -> UIContextMenuConfiguration? {
+        guard !readOnly, !directoryPickerMode, isInsideAppDirectory, !items.isEmpty else {
+            return nil
+        }
+        let item = items[indexPath.row]
+        return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
+            guard let self else { return nil }
+            return self.makeContextMenu(for: item)
+        }
     }
 
     // MARK: - Share
@@ -337,12 +438,321 @@ final class ProjectFileBrowserViewController: UITableViewController {
         }
     }
 
+    // MARK: - Add (Create Folder / Upload)
+
+    @objc private func didTapAdd() {
+        let sheet = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
+        sheet.addAction(UIAlertAction(
+            title: String(localized: "file_browser.action.create_folder"),
+            style: .default
+        ) { [weak self] _ in
+            self?.showCreateFolderAlert()
+        })
+        sheet.addAction(UIAlertAction(
+            title: String(localized: "file_browser.action.upload_file"),
+            style: .default
+        ) { [weak self] _ in
+            self?.showDocumentPicker()
+        })
+        sheet.addAction(UIAlertAction(title: String(localized: "common.action.cancel"), style: .cancel))
+        sheet.popoverPresentationController?.barButtonItem = navigationItem.rightBarButtonItems?.last
+        present(sheet, animated: true)
+    }
+
+    private func showCreateFolderAlert() {
+        let alert = UIAlertController(
+            title: String(localized: "file_browser.action.create_folder"),
+            message: nil,
+            preferredStyle: .alert
+        )
+        alert.addTextField { textField in
+            textField.placeholder = String(localized: "file_browser.create_folder.placeholder")
+            textField.autocapitalizationType = .none
+        }
+        alert.addAction(UIAlertAction(title: String(localized: "common.action.cancel"), style: .cancel))
+        alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default) { [weak self] _ in
+            guard let self,
+                  let raw = alert.textFields?.first?.text,
+                  let name = self.validatedFileName(raw) else { return }
+            let target = self.directoryURL.appendingPathComponent(name, isDirectory: true)
+            guard self.isSafeChildURL(target) else { return }
+            do {
+                try self.fileManager.createDirectory(at: target, withIntermediateDirectories: false)
+                self.reloadAndNotify()
+            } catch {
+                self.showOperationError(error)
+            }
+        })
+        present(alert, animated: true)
+    }
+
+    private func showDocumentPicker() {
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.item], asCopy: true)
+        picker.allowsMultipleSelection = true
+        picker.delegate = self
+        present(picker, animated: true)
+    }
+
+    // MARK: - Context Menu
+
+    private func makeContextMenu(for item: Item) -> UIMenu {
+        let rename = UIAction(
+            title: String(localized: "file_browser.action.rename"),
+            image: UIImage(systemName: "pencil")
+        ) { [weak self] _ in
+            self?.showRenameAlert(for: item)
+        }
+        let move = UIAction(
+            title: String(localized: "file_browser.action.move"),
+            image: UIImage(systemName: "folder")
+        ) { [weak self] _ in
+            self?.showDirectoryPicker(for: item)
+        }
+        let delete = UIAction(
+            title: String(localized: "file_browser.action.delete"),
+            image: UIImage(systemName: "trash"),
+            attributes: .destructive
+        ) { [weak self] _ in
+            self?.showDeleteConfirmation(for: item)
+        }
+        return UIMenu(children: [rename, move, delete])
+    }
+
+    private func showRenameAlert(for item: Item) {
+        let alert = UIAlertController(
+            title: String(localized: "file_browser.action.rename"),
+            message: nil,
+            preferredStyle: .alert
+        )
+        alert.addTextField { textField in
+            textField.text = item.name
+            textField.placeholder = String(localized: "file_browser.rename.placeholder")
+            textField.autocapitalizationType = .none
+        }
+        alert.addAction(UIAlertAction(title: String(localized: "common.action.cancel"), style: .cancel))
+        alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default) { [weak self] _ in
+            guard let self,
+                  let raw = alert.textFields?.first?.text,
+                  let newName = self.validatedFileName(raw) else { return }
+            guard newName != item.name else { return }
+            let target = item.url.deletingLastPathComponent().appendingPathComponent(newName)
+            guard self.isSafeChildURL(target) else { return }
+            do {
+                try self.fileManager.moveItem(at: item.url, to: target)
+                self.reloadAndNotify()
+            } catch {
+                self.showOperationError(error)
+            }
+        })
+        present(alert, animated: true)
+    }
+
+    private func showDirectoryPicker(for item: Item) {
+        let pickerRootURL: URL
+        if let appURL = appURL {
+            pickerRootURL = appURL
+        } else if let projectRootURL = projectRootURL {
+            pickerRootURL = projectRootURL.appendingPathComponent("App", isDirectory: true)
+        } else {
+            pickerRootURL = rootURL
+        }
+
+        let sourceParent = item.url.deletingLastPathComponent().standardizedFileURL
+        let picker = ProjectFileBrowserViewController(
+            projectName: projectName,
+            rootURL: pickerRootURL,
+            projectRootURL: projectRootURL,
+            appURL: appURL,
+            showHiddenFiles: showHiddenFiles,
+            directoryPickerMode: true,
+            excludedURL: item.isDirectory ? item.url : nil,
+            onDirectoryPicked: { [weak self] destinationURL in
+                guard let self else { return }
+                if destinationURL.standardizedFileURL == sourceParent { return }
+                self.performMove(item: item, to: destinationURL)
+            },
+            fileManager: fileManager
+        )
+        let nav = UINavigationController(rootViewController: picker)
+        present(nav, animated: true)
+    }
+
+    private func performMove(item: Item, to destinationURL: URL) {
+        if item.isDirectory {
+            let srcPath = item.url.standardizedFileURL.resolvingSymlinksInPath().path
+            let dstPath = destinationURL.standardizedFileURL.resolvingSymlinksInPath().path
+            let srcPrefix = srcPath.hasSuffix("/") ? srcPath : srcPath + "/"
+            if dstPath == srcPath || dstPath.hasPrefix(srcPrefix) {
+                let alert = UIAlertController(
+                    title: String(localized: "file_browser.error.move_into_self"),
+                    message: nil,
+                    preferredStyle: .alert
+                )
+                alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
+                present(alert, animated: true)
+                return
+            }
+        }
+        let target = destinationURL.appendingPathComponent(item.name)
+        guard isSafeChildURL(target) else { return }
+        do {
+            try fileManager.moveItem(at: item.url, to: target)
+            reloadAndNotify()
+        } catch {
+            showOperationError(error)
+        }
+    }
+
+    private func showDeleteConfirmation(for item: Item) {
+        let alert = UIAlertController(
+            title: String(format: String(localized: "file_browser.delete.confirm.title"), item.name),
+            message: String(localized: "file_browser.delete.confirm.message"),
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: String(localized: "common.action.cancel"), style: .cancel))
+        alert.addAction(UIAlertAction(
+            title: String(localized: "file_browser.action.delete"),
+            style: .destructive
+        ) { [weak self] _ in
+            guard let self else { return }
+            do {
+                try self.fileManager.removeItem(at: item.url)
+                self.reloadAndNotify()
+            } catch {
+                self.showOperationError(error)
+            }
+        })
+        present(alert, animated: true)
+    }
+
+    // MARK: - Directory Picker Mode
+
+    @objc private func didTapSelectDirectory() {
+        let picked = directoryURL
+        let callback = onDirectoryPicked
+        if let nav = navigationController, nav.presentingViewController != nil {
+            nav.dismiss(animated: true) {
+                callback?(picked)
+            }
+        } else {
+            callback?(picked)
+        }
+    }
+
+    @objc private func didTapCancelPicker() {
+        navigationController?.dismiss(animated: true)
+    }
+
+    // MARK: - Helpers
+
+    private func validatedFileName(_ name: String, showError: Bool = true) -> String? {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty, !trimmed.contains("/"), !trimmed.contains("\\"),
+              trimmed != ".", trimmed != ".." else {
+            if showError {
+                let alert = UIAlertController(
+                    title: String(localized: "file_browser.error.invalid_name"),
+                    message: nil,
+                    preferredStyle: .alert
+                )
+                alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
+                present(alert, animated: true)
+            }
+            return nil
+        }
+        return trimmed
+    }
+
+    private func reloadAndNotify() {
+        reloadItems()
+        if let projectID {
+            ProjectChangeCenter.shared.notifyFilesChanged(projectID: projectID)
+        }
+    }
+
+    private func showOperationError(_ error: Error) {
+        let alert = UIAlertController(
+            title: String(localized: "file_browser.error.operation_failed"),
+            message: error.localizedDescription,
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
+        present(alert, animated: true)
+    }
+
     private static func formatBytes(_ bytes: Int) -> String {
         let formatter = ByteCountFormatter()
         formatter.allowedUnits = [.useKB, .useMB]
         formatter.countStyle = .file
         formatter.includesUnit = true
         return formatter.string(fromByteCount: Int64(max(bytes, 0)))
+    }
+}
+
+// MARK: - UIDocumentPickerDelegate
+
+extension ProjectFileBrowserViewController: UIDocumentPickerDelegate {
+    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+        performUpload(urls: urls, index: 0, didCopyAny: false)
+    }
+
+    private func performUpload(urls: [URL], index: Int, didCopyAny: Bool) {
+        guard index < urls.count else {
+            if didCopyAny {
+                reloadAndNotify()
+            }
+            return
+        }
+        let url = urls[index]
+        let target = directoryURL.appendingPathComponent(url.lastPathComponent)
+        guard isSafeChildURL(target) else {
+            performUpload(urls: urls, index: index + 1, didCopyAny: didCopyAny)
+            return
+        }
+
+        if fileManager.fileExists(atPath: target.path) {
+            let alert = UIAlertController(
+                title: String(format: String(localized: "file_browser.upload.overwrite.title"), url.lastPathComponent),
+                message: nil,
+                preferredStyle: .alert
+            )
+            alert.addAction(UIAlertAction(title: String(localized: "common.action.cancel"), style: .cancel) { [weak self] _ in
+                self?.performUpload(urls: urls, index: index + 1, didCopyAny: didCopyAny)
+            })
+            alert.addAction(UIAlertAction(
+                title: String(localized: "file_browser.upload.overwrite.replace"),
+                style: .destructive
+            ) { [weak self] _ in
+                guard let self else { return }
+                if self.copyUploadedFile(from: url, to: target) {
+                    self.performUpload(urls: urls, index: index + 1, didCopyAny: true)
+                } else if didCopyAny {
+                    self.reloadAndNotify()
+                }
+            })
+            present(alert, animated: true)
+        } else {
+            if copyUploadedFile(from: url, to: target) {
+                performUpload(urls: urls, index: index + 1, didCopyAny: true)
+            } else if didCopyAny {
+                reloadAndNotify()
+            }
+        }
+    }
+
+    @discardableResult
+    private func copyUploadedFile(from source: URL, to target: URL) -> Bool {
+        do {
+            if fileManager.fileExists(atPath: target.path) {
+                _ = try fileManager.replaceItemAt(target, withItemAt: source)
+            } else {
+                try fileManager.copyItem(at: source, to: target)
+            }
+            return true
+        } catch {
+            showOperationError(error)
+            return false
+        }
     }
 }
 

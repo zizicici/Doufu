@@ -446,8 +446,10 @@ final class ChatViewController: UIViewController {
     private func presentProjectFiles() {
         let controller = ProjectFileBrowserViewController(
             projectName: session.project.name,
-            rootURL: session.project.appURL,
-            projectRootURL: session.project.projectURL
+            rootURL: session.project.projectURL,
+            projectRootURL: session.project.projectURL,
+            appURL: session.project.appURL,
+            showHiddenFiles: true
         )
         let navigationController = UINavigationController(rootViewController: controller)
         navigationController.modalPresentationStyle = .pageSheet
