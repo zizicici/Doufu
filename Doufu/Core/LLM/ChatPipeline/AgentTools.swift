@@ -709,6 +709,11 @@ final class AgentToolProvider {
 
     // MARK: - Read File
 
+    /// Upper bound for decoding a file into String.  Files larger than this
+    /// are read in a byte-windowed mode so that `start_line` can still seek
+    /// into them without loading everything into memory.
+    private static let maxFullDecodeBytes = 5_000_000
+
     private func executeReadFile(args: [String: Any]) -> ToolExecutionResult {
         guard let path = args["path"] as? String else {
             return ToolExecutionResult(output: "Missing required parameter: path", isError: true, changedPaths: [])
@@ -726,16 +731,32 @@ final class AgentToolProvider {
             return ToolExecutionResult(output: "Could not read file: \(path)", isError: true, changedPaths: [])
         }
 
-        let truncatedData = data.prefix(configuration.maxBytesPerContextFile)
-        guard let fullContent = String(data: truncatedData, encoding: .utf8) else {
+        let totalBytes = data.count
+
+        // Decode the full file (up to safety cap) so that start_line/line_count
+        // can reach ANY position — the byte budget is applied to the OUTPUT, not the read.
+        let decodableData = totalBytes > Self.maxFullDecodeBytes ? data.prefix(Self.maxFullDecodeBytes) : data[...]
+        guard let fullContent = String(data: decodableData, encoding: .utf8) else {
             return ToolExecutionResult(output: "File is not valid UTF-8 text: \(path)", isError: true, changedPaths: [])
         }
 
-        let isByteTruncated = data.count > configuration.maxBytesPerContextFile
-        let allLines = fullContent.components(separatedBy: .newlines)
-        let totalLineCount = allLines.count
+        // Break minified single-line blobs into readable multi-line content
+        // so that start_line/line_count can navigate them meaningfully.
+        let ext = URL(fileURLWithPath: path).pathExtension
+        let (readableContent, wasReformatted) = breakLongLines(in: fullContent, fileExtension: ext)
 
-        // Apply start_line / line_count range selection
+        let allLines = readableContent.components(separatedBy: .newlines)
+        let totalLineCount: Int
+        if totalBytes > Self.maxFullDecodeBytes {
+            // Estimate remaining lines beyond the decoded portion
+            let decodedBytes = decodableData.count
+            let avgBytesPerLine = max(1, decodedBytes / max(1, allLines.count))
+            totalLineCount = allLines.count + (totalBytes - decodedBytes) / avgBytesPerLine
+        } else {
+            totalLineCount = allLines.count
+        }
+
+        // Apply start_line / line_count range selection on the FULL line array
         let startLine = (args["start_line"] as? Int) ?? 1
         let requestedCount = args["line_count"] as? Int
         let clampedStart = max(1, startLine)
@@ -769,28 +790,53 @@ final class AgentToolProvider {
             return line
         }
 
-        let content = processedLines.joined(separator: "\n")
-
-        var notes: [String] = []
-        if isRangeSelected {
-            let rangeEnd = startIndex + processedLines.count
-            notes.append("[Lines \(clampedStart)-\(rangeEnd) of \(totalLineCount) total]")
+        // Apply byte budget on the OUTPUT — this keeps the LLM context bounded
+        // while allowing start_line to reach any part of the file.
+        let maxOutputBytes = configuration.maxBytesPerContextFile
+        var outputLines: [String] = []
+        var currentBytes = 0
+        var isOutputTruncated = false
+        for line in processedLines {
+            let lineBytes = line.utf8.count + 1 // +1 for newline separator
+            if currentBytes + lineBytes > maxOutputBytes && !outputLines.isEmpty {
+                isOutputTruncated = true
+                break
+            }
+            outputLines.append(line)
+            currentBytes += lineBytes
         }
-        if isByteTruncated {
-            notes.append("[File truncated at \(configuration.maxBytesPerContextFile) bytes. Total size: \(data.count) bytes]")
+
+        let content = outputLines.joined(separator: "\n")
+        let displayedStartLine = clampedStart
+        let displayedEndLine = startIndex + outputLines.count
+
+        // Metadata header — always present so the model knows the file's true dimensions
+        var headerParts: [String] = [
+            "\(totalLineCount) lines",
+            "\(totalBytes) bytes",
+        ]
+        if isRangeSelected || isOutputTruncated {
+            headerParts.append("showing lines \(displayedStartLine)-\(displayedEndLine)")
         }
+        if isOutputTruncated {
+            headerParts.append("output truncated")
+        }
+        if wasReformatted {
+            headerParts.append("reformatted from minified — use write_file to modify")
+        }
+        let header = "[File: \(path) | \(headerParts.joined(separator: " | "))]"
 
-        let suffix = notes.isEmpty ? "" : "\n\n" + notes.joined(separator: "\n")
+        let output = header + "\n" + content
 
-        let previewLines = processedLines.prefix(5)
+        let previewLines = outputLines.prefix(5)
         let preview = previewLines.joined(separator: "\n")
-        let reportedLineCount = processedLines.count
+        let reportedLineCount = outputLines.count
 
         return ToolExecutionResult(
-            output: content + suffix,
+            output: output,
             isError: false,
             changedPaths: [],
-            metadata: .fileRead(path: normalizeRelativePath(path), lineCount: reportedLineCount, sizeBytes: Int64(data.count)),
+            metadata: .fileRead(path: normalizeRelativePath(path), lineCount: reportedLineCount, sizeBytes: Int64(totalBytes)),
             completionEvent: .fileRead(path: path, lineCount: reportedLineCount, preview: preview)
         )
     }
@@ -826,18 +872,23 @@ final class AgentToolProvider {
         }
 
         do {
+            // Break minified single-line blobs before saving so that
+            // subsequent read_file / edit_file calls work on readable code.
+            let ext = URL(fileURLWithPath: path).pathExtension
+            let (formattedContent, _) = breakLongLines(in: content, fileExtension: ext)
+
             let directoryURL = resolved.deletingLastPathComponent()
             try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
-            try content.write(to: resolved, atomically: true, encoding: .utf8)
-            let writtenSize = (try? Data(contentsOf: resolved).count) ?? content.utf8.count
-            let lineCount = content.components(separatedBy: .newlines).count
+            try formattedContent.write(to: resolved, atomically: true, encoding: .utf8)
+            let writtenSize = (try? Data(contentsOf: resolved).count) ?? formattedContent.utf8.count
+            let lineCount = formattedContent.components(separatedBy: .newlines).count
             let verb = fileExists ? "overwrote" : "created"
             return ToolExecutionResult(
-                output: "Successfully wrote \(content.count) characters to \(normalizedPath)",
+                output: "Successfully wrote \(formattedContent.count) characters to \(normalizedPath)",
                 isError: false,
                 changedPaths: [normalizedPath],
                 metadata: .fileWritten(path: normalizedPath, isNew: !fileExists, sizeBytes: Int64(writtenSize)),
-                completionEvent: .fileWritten(path: normalizedPath, characterCount: content.count),
+                completionEvent: .fileWritten(path: normalizedPath, characterCount: formattedContent.count),
                 changeSummary: "\(verb) \(lineCount) lines"
             )
         } catch {
@@ -2069,6 +2120,116 @@ final class AgentToolProvider {
 
     private func isTextFile(_ relativePath: String) -> Bool {
         ProjectPathResolver.isTextFile(relativePath)
+    }
+
+    // MARK: - Minified Code Formatter
+
+    /// File extensions eligible for long-line reformatting.
+    private static let formattableExtensions: Set<String> = [
+        "js", "mjs", "jsx", "ts", "tsx",
+        "css", "scss", "less",
+        "html", "htm",
+        "json",
+    ]
+
+    /// Threshold (in characters) above which a line is considered "minified".
+    private static let longLineThreshold = 1000
+
+    /// Break very long lines at structural boundaries to prevent single-line
+    /// data explosion.  Only operates on lines exceeding `longLineThreshold`
+    /// characters and only for known web file types.  String literals
+    /// (single/double/template) are respected so content inside them is never
+    /// split.
+    ///
+    /// Returns `(formatted, didFormat)`.
+    private func breakLongLines(in content: String, fileExtension ext: String) -> (String, Bool) {
+        guard Self.formattableExtensions.contains(ext.lowercased()) else {
+            return (content, false)
+        }
+
+        let lines = content.components(separatedBy: "\n")
+        let hasLongLines = lines.contains { $0.count > Self.longLineThreshold }
+        guard hasLongLines else { return (content, false) }
+
+        let breakAfter: Set<Character>
+        let breakBefore: Set<Character>
+
+        switch ext.lowercased() {
+        case "json":
+            breakAfter  = ["{", "[", ","]
+            breakBefore = ["}", "]"]
+        case "css", "scss", "less":
+            breakAfter  = ["{", ";"]
+            breakBefore = ["}"]
+        default: // js, html, etc.
+            breakAfter  = ["{", ";"]
+            breakBefore = ["}"]
+        }
+
+        let formatted = lines.map { line -> String in
+            guard line.count > Self.longLineThreshold else { return line }
+            return Self.breakSingleLongLine(line, breakAfter: breakAfter, breakBefore: breakBefore)
+        }.joined(separator: "\n")
+
+        return (formatted, true)
+    }
+
+    /// Insert newlines at structural boundaries in a single long line.
+    /// Respects string literals (', ", `) so content inside them is preserved.
+    private static func breakSingleLongLine(
+        _ line: String,
+        breakAfter: Set<Character>,
+        breakBefore: Set<Character>
+    ) -> String {
+        var result = ""
+        result.reserveCapacity(line.count + line.count / 20)
+        var stringDelimiter: Character?
+        var escaped = false
+
+        for char in line {
+            // Escape sequences inside strings
+            if escaped {
+                result.append(char)
+                escaped = false
+                continue
+            }
+            if char == "\\", stringDelimiter != nil {
+                escaped = true
+                result.append(char)
+                continue
+            }
+
+            // Track string open/close
+            if let delim = stringDelimiter {
+                result.append(char)
+                if char == delim { stringDelimiter = nil }
+                continue
+            }
+            if char == "'" || char == "\"" || char == "`" {
+                stringDelimiter = char
+                result.append(char)
+                continue
+            }
+
+            // Structural break points (outside strings)
+            if breakBefore.contains(char) {
+                result.append("\n")
+                result.append(char)
+            } else {
+                result.append(char)
+            }
+
+            if breakAfter.contains(char) {
+                result.append("\n")
+            }
+        }
+
+        // Clean up: collapse empty lines and trim leading/trailing whitespace per line
+        return result
+            .components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
     }
 
     /// Convert an include glob pattern (e.g. "*.js", "*.{html,css}") into a regex
