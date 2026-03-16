@@ -288,7 +288,7 @@
 ## OAuth 说明
 
 1. OpenAI OAuth
-   - `SFSafariViewController` + PKCE + `localhost:1455/auth/callback`。
+   - `ASWebAuthenticationSession` + PKCE + `localhost:<random>/auth/callback`（随机端口，loopback 绑定）。
    - 回调成功后自动填充 Base URL 和 Bearer Token。
 2. OpenRouter OAuth
    - PKCE 流程，返回 API Key（非 Bearer Token）。
@@ -303,9 +303,25 @@
 4. 调试日志默认脱敏请求体，避免泄露凭证。
 5. 工具权限分级，危险操作需用户确认。
 
+### LocalWebServer 安全模型
+
+1. **Loopback 绑定**：`NWListener` 使用 `requiredLocalEndpoint = .ipv4(.loopback)`，仅接受本机连接。
+2. **Host 头校验**：`isValidHost()` 只允许 `localhost:{port}` / `127.0.0.1:{port}`，阻止 DNS rebinding。
+3. **Per-launch Auth Token**：`LocalWebServer.authToken`（每次 init 生成的 UUID），`/__doufu_proxy__` 和 `/__doufu_appdata__/` 必须携带 `?__dt=<token>` 查询参数，否则返回 403。OPTIONS 预检豁免（浏览器自动发送，无法附加参数）。
+4. **Proxy 禁止回环**：`isLoopbackOrLocalHost()` 使用 `getaddrinfo` 解析目标主机，阻止 hex/octal/短格式 IP 绕过（如 `0x7f000001`、`0177.0.0.1`、`0.0.0.0`）。
+5. **无 CORS 头**：所有响应不包含 `Access-Control-Allow-Origin`。请求均为同源（页面和服务器共享 `http://localhost:PORT`），CORS 不必要；移除 ACAO 防止跨源 iframe 读取响应并提取 token。
+6. **请求体大小限制**：16 MB（`maxBodySize`）。
+7. **目录遍历防护**：所有文件端点使用 `resolvingSymlinksInPath()` + 前缀检查。
+
+### OAuth 回调服务器安全
+
+1. `LocalhostOAuthCallbackServer` 显式绑定 loopback（`requiredLocalEndpoint`）。
+2. 使用随机端口（`port: 0` → `.any`），不再固定 `1455`。
+3. `start()` 后通过 `stateUpdateHandler` 捕获实际端口。
+
 ## CDN 资源缓存
 
-1. `LocalWebServer` 在返回 HTML/CSS 文件时，将 `https://` 外部资源 URL 改写为走本地 `/__doufu_proxy__?url=<encoded>&cache=1` 代理路径。
+1. `LocalWebServer` 在返回 HTML/CSS 文件时，将 `https://` 外部资源 URL 改写为走本地 `/__doufu_proxy__?url=<encoded>&cache=1&__dt=<token>` 代理路径。
 2. Proxy 端检测 `cache=1` 参数时启用磁盘缓存（`Caches/CDNCache/`）：命中缓存直接返回，未命中则网络请求后缓存，网络失败时回退旧缓存。
 3. 缓存 Key 为 URL 的 SHA256，存储 `<hash>.data` + `<hash>.meta`（JSON: contentType, statusCode, url）。
 4. 容量上限 200 MB，超出按 LRU 淘汰到 150 MB；系统存储压力时可自动清除。
@@ -317,10 +333,11 @@
 ### 注入策略
 
 1. **权限封堵脚本**：`forMainFrameOnly: false` — 所有 frame（含 iframe）都被封堵标准 Web API（getUserMedia, geolocation, clipboard, Permissions API 返回 denied）。
-2. **Bridge 脚本**：`forMainFrameOnly: false` — 所有 frame 注入，由 JS 侧 origin 守卫决定是否初始化：
-   - `location.protocol === 'file:' || location.hostname === 'localhost'` → 注入
-   - 跨源 iframe（如 `https://example.com`）、`data:`/`blob:`/`about:blank` → 跳过
-3. **Native 消息处理**：`DoufuBridgeMessageHandler` 对所有消息做 origin 校验（`host == "localhost" || protocol == "file"`），非本地来源直接忽略。
+2. **Bridge 脚本**：`forMainFrameOnly: false` — 所有 frame 注入，整体包裹在 **IIFE** 中（`(function(){ ... })();`），由 JS 侧 origin 守卫决定是否初始化：
+   - `location.origin === 'http://localhost:' + __doufuPort` 或 `location.protocol === 'file:'` → 初始化
+   - 跨源 iframe（如 `https://example.com`）、其他 localhost 端口、`data:`/`blob:`/`about:blank` → 跳过
+   - **IIFE 作用域隔离**：`__doufuToken` 和 `__doufuPort` 为函数作用域变量，跨源 iframe 无法从全局作用域读取。
+3. **Native 消息处理**：`DoufuBridgeMessageHandler` 对所有消息做 origin 校验（`host == "localhost" && port == expectedPort`，或 `protocol == "file"`），非本项目来源直接忽略。
 
 | Frame 类型 | 权限封堵 | 存储 shim | fetch proxy | doufu.* API | native 消息 |
 |---|---|---|---|---|---|
@@ -333,7 +350,7 @@
 ### fetch() 代理
 
 1. 覆盖 `window.fetch` 和 `XMLHttpRequest.prototype.open`。
-2. 跨源请求透明改写为 `/__doufu_proxy__?url=<encoded>`，由 `LocalWebServer` 代理。
+2. 跨源请求透明改写为 `/__doufu_proxy__?url=<encoded>&__dt=<token>`，由 `LocalWebServer` 代理。
 3. 同源请求不代理，直接走原始 fetch/XHR。
 4. 每个 frame 独立设置代理（非共享），保证每个 frame 的 `location.origin` 判断正确。
 

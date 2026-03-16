@@ -93,14 +93,17 @@
 
 ## Bridge / Shim 注意事项
 
-1. Bridge 注入使用 `forMainFrameOnly: false`，由 JS 侧 origin 守卫（`location.hostname === 'localhost'`）区分同源/跨源 iframe。
+1. Bridge 脚本包裹在 IIFE 中，JS 侧 origin 守卫为 `location.origin === 'http://localhost:' + __doufuPort`（精确端口匹配），`__doufuToken`/`__doufuPort` 为 IIFE 内部变量，跨源 iframe 无法读取。Native 侧 `DoufuBridgeMessageHandler` 同时校验 `securityOrigin.port == expectedPort`。
 2. localStorage shim 中 `_data` 必须用 `Object.create(null)`，不能用 `{}`，否则 `toString`/`__proto__` 等 key 会与原型链冲突。
 3. Same-origin iframe 的 localStorage 和 indexedDB 均代理到 parent frame 的 shim 实例，不创建独立副本。否则会出现跨 frame 数据不一致和全量快照竞争导致的数据丢失。
 4. `clearLocalStorage()` / `clearIndexedDB()` 必须先调用 JS 侧 hook 取消 flush，再删除磁盘文件，防止 beforeunload handler 在页面卸载期间重新持久化旧数据。
 5. IndexedDB shim 的 `onupgradeneeded` 支持 async handler（返回 thenable/Promise）。shim 通过 `_holdAutoCommit` 阻止事务在 await 间隔提前提交，通过 `_awaitPending` 等待所有 IDBRequest 完成后再 commit。`addEventListener('upgradeneeded', asyncFn)` 同样支持。handler 同步 throw 会自动 abort 事务。
 6. IndexedDB cursor 在 openCursor 时一次性加载所有匹配 record（快照），cursor.continue() 遍历内存数组。迭代期间通过同事务写入的新 record 不会被 cursor 看到。
 7. IndexedDB getAll/getAllKeys/openCursor/openKeyCursor 对 >500 条结果使用 `_parseInChunks` 分块解析（每 500 行 setTimeout 让出主线程），避免大数据集阻塞 UI。分块期间 `_pendingRequests > 0` 保证事务不会提前提交。
-8. Native 消息处理（`DoufuBridgeMessageHandler`）不再检查 `isMainFrame`，改为 origin 校验，以支持 same-origin iframe 的 bridge 通信。
+8. Native 消息处理（`DoufuBridgeMessageHandler`）不再检查 `isMainFrame`，改为 origin + port 校验，以支持 same-origin iframe 的 bridge 通信。
+9. **Auth Token 约束**：所有访问 `/__doufu_proxy__` 或 `/__doufu_appdata__/` 的代码（JS fetch/XHR、HTML/CSS URL 重写）必须附带 `?__dt=<token>`。新增 JS 文件中访问这些端点时需使用 `_TOKEN` 变量（通过 `'__DOUFU_TOKEN__'` 占位符注入）。
+10. **Validation Bridge**：`presentChatController()` 中创建的 validation bridge 必须从 `webServer.authToken` 和 `webServer.port` 拷贝值到 `serverAuthToken` 和 `expectedPort`，否则 validation 运行时的 proxy/appdata 请求会被 403 拒绝。
+11. **禁止 CORS 头**：`LocalWebServer` 所有响应不得包含 `Access-Control-Allow-Origin`。所有请求均为同源，CORS 不必要；ACAO 会允许跨源 iframe 读取响应提取 token。
 
 ## CDN 缓存注意事项
 
