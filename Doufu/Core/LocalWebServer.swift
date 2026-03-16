@@ -62,8 +62,14 @@ final class LocalWebServer: @unchecked Sendable {
         return try startListener(on: .any)
     }
 
+    /// Maximum request body size (16 MB). Larger PUT payloads are rejected.
+    private static let maxBodySize = 16 * 1024 * 1024
+
     private func startListener(on requestedPort: NWEndpoint.Port) throws -> UInt16 {
         let parameters = NWParameters.tcp
+        // Bind to loopback only — prevents any device on the same network
+        // from accessing project files, user data, or the proxy endpoint.
+        parameters.requiredLocalEndpoint = NWEndpoint.hostPort(host: .ipv4(.loopback), port: requestedPort)
         let listener = try NWListener(using: parameters, on: requestedPort)
 
         listener.stateUpdateHandler = { [weak self] state in
@@ -155,6 +161,15 @@ final class LocalWebServer: @unchecked Sendable {
             // Parse Content-Length to know if we need more body data
             let headerString = String(data: Data(headerData), encoding: .utf8) ?? ""
             let contentLength = self.parseContentLength(from: headerString)
+
+            // Reject oversized request bodies early to prevent memory exhaustion.
+            if contentLength > Self.maxBodySize {
+                let resp = self.buildResponse(statusCode: 413, statusText: "Payload Too Large",
+                                              body: Data("Request body too large".utf8), contentType: "text/plain")
+                self.sendResponse(resp, on: connection)
+                return
+            }
+
             let bodyNeeded = contentLength - currentBody.count
 
             if bodyNeeded > 0 && !isComplete {
