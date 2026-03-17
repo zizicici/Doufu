@@ -87,7 +87,7 @@ final class ChatViewController: UIViewController {
         view.layer.cornerCurve = .continuous
         view.textContainerInset = UIEdgeInsets(top: 9, left: 8, bottom: 9, right: 8)
         view.textContainer.lineFragmentPadding = 0
-        view.font = .systemFont(ofSize: 16)
+        view.font = .preferredFont(forTextStyle: .callout)
         view.delegate = self
         view.isScrollEnabled = false
         view.returnKeyType = .default
@@ -99,7 +99,7 @@ final class ChatViewController: UIViewController {
         label.translatesAutoresizingMaskIntoConstraints = false
         label.text = String(localized: "chat.input.placeholder")
         label.textColor = .placeholderText
-        label.font = .systemFont(ofSize: 16)
+        label.font = .preferredFont(forTextStyle: .callout)
         label.numberOfLines = 1
         return label
     }()

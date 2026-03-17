@@ -587,7 +587,7 @@ private final class ProjectDescriptionEditorViewController: UIViewController, UI
         view.backgroundColor = .secondarySystemGroupedBackground
         view.layer.cornerRadius = 14
         view.layer.cornerCurve = .continuous
-        view.font = .systemFont(ofSize: 16)
+        view.font = .preferredFont(forTextStyle: .callout)
         view.textContainerInset = UIEdgeInsets(top: 14, left: 12, bottom: 14, right: 12)
         view.delegate = self
         return view

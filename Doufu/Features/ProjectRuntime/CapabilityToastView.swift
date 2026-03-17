@@ -18,7 +18,7 @@ final class CapabilityToastView: UIView {
     private let label: UILabel = {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = .systemFont(ofSize: 15, weight: .semibold)
+        label.font = .preferredFont(forTextStyle: .subheadline, weight: .semibold)
         label.textColor = .white
         return label
     }()

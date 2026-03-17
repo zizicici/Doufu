@@ -104,8 +104,8 @@ final class OnboardingViewController: UIViewController {
             var config = UIListContentConfiguration.subtitleCell()
             config.text = String(localized: item.titleKey)
             config.secondaryText = String(localized: item.subtitleKey)
-            config.textProperties.font = .systemFont(ofSize: 16, weight: .semibold)
-            config.secondaryTextProperties.font = .systemFont(ofSize: 14)
+            config.textProperties.font = .preferredFont(forTextStyle: .title3, weight: .semibold)
+            config.secondaryTextProperties.font = .preferredFont(forTextStyle: .subheadline)
             config.secondaryTextProperties.color = .secondaryLabel
             config.secondaryTextProperties.numberOfLines = 0
             config.textToSecondaryTextVerticalPadding = 4

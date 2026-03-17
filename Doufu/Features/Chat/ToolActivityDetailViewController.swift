@@ -137,21 +137,21 @@ private final class ToolActivityCardCell: UITableViewCell {
         headerStack.spacing = 6
         headerStack.alignment = .center
 
-        iconLabel.font = .systemFont(ofSize: 16)
+        iconLabel.font = .preferredFont(forTextStyle: .callout)
         iconLabel.setContentHuggingPriority(.required, for: .horizontal)
 
-        toolNameLabel.font = .systemFont(ofSize: 14, weight: .semibold)
+        toolNameLabel.font = .preferredFont(forTextStyle: .subheadline, weight: .semibold)
         toolNameLabel.textColor = .label
         toolNameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        statusBadge.font = .systemFont(ofSize: 11, weight: .medium)
+        statusBadge.font = .preferredFont(forTextStyle: .caption1, weight: .medium)
         statusBadge.textAlignment = .center
         statusBadge.layer.cornerRadius = 4
         statusBadge.layer.cornerCurve = .continuous
         statusBadge.clipsToBounds = true
         statusBadge.setContentHuggingPriority(.required, for: .horizontal)
 
-        descriptionLabel.font = .systemFont(ofSize: 13)
+        descriptionLabel.font = .preferredFont(forTextStyle: .footnote)
         descriptionLabel.textColor = .secondaryLabel
         descriptionLabel.numberOfLines = 2
 

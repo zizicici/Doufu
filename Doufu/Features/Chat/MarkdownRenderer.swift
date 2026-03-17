@@ -16,7 +16,7 @@ import UIKit
 struct MarkdownRenderer {
 
     struct Style {
-        var bodyFont: UIFont = .systemFont(ofSize: 15)
+        var bodyFont: UIFont = .preferredFont(forTextStyle: .subheadline)
         var bodyColor: UIColor = .label
         var codeFont: UIFont = .monospacedSystemFont(ofSize: 13.5, weight: .regular)
         var codeColor: UIColor = .label

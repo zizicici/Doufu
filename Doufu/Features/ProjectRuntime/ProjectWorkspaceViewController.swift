@@ -205,7 +205,7 @@ final class ProjectWorkspaceViewController: UIViewController {
     private lazy var exitHintLabel: UILabel = {
         let label = UILabel()
         label.text = String(localized: "workspace.panel.exit_hint", defaultValue: "松开退出")
-        label.font = .systemFont(ofSize: 17, weight: .semibold)
+        label.font = .preferredFont(forTextStyle: .body, weight: .semibold)
         label.textColor = .systemRed
         label.textAlignment = .center
         label.adjustsFontSizeToFitWidth = true

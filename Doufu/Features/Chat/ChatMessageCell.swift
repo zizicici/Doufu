@@ -32,7 +32,7 @@ final class ChatMessageCell: UITableViewCell {
         tv.isEditable = false
         tv.isScrollEnabled = false
         tv.isSelectable = true
-        tv.font = .systemFont(ofSize: 15)
+        tv.font = .preferredFont(forTextStyle: .subheadline)
         tv.backgroundColor = .clear
         tv.textContainerInset = .zero
         tv.textContainer.lineFragmentPadding = 0
@@ -156,7 +156,7 @@ final class ChatMessageCell: UITableViewCell {
         let animatedText = displayText(for: message, now: now)
         messageTextView.attributedText = nil
         messageTextView.text = animatedText
-        messageTextView.font = .systemFont(ofSize: 15)
+        messageTextView.font = .preferredFont(forTextStyle: .subheadline)
         metaLabel.text = metadataText(for: message, now: now)
     }
 
@@ -185,7 +185,7 @@ final class ChatMessageCell: UITableViewCell {
             let animatedText = displayText(for: message, now: now)
             messageTextView.attributedText = nil
             messageTextView.text = animatedText
-            messageTextView.font = .systemFont(ofSize: 15)
+            messageTextView.font = .preferredFont(forTextStyle: .subheadline)
         }
         // All live cells: tick duration
         metaLabel.text = metadataText(for: message, now: now)
@@ -204,7 +204,7 @@ final class ChatMessageCell: UITableViewCell {
             let animatedText = displayText(for: message, now: now)
             messageTextView.attributedText = nil
             messageTextView.text = animatedText
-            messageTextView.font = .systemFont(ofSize: 15)
+            messageTextView.font = .preferredFont(forTextStyle: .subheadline)
         }
 
         if message.isProgress && message.finishedAt == nil {

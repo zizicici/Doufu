@@ -92,7 +92,7 @@ final class HomeViewController: UIViewController {
         label.numberOfLines = 0
         label.textAlignment = .center
         label.textColor = .secondaryLabel
-        label.font = .systemFont(ofSize: 15, weight: .regular)
+        label.font = .preferredFont(forTextStyle: .subheadline)
         label.text = String(localized: "home.empty.default")
         return label
     }()
@@ -840,7 +840,7 @@ private final class ProjectCardCell: UICollectionViewCell {
     private let activityBadgeLabel: InsetLabel = {
         let label = InsetLabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = .systemFont(ofSize: 10, weight: .bold)
+        label.font = .preferredFont(forTextStyle: .caption2, weight: .bold)
         label.textAlignment = .center
         label.layer.cornerRadius = 9
         label.layer.cornerCurve = .continuous
@@ -852,7 +852,7 @@ private final class ProjectCardCell: UICollectionViewCell {
     private let titleLabel: UILabel = {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = .systemFont(ofSize: 13, weight: .semibold)
+        label.font = .preferredFont(forTextStyle: .footnote, weight: .semibold)
         label.textColor = .doufuText
         label.numberOfLines = 2
         return label
@@ -1015,7 +1015,7 @@ private final class AddProjectCardCell: UICollectionViewCell {
     private let titleLabel: UILabel = {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = .systemFont(ofSize: 13, weight: .semibold)
+        label.font = .preferredFont(forTextStyle: .footnote, weight: .semibold)
         label.textColor = .doufuText
         label.text = String(localized: "home.add_project.title")
         label.numberOfLines = 1

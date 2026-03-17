@@ -69,7 +69,7 @@ final class SettingsTextInputCell: UITableViewCell {
         contentView.addSubview(stackView)
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = .systemFont(ofSize: 17, weight: .regular)
+        titleLabel.font = .preferredFont(forTextStyle: .body)
         titleLabel.textColor = .label
         titleLabel.setContentHuggingPriority(.required, for: .horizontal)
         titleLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -77,7 +77,7 @@ final class SettingsTextInputCell: UITableViewCell {
         textField.translatesAutoresizingMaskIntoConstraints = false
         textField.clearButtonMode = .whileEditing
         textField.autocorrectionType = .no
-        textField.font = .systemFont(ofSize: 17, weight: .regular)
+        textField.font = .preferredFont(forTextStyle: .body)
         textField.addTarget(self, action: #selector(handleTextChange), for: .editingChanged)
 
         stackView.addArrangedSubview(titleLabel)
@@ -149,7 +149,7 @@ final class SettingsSecureInputCell: UITableViewCell {
         textField.clearButtonMode = .whileEditing
         textField.autocorrectionType = .no
         textField.autocapitalizationType = .none
-        textField.font = .systemFont(ofSize: 17, weight: .regular)
+        textField.font = .preferredFont(forTextStyle: .body)
         textField.addTarget(self, action: #selector(handleTextChange), for: .editingChanged)
         contentView.addSubview(textField)
 
@@ -269,7 +269,7 @@ final class SettingsCenteredButtonCell: UITableViewCell {
         configuration.text = title
         configuration.textProperties.alignment = .center
         configuration.textProperties.color = isEnabled ? tintColor : .tertiaryLabel
-        configuration.textProperties.font = .systemFont(ofSize: 17, weight: .semibold)
+        configuration.textProperties.font = .preferredFont(forTextStyle: .body, weight: .semibold)
         contentConfiguration = configuration
 
         isUserInteractionEnabled = isEnabled
