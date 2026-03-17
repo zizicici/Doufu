@@ -24,6 +24,18 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         window?.rootViewController = navigationController
         window?.makeKeyAndVisible()
 
+        // Show onboarding on first launch
+        if !AppProjectStore.shared.hasCompletedOnboarding {
+            let onboarding = OnboardingViewController()
+            onboarding.onCompleted = { [weak navigationController] in
+                AppProjectStore.shared.hasCompletedOnboarding = true
+                navigationController?.dismiss(animated: true)
+            }
+            let onboardingNav = UINavigationController(rootViewController: onboarding)
+            onboardingNav.modalPresentationStyle = .fullScreen
+            navigationController.present(onboardingNav, animated: false)
+        }
+
         // Handle file open on cold launch
         if let url = connectionOptions.urlContexts.first?.url,
            Self.importableExtensions.contains(url.pathExtension.lowercased()) {

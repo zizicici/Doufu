@@ -1375,19 +1375,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "描述你想让 AI 修改的内容"
+            "value" : "描述你想让 LLM 修改的内容"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "描述你想讓 AI 修改的內容"
+            "value" : "描述你想讓 LLM 修改的內容"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "描述你想讓 AI 修改的內容"
+            "value" : "描述你想讓 LLM 修改的內容"
           }
         }
       }
@@ -3106,25 +3106,25 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "AI Chat"
+            "value" : "LLM Chat"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "AI 聊天"
+            "value" : "LLM 聊天"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "AI 聊天"
+            "value" : "LLM 聊天"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "AI 聊天"
+            "value" : "LLM 聊天"
           }
         }
       }
@@ -3483,25 +3483,25 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "This will revert all files to their state before the last AI conversation. This action cannot be undone."
+            "value" : "This will revert all files to their state before the last LLM conversation. This action cannot be undone."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "将还原所有文件到上次 AI 对话前的状态。此操作不可撤销。"
+            "value" : "将还原所有文件到上次 LLM 对话前的状态。此操作不可撤销。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "將還原所有檔案到上次 AI 對話前的狀態。此操作不可撤銷。"
+            "value" : "將還原所有檔案到上次 LLM 對話前的狀態。此操作不可撤銷。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "將還原所有檔案到上次 AI 對話前的狀態。此操作不可撤銷。"
+            "value" : "將還原所有檔案到上次 LLM 對話前的狀態。此操作不可撤銷。"
           }
         }
       }
@@ -6870,6 +6870,325 @@
         }
       }
     },
+    "onboarding.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Before You Start"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "开始之前"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "開始之前"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "開始之前"
+          }
+        }
+      }
+    },
+    "onboarding.button.next" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Next"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "下一个"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "下一個"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "下一個"
+          }
+        }
+      }
+    },
+    "onboarding.button.start" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Get Started"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "开始使用"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "開始使用"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "開始使用"
+          }
+        }
+      }
+    },
+    "onboarding.item.import_review.subtitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "When importing .doufu / .doufull files, carefully review the code they contain."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "导入 .doufu / .doufull 文件时，请仔细检查其中的代码内容。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "匯入 .doufu / .doufull 檔案時，請仔細檢查其中的程式碼內容。"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "匯入 .doufu / .doufull 檔案時，請仔細檢查其中的程式碼內容。"
+          }
+        }
+      }
+    },
+    "onboarding.item.import_review.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Review Imports"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "导入检查"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "匯入檢查"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "匯入檢查"
+          }
+        }
+      }
+    },
+    "onboarding.item.llm_generation.subtitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Project code is generated by Large Language Models (LLM). You need to configure an LLM provider and model before use."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "项目代码由大语言模型（LLM）生成，使用前需要自行配置 LLM 服务商及对应模型。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "專案程式碼由大型語言模型（LLM）生成，使用前需要自行設定 LLM 服務商及對應模型。"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "專案程式碼由大型語言模型（LLM）生成，使用前需要自行設定 LLM 服務商及對應模型。"
+          }
+        }
+      }
+    },
+    "onboarding.item.llm_generation.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "LLM Code Generation"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "LLM 代码生成"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "LLM 程式碼生成"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "LLM 程式碼生成"
+          }
+        }
+      }
+    },
+    "onboarding.item.permissions.subtitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "LLM tool operations and device capabilities (e.g. camera, location) require your explicit permission. Review carefully before granting."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "LLM 工具调用和设备能力（如摄像头、定位）均需你的明确许可，请仔细审查后再授权。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "LLM 工具調用和裝置能力（如攝影機、定位）均需你的明確許可，請仔細審查後再授權。"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "LLM 工具調用和裝置能力（如攝影機、定位）均需你的明確許可，請仔細審查後再授權。"
+          }
+        }
+      }
+    },
+    "onboarding.item.permissions.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Grant Permissions Carefully"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "谨慎授权"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "謹慎授權"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "謹慎授權"
+          }
+        }
+      }
+    },
+    "onboarding.item.third_party.subtitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "We provide LLM integration, but have no affiliation with any service provider."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "我们提供 LLM 模型对接能力，但与各服务商之间没有任何隶属关系。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "我們提供 LLM 模型對接能力，但與各服務商之間沒有任何隸屬關係。"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "我們提供 LLM 模型對接能力，但與各服務商之間沒有任何隸屬關係。"
+          }
+        }
+      }
+    },
+    "onboarding.item.third_party.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Third-Party Services"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "第三方服务"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "第三方服務"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "第三方服務"
+          }
+        }
+      }
+    },
     "pip.status.cancelled" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -7253,25 +7572,25 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Undo Last AI Change"
+            "value" : "Undo Last LLM Change"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "撤销上次 AI 更改"
+            "value" : "撤销上次 LLM 更改"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "撤銷上次 AI 變更"
+            "value" : "撤銷上次 LLM 變更"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "撤銷上次 AI 變更"
+            "value" : "撤銷上次 LLM 變更"
           }
         }
       }
@@ -7658,25 +7977,25 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Checkpoints are created automatically before each AI conversation. You can undo the latest change or restore to any previous checkpoint."
+            "value" : "Checkpoints are created automatically before each LLM conversation. You can undo the latest change or restore to any previous checkpoint."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "每次 AI 对话前自动创建检查点。您可以撤销最近的更改或恢复到任意历史检查点。"
+            "value" : "每次 LLM 对话前自动创建检查点。您可以撤销最近的更改或恢复到任意历史检查点。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "每次 AI 對話前自動建立檢查點。您可以撤銷最近的變更或恢復到任意歷史檢查點。"
+            "value" : "每次 LLM 對話前自動建立檢查點。您可以撤銷最近的變更或恢復到任意歷史檢查點。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "每次 AI 對話前自動建立檢查點。您可以撤銷最近的變更或恢復到任意歷史檢查點。"
+            "value" : "每次 LLM 對話前自動建立檢查點。您可以撤銷最近的變更或恢復到任意歷史檢查點。"
           }
         }
       }
@@ -7774,25 +8093,25 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Controls how much autonomy the AI has when using tools. Higher autonomy means fewer confirmation prompts."
+            "value" : "Controls how much autonomy the LLM has when using tools. Higher autonomy means fewer confirmation prompts."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "控制 AI 使用工具时的自主程度。自主程度越高，确认提示越少。"
+            "value" : "控制 LLM 使用工具时的自主程度。自主程度越高，确认提示越少。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "控制 AI 使用工具時的自主程度。自主程度越高，確認提示越少。"
+            "value" : "控制 LLM 使用工具時的自主程度。自主程度越高，確認提示越少。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "控制 AI 使用工具時的自主程度。自主程度越高，確認提示越少。"
+            "value" : "控制 LLM 使用工具時的自主程度。自主程度越高，確認提示越少。"
           }
         }
       }
@@ -8702,25 +9021,25 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Use chat to tell AI what you want to build."
+            "value" : "Use chat to tell LLM what you want to build."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "通过聊天告诉 AI 你想要实现的效果。"
+            "value" : "通过聊天告诉 LLM 你想要实现的效果。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "通過聊天告訴 AI 你想要實現的效果。"
+            "value" : "通過聊天告訴 LLM 你想要實現的效果。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "通過聊天告訴 AI 你想要實現的效果。"
+            "value" : "通過聊天告訴 LLM 你想要實現的效果。"
           }
         }
       }
@@ -12037,25 +12356,25 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Import not allowed — AI analysis detected potentially malicious code."
+            "value" : "Import not allowed — LLM analysis detected potentially malicious code."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "不允许导入 — AI 分析检测到潜在恶意代码。"
+            "value" : "不允许导入 — LLM 分析检测到潜在恶意代码。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "不允許匯入 — AI 分析檢測到潛在惡意程式碼。"
+            "value" : "不允許匯入 — LLM 分析檢測到潛在惡意程式碼。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "不允許匯入 — AI 分析檢測到潛在惡意程式碼。"
+            "value" : "不允許匯入 — LLM 分析檢測到潛在惡意程式碼。"
           }
         }
       }
@@ -13574,25 +13893,25 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Failed to parse AI response."
+            "value" : "Failed to parse LLM response."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "AI 响应解析失败。"
+            "value" : "LLM 响应解析失败。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "AI 回應解析失敗。"
+            "value" : "LLM 回應解析失敗。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "AI 回應解析失敗。"
+            "value" : "LLM 回應解析失敗。"
           }
         }
       }
@@ -17517,25 +17836,25 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Never prompt. The AI can perform all operations without confirmation."
+            "value" : "Never prompt. The LLM can perform all operations without confirmation."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "从不提示。AI 可以执行所有操作而无需确认。"
+            "value" : "从不提示。LLM 可以执行所有操作而无需确认。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "從不提示。AI 可以執行所有操作而無需確認。"
+            "value" : "從不提示。LLM 可以執行所有操作而無需確認。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "從不提示。AI 可以執行所有操作而無需確認。"
+            "value" : "從不提示。LLM 可以執行所有操作而無需確認。"
           }
         }
       }
@@ -17604,25 +17923,25 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Choose how much autonomy the AI has when performing file and web operations."
+            "value" : "Choose how much autonomy the LLM has when performing file and web operations."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "选择 AI 执行文件和网络操作时的自主程度。"
+            "value" : "选择 LLM 执行文件和网络操作时的自主程度。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "選擇 AI 執行檔案和網路操作時的自主程度。"
+            "value" : "選擇 LLM 執行檔案和網路操作時的自主程度。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "選擇 AI 執行檔案和網路操作時的自主程度。"
+            "value" : "選擇 LLM 執行檔案和網路操作時的自主程度。"
           }
         }
       }

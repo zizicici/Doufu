@@ -258,6 +258,15 @@ final class AppProjectStore {
         }
     }
 
+    // MARK: - Onboarding
+
+    private static let onboardingCompletedKey = "hasCompletedOnboarding"
+
+    var hasCompletedOnboarding: Bool {
+        get { UserDefaults.standard.bool(forKey: Self.onboardingCompletedKey) }
+        set { UserDefaults.standard.set(newValue, forKey: Self.onboardingCompletedKey) }
+    }
+
     // MARK: - App-Level Project Settings
 
     private static let autoCollapsePanelKey = "appAutoCollapsePanel"
