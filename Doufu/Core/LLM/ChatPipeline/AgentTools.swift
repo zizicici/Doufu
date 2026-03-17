@@ -740,12 +740,34 @@ final class AgentToolProvider {
             return ToolExecutionResult(output: "File is not valid UTF-8 text: \(path)", isError: true, changedPaths: [])
         }
 
-        // Break minified single-line blobs into readable multi-line content
-        // so that start_line/line_count can navigate them meaningfully.
-        let ext = URL(fileURLWithPath: path).pathExtension
-        let (readableContent, wasReformatted) = breakLongLines(in: fullContent, fileExtension: ext)
+        // Normalize line endings to "\n" for consistent splitting.
+        let normalizedContent = fullContent.replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
 
-        let allLines = readableContent.components(separatedBy: .newlines)
+        // If the entire file is a single long line (minified), reformat it
+        // and save the formatted version back to disk so that subsequent
+        // edit_file calls see the same content the model sees.
+        let ext = URL(fileURLWithPath: path).pathExtension
+        let rawLines = normalizedContent.components(separatedBy: "\n")
+        let isSingleLineMinified = rawLines.count <= 2
+            && normalizedContent.count > Self.longLineThreshold
+            && Self.formattableExtensions.contains(ext.lowercased())
+
+        let readableContent: String
+        let wasReformatted: Bool
+        if isSingleLineMinified {
+            let (formatted, didFormat) = breakLongLines(in: normalizedContent, fileExtension: ext)
+            readableContent = formatted
+            wasReformatted = didFormat
+            if didFormat {
+                try? formatted.write(to: resolved, atomically: true, encoding: .utf8)
+            }
+        } else {
+            readableContent = normalizedContent
+            wasReformatted = false
+        }
+
+        let allLines = readableContent.components(separatedBy: "\n")
         let totalLineCount: Int
         if totalBytes > Self.maxFullDecodeBytes {
             // Estimate remaining lines beyond the decoded portion
@@ -822,7 +844,7 @@ final class AgentToolProvider {
             headerParts.append("output truncated")
         }
         if wasReformatted {
-            headerParts.append("reformatted from minified — use write_file to modify")
+            headerParts.append("auto-formatted from single-line minified")
         }
         let header = "[File: \(path) | \(headerParts.joined(separator: " | "))]"
 
@@ -872,23 +894,18 @@ final class AgentToolProvider {
         }
 
         do {
-            // Break minified single-line blobs before saving so that
-            // subsequent read_file / edit_file calls work on readable code.
-            let ext = URL(fileURLWithPath: path).pathExtension
-            let (formattedContent, _) = breakLongLines(in: content, fileExtension: ext)
-
             let directoryURL = resolved.deletingLastPathComponent()
             try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
-            try formattedContent.write(to: resolved, atomically: true, encoding: .utf8)
-            let writtenSize = (try? Data(contentsOf: resolved).count) ?? formattedContent.utf8.count
-            let lineCount = formattedContent.components(separatedBy: .newlines).count
+            try content.write(to: resolved, atomically: true, encoding: .utf8)
+            let writtenSize = (try? Data(contentsOf: resolved).count) ?? content.utf8.count
+            let lineCount = content.components(separatedBy: .newlines).count
             let verb = fileExists ? "overwrote" : "created"
             return ToolExecutionResult(
-                output: "Successfully wrote \(formattedContent.count) characters to \(normalizedPath)",
+                output: "Successfully wrote \(content.count) characters to \(normalizedPath)",
                 isError: false,
                 changedPaths: [normalizedPath],
                 metadata: .fileWritten(path: normalizedPath, isNew: !fileExists, sizeBytes: Int64(writtenSize)),
-                completionEvent: .fileWritten(path: normalizedPath, characterCount: formattedContent.count),
+                completionEvent: .fileWritten(path: normalizedPath, characterCount: content.count),
                 changeSummary: "\(verb) \(lineCount) lines"
             )
         } catch {
@@ -2147,7 +2164,11 @@ final class AgentToolProvider {
             return (content, false)
         }
 
-        let lines = content.components(separatedBy: "\n")
+        // Normalize Windows \r\n and bare \r to \n so that the formatter
+        // doesn't leave stray \r characters in the output.
+        let normalized = content.replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+        let lines = normalized.components(separatedBy: "\n")
         let hasLongLines = lines.contains { $0.count > Self.longLineThreshold }
         guard hasLongLines else { return (content, false) }
 
@@ -2224,10 +2245,11 @@ final class AgentToolProvider {
             }
         }
 
-        // Clean up: collapse empty lines and trim leading/trailing whitespace per line
+        // Clean up: collapse empty lines and trim whitespace per line.
+        // Use .whitespacesAndNewlines so that any stray \r is also stripped.
         return result
             .components(separatedBy: "\n")
-            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .joined(separator: "\n")
     }
