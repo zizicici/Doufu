@@ -171,7 +171,7 @@ final class ImportScanViewController: UIViewController {
         secondaryButton.titleLabel?.adjustsFontForContentSizeCategory = true
         secondaryButton.addTarget(self, action: #selector(secondaryButtonTapped), for: .touchUpInside)
 
-        let hairline = 1.0 / UIScreen.main.scale
+        let hairline = 1.0 / (view.window?.screen.scale ?? 2.0)
 
         NSLayoutConstraint.activate([
             bottomBarContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor),

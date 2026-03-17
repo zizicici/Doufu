@@ -580,7 +580,7 @@ final class MediaSessionManager: NSObject {
     private func configureAudioSession() {
         let session = AVAudioSession.sharedInstance()
         do {
-            try session.setCategory(.playAndRecord, options: [.defaultToSpeaker, .allowBluetooth])
+            try session.setCategory(.playAndRecord, options: [.defaultToSpeaker, .allowBluetoothHFP])
             try session.setActive(true)
         } catch {
             print("[MediaSessionManager] Failed to configure audio session: \(error)")

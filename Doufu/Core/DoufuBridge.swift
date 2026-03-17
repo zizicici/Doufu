@@ -924,7 +924,7 @@ final class DoufuBridge: NSObject {
     /// sql.js JS loader (sql-wasm.js) — cached from bundle.
     private static let sqlJsLoaderScript: String = {
         guard let url = Bundle.main.url(forResource: "sql-wasm", withExtension: "js"),
-              let js = try? String(contentsOf: url) else {
+              let js = try? String(contentsOf: url, encoding: .utf8) else {
             assertionFailure("sql-wasm.js not found in bundle")
             return ""
         }
@@ -934,7 +934,7 @@ final class DoufuBridge: NSObject {
     /// New IndexedDB shim template (DoufuSqlJsIndexedDB.js) — cached from bundle.
     private static let sqlJsIDBShimTemplate: String = {
         guard let url = Bundle.main.url(forResource: "DoufuSqlJsIndexedDB", withExtension: "js"),
-              let js = try? String(contentsOf: url) else {
+              let js = try? String(contentsOf: url, encoding: .utf8) else {
             assertionFailure("DoufuSqlJsIndexedDB.js not found in bundle")
             return ""
         }
@@ -944,7 +944,7 @@ final class DoufuBridge: NSObject {
     /// doufu.db.* direct SQL API template — cached from bundle.
     private static let doufuDbAPITemplate: String = {
         guard let url = Bundle.main.url(forResource: "DoufuDbAPI", withExtension: "js"),
-              let js = try? String(contentsOf: url) else {
+              let js = try? String(contentsOf: url, encoding: .utf8) else {
             assertionFailure("DoufuDbAPI.js not found in bundle")
             return ""
         }
