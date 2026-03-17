@@ -87,9 +87,8 @@ final class LLMTokenUsageStore {
             createdAt: DatabaseTimestamp.toNanos(Date())
         )
         return try? dbPool.write { db in
-            var mutableRow = row
-            try mutableRow.insert(db)
-            return mutableRow.id
+            try row.insert(db)
+            return db.lastInsertedRowID
         }
     }
 
