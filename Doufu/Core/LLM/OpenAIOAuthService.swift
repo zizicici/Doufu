@@ -103,7 +103,7 @@ final class OpenAIOAuthService {
         self.pkce = pkce
         self.expectedState = state
 
-        let callbackServer = LocalhostOAuthCallbackServer(callbackPath: callbackPath)
+        let callbackServer = LocalhostOAuthCallbackServer(port: 1455, callbackPath: callbackPath)
         do {
             try callbackServer.start { [weak self] callbackURL in
                 self?.handleCallbackURL(callbackURL, callbackPort: callbackServer.port)
@@ -140,6 +140,7 @@ final class OpenAIOAuthService {
         let state = Self.generateState()
 
         let callbackServer = LocalhostOAuthCallbackServer(
+            port: 1455,
             callbackPath: callbackPath,
             customSchemeRedirect: "\(appURLScheme)://openai/callback"
         )
@@ -745,14 +746,9 @@ final class LocalhostOAuthCallbackServer {
             ? .any
             : NWEndpoint.Port(rawValue: portValue) ?? .any
 
-        let parameters = NWParameters.tcp
-        // Bind to loopback only — prevents network-adjacent attackers
-        // from intercepting the OAuth callback.
-        parameters.requiredLocalEndpoint = NWEndpoint.hostPort(host: .ipv4(.loopback), port: nwPort)
-
         let listener: NWListener
         do {
-            listener = try NWListener(using: parameters, on: nwPort)
+            listener = try NWListener(using: .tcp, on: nwPort)
         } catch {
             throw ServerError.listenerSetupFailed
         }

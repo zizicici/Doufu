@@ -5,10 +5,11 @@
 //  Created by Codex on 2026/03/04.
 //
 
+import AuthenticationServices
 import SafariServices
 import UIKit
 
-final class ProviderOAuthFormViewController: UITableViewController, SFSafariViewControllerDelegate {
+final class ProviderOAuthFormViewController: UITableViewController, SFSafariViewControllerDelegate, ASWebAuthenticationPresentationContextProviding {
 
     private enum Section: Int, CaseIterable {
         case label
@@ -432,20 +433,11 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
         }
 
         let oauthService = OpenAIOAuthService()
-        do {
-            let authorizeURL = try oauthService.start { [weak self] result in
-                self?.handleOAuthResult(result)
-            }
+        self.oauthService = oauthService
+        refreshOAuthAndAddProviderCells()
 
-            self.oauthService = oauthService
-
-            let safariController = SFSafariViewController(url: authorizeURL)
-            safariController.delegate = self
-            loginSafariViewController = safariController
-            present(safariController, animated: true)
-            refreshOAuthAndAddProviderCells()
-        } catch {
-            showError(message: error.localizedDescription)
+        oauthService.startWebAuth(contextProvider: self) { [weak self] result in
+            self?.handleOAuthResult(result)
         }
     }
 
@@ -542,6 +534,12 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
         oauthService?.cancel()
         oauthService = nil
         refreshOAuthAndAddProviderCells()
+    }
+
+    // MARK: - ASWebAuthenticationPresentationContextProviding
+
+    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+        view.window ?? ASPresentationAnchor()
     }
 
     private func showAddedAlert(providerLabel: String) {
