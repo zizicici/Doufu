@@ -1,6 +1,6 @@
 # 功能范围说明
 
-## 已完成功能（截至 2026-03-12）
+## 已完成功能（截至 2026-03-17）
 
 1. 首页项目画廊
    - 3 列平铺卡片，支持搜索过滤。
@@ -26,7 +26,7 @@
    - 文件内容页支持编辑和保存。
    - 集成 `Runestone`（可用时）并按后缀自动语法高亮。
 5. Provider 管理
-   - 支持 `OpenAI Compatible`、`Anthropic`、`Google Gemini`。
+   - 支持 `OpenAI Compatible`、`Anthropic`、`Google Gemini`、`OpenRouter`。
    - 每个 Provider 支持 `API Key` 与 `OAuth` 模式。
    - 支持自定义 Base URL、Model。
    - 模型列表管理：发现/自定义/编辑能力参数（reasoning effort / thinking / structured output）。
@@ -34,8 +34,8 @@
 6. Agent 聊天改工程
    - 会话支持多线程（thread）持久化与切换。
    - 基于 tool-use agent loop 架构，模型自主调用工具迭代完成任务。
-   - 内置 15 种工具：
-     - 只读：`read_file`、`list_directory`、`search_files`、`grep_files`、`glob_files`、`diff_file`、`changed_files`
+   - 内置 16 种工具：
+     - 只读：`read_file`、`list_directory`、`search_files`、`grep_files`、`glob_files`、`diff_file`、`changed_files`、`doufu_api_docs`
      - 写入：`write_file`、`edit_file`、`revert_file`
      - 危险：`delete_file`、`move_file`、`web_search`、`web_fetch`
      - 验证：`validate_code`
@@ -93,6 +93,12 @@
    - `Export Project Backup` 导出为 `.doufull`（ZIP 语义，包含 `App/` + `AppData/`，不包含 `preview.jpg`）。
    - 首页支持从 iCloud Drive / Files 导入 `.doufu`、`.doufull` 并创建新项目。
    - 支持重复导入同一文件；每次导入都会创建独立项目记录。
+15. 导入安全扫描
+   - 导入项目时自动执行静态代码扫描（`StaticCodeScanner`）和可选的 LLM 辅助扫描（`LLMCodeScanner`）。
+   - 扫描结果页（`ImportScanViewController`）展示风险项，用户可查看详情后决定是否继续导入。
+16. Shortcuts 集成
+   - 通过 `AppIntents` 框架提供 Siri Shortcuts 支持。
+   - 支持 `Open Project` Intent，可通过快捷指令直接打开指定项目。
 
 ## 下一阶段（路线图）
 

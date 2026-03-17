@@ -77,7 +77,7 @@ struct ModelSelectionResolver {
 
         if let thread = threadSelection {
             return validateSelection(
-                providerID: thread.providerID,
+                providerID: providerStore.providerID(forModelRecordID: thread.modelRecordID) ?? "",
                 modelRecordID: thread.modelRecordID,
                 reasoningEffort: thread.reasoningEffort,
                 thinkingEnabled: thread.thinkingEnabled,
@@ -90,7 +90,7 @@ struct ModelSelectionResolver {
 
         if let project = projectDefault {
             return validateSelection(
-                providerID: project.providerID,
+                providerID: providerStore.providerID(forModelRecordID: project.modelRecordID) ?? "",
                 modelRecordID: project.modelRecordID,
                 reasoningEffort: project.reasoningEffort,
                 thinkingEnabled: project.thinkingEnabled,
@@ -103,7 +103,7 @@ struct ModelSelectionResolver {
 
         if let app = appDefault {
             return validateSelection(
-                providerID: app.providerID,
+                providerID: providerStore.providerID(forModelRecordID: app.modelRecordID) ?? "",
                 modelRecordID: app.modelRecordID,
                 reasoningEffort: app.reasoningEffort,
                 thinkingEnabled: app.thinkingEnabled,
@@ -172,7 +172,6 @@ struct ModelSelectionResolver {
         }
 
         return ModelSelection(
-            providerID: trimmedProviderID,
             modelRecordID: trimmedModelRecordID,
             reasoningEffort: normalizedReasoningEffort,
             thinkingEnabled: normalizedThinkingEnabled

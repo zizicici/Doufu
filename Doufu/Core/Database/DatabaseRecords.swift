@@ -268,14 +268,12 @@ struct DBAppModelSelection: Codable, FetchableRecord, PersistableRecord {
     static let databaseTableName = "app_model_selection"
 
     var id: String
-    var providerID: String
     var modelRecordID: String
     var extra: String?
     var updatedAt: Int64
 
     enum CodingKeys: String, CodingKey {
         case id
-        case providerID = "provider_id"
         case modelRecordID = "model_record_id"
         case extra
         case updatedAt = "updated_at"
@@ -286,14 +284,12 @@ struct DBProjectModelSelection: Codable, FetchableRecord, PersistableRecord {
     static let databaseTableName = "project_model_selection"
 
     var projectID: String
-    var providerID: String
     var modelRecordID: String
     var extra: String?
     var updatedAt: Int64
 
     enum CodingKeys: String, CodingKey {
         case projectID = "project_id"
-        case providerID = "provider_id"
         case modelRecordID = "model_record_id"
         case extra
         case updatedAt = "updated_at"
@@ -303,17 +299,13 @@ struct DBProjectModelSelection: Codable, FetchableRecord, PersistableRecord {
 struct DBThreadModelSelection: Codable, FetchableRecord, PersistableRecord {
     static let databaseTableName = "thread_model_selection"
 
-    var projectID: String
     var threadID: String
-    var providerID: String
     var modelRecordID: String
     var extra: String?
     var updatedAt: Int64
 
     enum CodingKeys: String, CodingKey {
-        case projectID = "project_id"
         case threadID = "thread_id"
-        case providerID = "provider_id"
         case modelRecordID = "model_record_id"
         case extra
         case updatedAt = "updated_at"
@@ -480,33 +472,12 @@ extension DBProviderModel {
 }
 
 extension ModelSelection {
-    static func from(_ db: DBAppModelSelection) -> ModelSelection {
-        let extra = DBModelSelectionExtra.decode(from: db.extra)
+    static func from(modelRecordID: String, extra: String?) -> ModelSelection {
+        let decoded = DBModelSelectionExtra.decode(from: extra)
         return ModelSelection(
-            providerID: db.providerID,
-            modelRecordID: db.modelRecordID,
-            reasoningEffort: extra?.reasoningEffort.flatMap(ProjectChatService.ReasoningEffort.init(rawValue:)),
-            thinkingEnabled: extra?.thinkingEnabled
-        )
-    }
-
-    static func from(_ db: DBProjectModelSelection) -> ModelSelection {
-        let extra = DBModelSelectionExtra.decode(from: db.extra)
-        return ModelSelection(
-            providerID: db.providerID,
-            modelRecordID: db.modelRecordID,
-            reasoningEffort: extra?.reasoningEffort.flatMap(ProjectChatService.ReasoningEffort.init(rawValue:)),
-            thinkingEnabled: extra?.thinkingEnabled
-        )
-    }
-
-    static func from(_ db: DBThreadModelSelection) -> ModelSelection {
-        let extra = DBModelSelectionExtra.decode(from: db.extra)
-        return ModelSelection(
-            providerID: db.providerID,
-            modelRecordID: db.modelRecordID,
-            reasoningEffort: extra?.reasoningEffort.flatMap(ProjectChatService.ReasoningEffort.init(rawValue:)),
-            thinkingEnabled: extra?.thinkingEnabled
+            modelRecordID: modelRecordID,
+            reasoningEffort: decoded?.reasoningEffort.flatMap(ProjectChatService.ReasoningEffort.init(rawValue:)),
+            thinkingEnabled: decoded?.thinkingEnabled
         )
     }
 }

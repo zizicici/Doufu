@@ -96,7 +96,7 @@ final class ProjectModelSelectionViewController: UIViewController {
 
     private func selectionState(from selection: ModelSelection) -> ModelSelectionDraft {
         ModelSelectionDraft(
-            selectedProviderID: selection.providerID,
+            selectedProviderID: providerStore.providerID(forModelRecordID: selection.modelRecordID) ?? "",
             selectedModelRecordID: selection.modelRecordID,
             selectedReasoningEffort: selection.reasoningEffort,
             selectedThinkingEnabled: selection.thinkingEnabled

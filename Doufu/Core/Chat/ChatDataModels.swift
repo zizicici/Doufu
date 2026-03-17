@@ -137,18 +137,15 @@ struct ModelSelectionDraft: Equatable {
 }
 
 struct ModelSelection: Codable, Equatable {
-    var providerID: String
     var modelRecordID: String
     var reasoningEffort: ProjectChatService.ReasoningEffort?
     var thinkingEnabled: Bool?
 
     init(
-        providerID: String,
         modelRecordID: String,
         reasoningEffort: ProjectChatService.ReasoningEffort? = nil,
         thinkingEnabled: Bool? = nil
     ) {
-        self.providerID = providerID
         self.modelRecordID = modelRecordID
         self.reasoningEffort = reasoningEffort
         self.thinkingEnabled = thinkingEnabled

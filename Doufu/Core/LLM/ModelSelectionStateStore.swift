@@ -99,7 +99,7 @@ final class ModelSelectionStateStore {
     func loadThreadSelection(projectID: String, threadID: String) -> ModelSelection? {
         var state = projectStates[projectID] ?? ProjectState()
         if !state.loadedThreadIDs.contains(threadID) {
-            let selection = providerStore.loadThreadModelSelection(projectID: projectID, threadID: threadID)
+            let selection = providerStore.loadThreadModelSelection(threadID: threadID)
             state.loadedThreadIDs.insert(threadID)
             if let selection {
                 state.threadSelections[threadID] = selection
@@ -165,7 +165,7 @@ final class ModelSelectionStateStore {
 
     func setThreadSelection(_ selection: ModelSelection?, projectID: String, threadID: String) {
         let didChange = cacheThreadSelection(selection, projectID: projectID, threadID: threadID)
-        providerStore.saveThreadModelSelection(selection, projectID: projectID, threadID: threadID)
+        providerStore.saveThreadModelSelection(selection, threadID: threadID)
         if didChange {
             postChange(.init(scope: .threadSelection(projectID: projectID, threadID: threadID)))
         }
@@ -176,7 +176,7 @@ final class ModelSelectionStateStore {
         if didChange {
             postChange(.init(scope: .threadSelection(projectID: projectID, threadID: threadID)))
         }
-        providerStore.saveThreadModelSelection(selection, projectID: projectID, threadID: threadID)
+        providerStore.saveThreadModelSelection(selection, threadID: threadID)
     }
 
     @discardableResult

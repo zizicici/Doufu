@@ -39,7 +39,7 @@
 
 1. 工具定义与执行集中在 `AgentTools.swift` 和 `AgentToolProvider`。
 2. 工具按危险程度分级：
-   - `autoAllow`：read_file, list_directory, search_files, grep_files, glob_files, validate_code, diff_file, changed_files
+   - `autoAllow`：read_file, list_directory, search_files, grep_files, glob_files, validate_code, diff_file, changed_files, doufu_api_docs
    - `confirmOnce`：write_file, edit_file, revert_file
    - `alwaysConfirm`：delete_file, move_file, web_search, web_fetch
 3. 三种权限模式：

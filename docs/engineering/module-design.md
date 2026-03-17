@@ -3,7 +3,7 @@
 ## 模块总览
 
 1. `Home`
-   - 主要文件：`HomeViewController.swift`、`Features/Home/ProjectSortViewController.swift`
+   - 主要文件：`HomeViewController.swift`
    - 责任：项目卡片画廊、搜索、长按菜单、排序与新建入口；消费 `ProjectActivityStore` 展示 `正在建造中 / 新版本 / 需要确认 / 出错了` 标签，并在 `需要确认 / 出错了` 时直接路由进聊天页。
 2. `Project Runtime`
    - 主要文件：`Features/ProjectRuntime/ProjectWorkspaceViewController.swift`、`Core/Media/MediaSessionManager.swift`、`Core/Media/LoopbackSTUNServer.swift`
@@ -57,7 +57,7 @@
     - 责任：能力活动记录页（DiffableDataSource，按日期分组，支持按项目 `.project(id:)` 或按能力类型 `.capability(type:)` 过滤）。
 14. `Database`
     - 主要文件：`Core/Database/DatabaseManager.swift`、`DatabaseRecords.swift`、`DatabaseTimestamp.swift`
-    - 责任：SQLite 数据库初始化与迁移（`v1_initial_schema` + `v2_add_indexes` + `v3_project_capabilities` + `v4_capability_activity`）、索引优化、GRDB Record 类型定义、domain ↔ DB 映射。
+    - 责任：SQLite 数据库初始化与迁移（单一 `v1_initial_schema`，14 表 + 索引）、GRDB Record 类型定义、domain ↔ DB 映射。
 15. `Project Storage`
     - 主要文件：`Core/Projects/AppProjectStore.swift`
     - 责任：项目元数据 CRUD（GRDB `project` + `permission` 表）、模板写入、权限读写。
@@ -97,6 +97,12 @@
 25. `Token Usage Analytics`
    - 主要文件：`Core/LLM/LLMTokenUsageStore.swift`、`Features/Settings/TokenUsageViewController.swift`、`Features/ProjectRuntime/ProjectTokenUsageViewController.swift`
    - 责任：token 用量写入 `token_usage` 表，SQL GROUP BY / SUM 查询，驱动全局与项目视角展示。
+26. `Import Security Scan`
+   - 主要文件：`Core/Security/StaticCodeScanner.swift`、`Core/Security/LLMCodeScanner.swift`、`Core/Security/ImportScanModels.swift`、`Features/ImportScan/ImportScanViewController.swift`、`Features/ImportScan/ImportScanFindingCell.swift`、`Features/ImportScan/ImportScanTypes.swift`
+   - 责任：导入项目时的安全扫描；`StaticCodeScanner` 执行静态规则匹配，`LLMCodeScanner` 可选的 LLM 辅助扫描；`ImportScanViewController` 展示扫描结果供用户确认。
+27. `App Intents / Shortcuts`
+   - 主要文件：`Core/AppIntents/DoufuShortcuts.swift`、`Core/AppIntents/OpenProjectIntent.swift`、`Core/AppIntents/ProjectEntity.swift`
+   - 责任：Siri Shortcuts 集成，提供 `Open Project` Intent，支持通过快捷指令直接打开指定项目。
 
 ## 通信方式
 

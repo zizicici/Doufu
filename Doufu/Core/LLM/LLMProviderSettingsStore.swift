@@ -264,6 +264,18 @@ final class LLMProviderSettingsStore {
 
     init() {}
 
+    // MARK: - Model Record Lookup
+
+    func providerID(forModelRecordID modelRecordID: String) -> String? {
+        try? dbPool.read { db in
+            try String.fetchOne(
+                db,
+                sql: "SELECT provider_id FROM llm_provider_model WHERE id = ?",
+                arguments: [modelRecordID]
+            )
+        }
+    }
+
     // MARK: - App-level Default Model
 
     func loadDefaultModelSelection() -> ModelSelection? {
@@ -272,13 +284,12 @@ final class LLMProviderSettingsStore {
         }) else {
             return nil
         }
-        return ModelSelection.from(row)
+        return ModelSelection.from(modelRecordID: row.modelRecordID, extra: row.extra)
     }
 
     func saveDefaultModelSelection(_ selection: ModelSelection) {
         let row = DBAppModelSelection(
             id: "default",
-            providerID: selection.providerID,
             modelRecordID: selection.modelRecordID,
             extra: DBModelSelectionExtra.jsonString(from: selection),
             updatedAt: DatabaseTimestamp.toNanos(Date())
@@ -693,7 +704,7 @@ final class LLMProviderSettingsStore {
         }) else {
             return nil
         }
-        return ModelSelection.from(row)
+        return ModelSelection.from(modelRecordID: row.modelRecordID, extra: row.extra)
     }
 
     func saveProjectModelSelection(_ selection: ModelSelection?, projectID: String) {
@@ -706,7 +717,6 @@ final class LLMProviderSettingsStore {
 
                 let row = DBProjectModelSelection(
                     projectID: projectID,
-                    providerID: selection.providerID,
                     modelRecordID: selection.modelRecordID,
                     extra: DBModelSelectionExtra.jsonString(from: selection),
                     updatedAt: DatabaseTimestamp.toNanos(Date())
@@ -720,45 +730,33 @@ final class LLMProviderSettingsStore {
 
     // MARK: - Thread-level Model Selection
 
-    func loadThreadModelSelection(projectID: String, threadID: String) -> ModelSelection? {
+    func loadThreadModelSelection(threadID: String) -> ModelSelection? {
         guard let row = try? dbPool.read({ db in
-            try DBThreadModelSelection.fetchOne(db, key: ["project_id": projectID, "thread_id": threadID])
+            try DBThreadModelSelection.fetchOne(db, key: threadID)
         }) else {
             return nil
         }
-        return ModelSelection.from(row)
+        return ModelSelection.from(modelRecordID: row.modelRecordID, extra: row.extra)
     }
 
-    func saveThreadModelSelection(_ selection: ModelSelection?, projectID: String, threadID: String) {
+    func saveThreadModelSelection(_ selection: ModelSelection?, threadID: String) {
         try? dbPool.write { db in
             if let selection {
-                guard try projectExists(projectID: projectID, in: db) else {
-                    assertionFailure("Attempted to save a thread model selection for a missing project: \(projectID)")
-                    return
-                }
                 guard try threadExists(threadID: threadID, in: db) else {
                     assertionFailure("Attempted to save a thread model selection for a missing thread: \(threadID)")
                     return
                 }
 
                 let row = DBThreadModelSelection(
-                    projectID: projectID,
                     threadID: threadID,
-                    providerID: selection.providerID,
                     modelRecordID: selection.modelRecordID,
                     extra: DBModelSelectionExtra.jsonString(from: selection),
                     updatedAt: DatabaseTimestamp.toNanos(Date())
                 )
                 try row.save(db)
             } else {
-                try DBThreadModelSelection.deleteOne(db, key: ["project_id": projectID, "thread_id": threadID])
+                try DBThreadModelSelection.deleteOne(db, key: threadID)
             }
-        }
-    }
-
-    func removeThreadModelSelection(projectID: String, threadID: String) {
-        _ = try? dbPool.write { db in
-            try DBThreadModelSelection.deleteOne(db, key: ["project_id": projectID, "thread_id": threadID])
         }
     }
 
@@ -879,14 +877,18 @@ final class LLMProviderSettingsStore {
         try dbPool.write { db in
             try dbProvider.save(db)
 
-            // Replace all models for this provider
+            // Diff-based model sync: delete removed, upsert remaining.
+            // Avoids blanket deleteAll so that FK CASCADE on model_record_id
+            // only fires when a model is genuinely removed.
+            let newIDs = Set(provider.models.map(\.id))
             try DBProviderModel
                 .filter(Column("provider_id") == provider.id)
+                .filter(!newIDs.contains(Column("id")))
                 .deleteAll(db)
 
             for (index, model) in provider.models.enumerated() {
                 let dbModel = DBProviderModel.from(model, providerID: provider.id, sortOrder: index)
-                try dbModel.insert(db)
+                try dbModel.save(db)
             }
         }
     }

@@ -49,6 +49,38 @@ nonisolated final class DatabaseManager {
                 t.column("agent_tool_permission", .integer).notNull().defaults(to: 0)
             }
 
+            // project_capability
+            try db.create(table: "project_capability") { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("project_id", .text).notNull()
+                    .references("project", onDelete: .cascade)
+                t.column("capability", .text).notNull()
+                t.column("state", .integer).notNull().defaults(to: 0)
+                t.column("updated_at", .integer).notNull()
+                t.uniqueKey(["project_id", "capability"])
+            }
+
+            // capability_activity
+            try db.create(table: "capability_activity") { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("project_id", .text).notNull()
+                    .references("project", onDelete: .cascade)
+                t.column("capability", .text).notNull()
+                t.column("event_type", .integer).notNull()
+                t.column("detail", .text)
+                t.column("created_at", .integer).notNull()
+            }
+            try db.create(
+                index: "idx_capability_activity_project",
+                on: "capability_activity",
+                columns: ["project_id", "created_at"]
+            )
+            try db.create(
+                index: "idx_capability_activity_capability",
+                on: "capability_activity",
+                columns: ["capability", "created_at"]
+            )
+
             // llm_provider
             try db.create(table: "llm_provider") { t in
                 t.primaryKey("id", .text).notNull()
@@ -85,20 +117,21 @@ nonisolated final class DatabaseManager {
                 t.column("output_tokens", .integer).notNull()
                 t.column("created_at", .integer).notNull()
             }
-
             try db.create(index: "idx_token_usage_provider_model",
                           on: "token_usage",
                           columns: ["provider_id", "model_request_id"])
-
             try db.create(index: "idx_token_usage_project",
                           on: "token_usage",
                           columns: ["project_id"])
+            try db.create(index: "idx_token_usage_created_at",
+                          on: "token_usage",
+                          columns: ["created_at"])
 
             // app_model_selection (singleton row, id always = "default")
             try db.create(table: "app_model_selection") { t in
                 t.primaryKey("id", .text).notNull()
-                t.column("provider_id", .text).notNull()
                 t.column("model_record_id", .text).notNull()
+                    .references("llm_provider_model", onDelete: .cascade)
                 t.column("extra", .text)
                 t.column("updated_at", .integer).notNull()
             }
@@ -107,8 +140,8 @@ nonisolated final class DatabaseManager {
             try db.create(table: "project_model_selection") { t in
                 t.column("project_id", .text).notNull()
                     .references("project", onDelete: .cascade)
-                t.column("provider_id", .text).notNull()
                 t.column("model_record_id", .text).notNull()
+                    .references("llm_provider_model", onDelete: .cascade)
                 t.column("extra", .text)
                 t.column("updated_at", .integer).notNull()
                 t.primaryKey(["project_id"])
@@ -163,6 +196,9 @@ nonisolated final class DatabaseManager {
             try db.create(index: "idx_message_thread",
                           on: "message",
                           columns: ["thread_id"])
+            try db.create(index: "idx_message_thread_sort",
+                          on: "message",
+                          columns: ["thread_id", "sort_order"])
 
             // session_memory
             try db.create(table: "session_memory") { t in
@@ -176,67 +212,13 @@ nonisolated final class DatabaseManager {
 
             // thread_model_selection
             try db.create(table: "thread_model_selection") { t in
-                t.column("project_id", .text).notNull()
-                    .references("project", onDelete: .cascade)
-                t.column("thread_id", .text).notNull()
+                t.primaryKey("thread_id", .text).notNull()
                     .references("thread", column: "id", onDelete: .cascade)
-                t.column("provider_id", .text).notNull()
                 t.column("model_record_id", .text).notNull()
+                    .references("llm_provider_model", onDelete: .cascade)
                 t.column("extra", .text)
                 t.column("updated_at", .integer).notNull()
-                t.primaryKey(["project_id", "thread_id"])
             }
         }
-
-        migrator.registerMigration("v2_add_indexes") { db in
-            // Index on token_usage.created_at for daily aggregation queries.
-            try db.create(
-                index: "idx_token_usage_created_at",
-                on: "token_usage",
-                columns: ["created_at"]
-            )
-
-            // Composite index on message(thread_id, sort_order) for ordered message loading.
-            try db.create(
-                index: "idx_message_thread_sort",
-                on: "message",
-                columns: ["thread_id", "sort_order"]
-            )
-        }
-
-        migrator.registerMigration("v3_project_capabilities") { db in
-            try db.create(table: "project_capability") { t in
-                t.autoIncrementedPrimaryKey("id")
-                t.column("project_id", .text).notNull()
-                    .references("project", onDelete: .cascade)
-                t.column("capability", .text).notNull()
-                t.column("state", .integer).notNull().defaults(to: 0)
-                t.column("updated_at", .integer).notNull()
-                t.uniqueKey(["project_id", "capability"])
-            }
-        }
-
-        migrator.registerMigration("v4_capability_activity") { db in
-            try db.create(table: "capability_activity") { t in
-                t.autoIncrementedPrimaryKey("id")
-                t.column("project_id", .text).notNull()
-                    .references("project", onDelete: .cascade)
-                t.column("capability", .text).notNull()
-                t.column("event_type", .integer).notNull()
-                t.column("detail", .text)
-                t.column("created_at", .integer).notNull()
-            }
-            try db.create(
-                index: "idx_capability_activity_project",
-                on: "capability_activity",
-                columns: ["project_id", "created_at"]
-            )
-            try db.create(
-                index: "idx_capability_activity_capability",
-                on: "capability_activity",
-                columns: ["capability", "created_at"]
-            )
-        }
-
     }
 }

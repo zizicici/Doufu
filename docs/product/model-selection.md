@@ -58,14 +58,15 @@
 
 `App / Project / Thread` 三层都保存同一份 `ModelSelection` 结构：
 
-1. `providerID`
-2. `modelRecordID`
-3. `reasoningEffort?`
-4. `thinkingEnabled?`
+1. `modelRecordID`（FK → `llm_provider_model.id`，CASCADE 删除）
+2. `reasoningEffort?`
+3. `thinkingEnabled?`
+
+`providerID` 不再冗余存储在选择记录中，而是通过 `modelRecordID` → `llm_provider_model.provider_id` 按需派生。
 
 当前实现里，App 默认模型页、Project 默认模型页、Thread 模型配置页都围绕这同一份结构工作：
 
-1. 三层都可以显式保存 `provider / model / reasoning / thinking`
+1. 三层都可以显式保存 `model / reasoning / thinking`（provider 由 model 隐含）
 2. 三层都通过同一套 `ModelSelectionResolver.sanitizeSelection()` 归一化参数
 3. 三层都遵循“当前层 `override == nil` 时整份结构一起向上继承”的规则
 

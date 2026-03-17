@@ -452,7 +452,8 @@ final class SettingsViewController: UITableViewController {
             providerStore: store
         )
         guard resolution.state == .valid,
-              let provider = store.loadProvider(id: selection.providerID)
+              let resolvedProviderID = resolution.providerID,
+              let provider = store.loadProvider(id: resolvedProviderID)
         else {
             return String(
                 localized: "settings.default_model.invalid",

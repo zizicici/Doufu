@@ -10,7 +10,7 @@
 6. 已完成 Provider 模型管理（发现/自定义/能力参数编辑）。
 7. 已完成 `LLMModelRegistry` 统一模型能力解析（多级优先级回退）。
 8. 已完成聊天架构升级为 **tool-use agent loop**（替代原 pipeline 三路执行）。
-9. 已完成 15 种 Agent 工具：文件 CRUD、搜索、diff、web_search、web_fetch、validate_code。
+9. 已完成 16 种 Agent 工具：文件 CRUD、搜索、diff、web_search、web_fetch、validate_code、doufu_api_docs。
 10. 已完成工具权限分级与三种权限模式（standard / autoApproveNonDestructive / fullAutoApprove）。
 11. 已完成只读工具并行执行与写入工具顺序执行。
 12. 已完成 `ProjectGitService`：项目级 Git 初始化、自动保存、检查点创建、历史恢复与 undo helper。
@@ -35,7 +35,7 @@
 31. 已完成聊天模块 UI 重组至 `Features/Chat/` 目录。
 32. 已完成 `ProjectLifecycleCoordinator`：项目生命周期统一入口（create / delete / close / rename），修复删除执行中项目文件丢失、discard 后 session 泄漏、rename 后 session context 不同步三处 Bug。
 33. 已完成 project 状态收口：引入 `ProjectChangeCenter` 统一项目变更广播，引入 `ProjectActivityStore` 统一项目活动状态（building / newVersionAvailable / needsConfirmation / error）。
-34. 已完成数据层完善：`v2_add_indexes` 迁移（`token_usage.created_at` 索引、`message(thread_id, sort_order)` 复合索引）。
+34. 已完成数据层完善：索引优化（`token_usage.created_at`、`message(thread_id, sort_order)` 复合索引）、迁移合并为单一 `v1_initial_schema`。
 
 ## 已完成阶段回顾
 
@@ -68,7 +68,7 @@
    - 消息流 FlowState 状态机，保证任务期间恰好一条 live 消息。
 10. Phase I：SQLite 迁移
     - 引入 GRDB.swift 7.10.0，建立 `DatabaseManager` 单例（WAL 模式，外键 ON）。
-    - 12 张表覆盖所有结构化数据：项目元数据（`project` + `permission`）、Provider 配置（`llm_provider` + `llm_provider_model`）、三层模型选择、聊天数据（`thread` + `assistant` + `message` + `session_memory`）、token 用量。迁移链：`v1_initial_schema` + `v2_add_indexes`。
+    - 14 张表覆盖所有结构化数据：项目元数据（`project` + `permission` + `project_capability` + `capability_activity`）、Provider 配置（`llm_provider` + `llm_provider_model`）、三层模型选择、聊天数据（`thread` + `assistant` + `message` + `session_memory`）、token 用量。单一迁移 `v1_initial_schema`。
     - 移除所有 JSON 文件存储（manifest.json, threads_index, thread_messages, project_config, thread_selections）和 UserDefaults 存储（providers, token usage）。
     - 项目磁盘结构升级到 v4：`Documents/Projects/{uuid}/App/` + `AppData/`。
     - 聊天 UI 文件重组到 `Features/Chat/` 目录。

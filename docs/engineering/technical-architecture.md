@@ -23,7 +23,7 @@
 1. `Doufu/App/`
    - App 生命周期与根导航。`AppDelegate.setup()` 初始化 `DatabaseManager`。
 2. `Doufu/Core/Database/`
-   - `DatabaseManager`：SQLite 数据库单例，持有 `DatabasePool`，迁移链：`v1_initial_schema`（13 表）、`v2_add_indexes`、`v3_project_capabilities`（`project_capability` 表）、`v4_capability_activity`（`capability_activity` 表 + 索引）。
+   - `DatabaseManager`：SQLite 数据库单例，持有 `DatabasePool`，单一迁移 `v1_initial_schema`（14 表 + 索引）。
    - `DatabaseRecords`：所有 GRDB Record 类型（DBProject, DBPermission, DBProjectCapability, DBCapabilityActivity, DBProvider, DBProviderModel, DBTokenUsage, DBAppModelSelection, DBProjectModelSelection, DBThreadModelSelection, DBChatThread, DBAssistant, DBChatMessage, DBSessionMemory）及 domain ↔ DB 映射扩展。
    - `DatabaseTimestamp`：Date ↔ Int64 纳秒转换。
 3. `Doufu/Core/Projects/`
@@ -122,6 +122,16 @@
     - `DoufuBridge`：JS 桥接（注入策略、权限封堵、fetch 代理、localStorage shim、IndexedDB shim、doufu.db API、能力请求、WebRTC 信令）。
     - `ActiveTaskManager`：活跃任务追踪。
     - `PiPProgressManager`：画中画进度管理。
+    - `Core/Security/StaticCodeScanner`：导入项目静态代码扫描。
+    - `Core/Security/LLMCodeScanner`：LLM 辅助代码扫描。
+    - `Core/Security/ImportScanModels`：扫描模型定义。
+    - `Core/AppIntents/DoufuShortcuts`：Siri Shortcuts 提供者。
+    - `Core/AppIntents/OpenProjectIntent`：打开项目 Intent。
+    - `Core/AppIntents/ProjectEntity`：项目 Entity（App Intents 框架）。
+12. `Doufu/Features/ImportScan/`
+    - `ImportScanViewController`：导入安全扫描结果页。
+    - `ImportScanFindingCell`：扫描发现项 Cell。
+    - `ImportScanTypes`：扫描页类型定义。
 
 ## 核心数据模型
 
@@ -137,7 +147,7 @@
 4. `ResolvedModelProfile`
    - 统一的模型能力描述：`reasoningEfforts`, `thinkingSupported`, `thinkingCanDisable`, `structuredOutputSupported`, `maxOutputTokens`, `contextWindowTokens`。
 5. `ModelSelection`
-   - 统一的模型选择类型（providerID, modelRecordID, reasoningEffort?, thinkingEnabled?），App/Project/Thread 三层共用。
+   - 统一的模型选择类型（modelRecordID, reasoningEffort?, thinkingEnabled?），App/Project/Thread 三层共用。providerID 通过 `modelRecordID` → `llm_provider_model.provider_id` 按需派生。
 
 ### DB 层（GRDB Record）
 
@@ -214,7 +224,7 @@
    - 响应被 `max_tokens` 截断时自动续传。
    - 接近迭代预算上限时注入系统提示收尾。
 4. 工具执行
-   - 只读工具（`read_file`, `list_directory`, `search_files`, `grep_files`, `glob_files`, `diff_file`, `changed_files`）使用 TaskGroup 并行执行。
+   - 只读工具（`read_file`, `list_directory`, `search_files`, `grep_files`, `glob_files`, `diff_file`, `changed_files`, `doufu_api_docs`）使用 TaskGroup 并行执行。
    - 写入工具（`write_file`, `edit_file`, `revert_file`）顺序执行。
    - 危险工具（`delete_file`, `move_file`, `web_search`, `web_fetch`）需用户确认，顺序执行。
    - `validate_code` 使用共享 WKWebView，不可并行。
@@ -281,7 +291,7 @@
    - 走 `/chat/completions`。
    - 支持 reasoning effort；映射消息格式到 OpenRouter 格式。
 5. 聊天页按 Provider/Model 维度选择模型与参数：
-   - `App / Project / Thread` 三层共享同一份 `ModelSelection(provider, model, reasoning, thinking)` 结构
+   - `App / Project / Thread` 三层共享同一份 `ModelSelection(model, reasoning, thinking)` 结构（provider 由 model 隐含）
    - OpenAI Compatible：`reasoning effort`
    - Anthropic/Gemini：`thinking` 开关
 

@@ -45,7 +45,7 @@
 6. Agent 聊天改工程（Project Chat）：
    - 会话支持多线程（thread）持久化，可切换历史线程。
    - 基于 **tool-use agent loop** 架构：模型自主调用工具完成任务。
-   - 内置 15 种工具：文件读写/编辑/删除/移动/回退、目录浏览、搜索/grep/glob、diff/changed_files、web_search/web_fetch、validate_code。
+   - 内置 16 种工具：文件读写/编辑/删除/移动/回退、目录浏览、搜索/grep/glob、diff/changed_files、web_search/web_fetch、validate_code、doufu_api_docs。
    - 工具权限分三级（autoAllow / confirmOnce / alwaysConfirm），支持三种权限模式（standard / autoApproveNonDestructive / fullAutoApprove）。
    - 只读工具并行执行，写入工具顺序执行。
    - 支持 extended thinking 内容展示（如 Claude thinking blocks）。
@@ -86,4 +86,4 @@
 2. 新增用户可见文案时，必须同步 `Localizable.xcstrings`。
 3. 涉及架构调整时，必须同步 `technical-architecture.md` 与 `module-design.md`。
 
-文档已按当前实现同步更新（2026-03-14）。所有结构化数据已迁移到 SQLite（GRDB.swift 7.10.0）。
+文档已按当前实现同步更新（2026-03-17）。所有结构化数据已迁移到 SQLite（GRDB.swift 7.10.0）。

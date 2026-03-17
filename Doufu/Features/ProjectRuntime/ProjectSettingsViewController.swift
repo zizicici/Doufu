@@ -433,8 +433,9 @@ final class ProjectSettingsViewController: UITableViewController {
                 defaultValue: "Invalid Project Default"
             )
         }
-        let providerLabel = providerStore.loadProvider(id: selection.providerID)?.label ?? selection.providerID
-        let modelLabel = providerStore.availableModels(forProviderID: selection.providerID)
+        let resolvedProviderID = resolution.providerID ?? ""
+        let providerLabel = providerStore.loadProvider(id: resolvedProviderID)?.label ?? resolvedProviderID
+        let modelLabel = providerStore.availableModels(forProviderID: resolvedProviderID)
             .first(where: { $0.normalizedID == selection.modelRecordID.lowercased() })?
             .effectiveDisplayName ?? selection.modelRecordID
         return "\(providerLabel) · \(modelLabel)"

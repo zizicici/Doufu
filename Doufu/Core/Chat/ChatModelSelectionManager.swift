@@ -489,7 +489,7 @@ final class ChatModelSelectionManager {
     var selectionSnapshot: ModelSelectionDraft {
         if let threadOverride {
             return ModelSelectionDraft(
-                selectedProviderID: threadOverride.providerID,
+                selectedProviderID: providerStore.providerID(forModelRecordID: threadOverride.modelRecordID) ?? "",
                 selectedModelRecordID: threadOverride.modelRecordID,
                 selectedReasoningEffort: threadOverride.reasoningEffort,
                 selectedThinkingEnabled: threadOverride.thinkingEnabled
@@ -546,13 +546,13 @@ final class ChatModelSelectionManager {
         if resolution.providerID == providerID {
             return true
         }
-        if threadOverride?.providerID == providerID {
+        if let rid = threadOverride?.modelRecordID, providerStore.providerID(forModelRecordID: rid) == providerID {
             return true
         }
-        if projectDefault?.providerID == providerID {
+        if let rid = projectDefault?.modelRecordID, providerStore.providerID(forModelRecordID: rid) == providerID {
             return true
         }
-        if appDefault?.providerID == providerID {
+        if let rid = appDefault?.modelRecordID, providerStore.providerID(forModelRecordID: rid) == providerID {
             return true
         }
         return false
@@ -616,8 +616,9 @@ final class ChatModelSelectionManager {
 
     private func normalizePersistedThreadOverride(_ selection: ModelSelection?) -> ModelSelection? {
         guard let selection else { return nil }
+        let providerID = providerStore.providerID(forModelRecordID: selection.modelRecordID) ?? ""
         return ModelSelectionResolver.sanitizeSelection(
-            providerID: selection.providerID,
+            providerID: providerID,
             modelRecordID: selection.modelRecordID,
             reasoningEffort: selection.reasoningEffort,
             thinkingEnabled: selection.thinkingEnabled,
