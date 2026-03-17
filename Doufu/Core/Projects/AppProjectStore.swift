@@ -393,7 +393,7 @@ final class AppProjectStore {
         now: Date,
         projectURL: URL
     ) throws {
-        let onboardingHint = String(localized: "project_template.onboarding.hint", defaultValue: "点击菜单，通过对话开发你的应用")
+        let onboardingHint = String(localized: "project_template.onboarding.hint", defaultValue: "Tap the menu to start editing through chat")
 
         let indexHTML = """
         <!doctype html>
