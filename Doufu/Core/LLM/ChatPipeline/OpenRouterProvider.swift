@@ -348,10 +348,20 @@ final class OpenRouterProvider: LLMProviderAdapter {
                 stopReason = finishedToolCalls.isEmpty ? .endTurn : .toolUse
             }
 
+            let responseUsage: ResponsesUsage? = (inputTokens != nil || outputTokens != nil)
+                ? ResponsesUsage(
+                    inputTokens: inputTokens,
+                    outputTokens: outputTokens,
+                    totalTokens: (inputTokens ?? 0) + (outputTokens ?? 0),
+                    inputTokensDetails: nil,
+                    outputTokensDetails: nil
+                )
+                : nil
+
             return AgentLLMResponse(
                 textContent: streamedText,
                 toolCalls: finishedToolCalls,
-                usage: nil,
+                usage: responseUsage,
                 stopReason: stopReason,
                 thinkingContent: nil
             )
