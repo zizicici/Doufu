@@ -69,6 +69,7 @@ final class ChatViewController: UIViewController {
         tableView.backgroundColor = .doufuBackground
         tableView.register(ChatMessageCell.self, forCellReuseIdentifier: ChatMessageCell.reuseIdentifier)
         tableView.register(ChatToolMessageCell.self, forCellReuseIdentifier: ChatToolMessageCell.reuseIdentifier)
+        tableView.contentInset.bottom = 20
         return tableView
     }()
 
@@ -272,11 +273,28 @@ final class ChatViewController: UIViewController {
     // MARK: - Layout
 
     private func configureLayout() {
+        let inputSeparator = UIView()
+        inputSeparator.translatesAutoresizingMaskIntoConstraints = false
+        inputSeparator.backgroundColor = .separator
+
         view.addSubview(tableView)
         view.addSubview(inputContainer)
+        inputContainer.addSubview(inputSeparator)
         inputContainer.addSubview(inputTextView)
         inputTextView.addSubview(inputPlaceholderLabel)
         inputContainer.addSubview(sendButton)
+
+        // Fill the area below safe area with the same background as inputContainer
+        let bottomFill = UIView()
+        bottomFill.translatesAutoresizingMaskIntoConstraints = false
+        bottomFill.backgroundColor = .systemBackground
+        view.addSubview(bottomFill)
+        NSLayoutConstraint.activate([
+            bottomFill.topAnchor.constraint(equalTo: inputContainer.bottomAnchor),
+            bottomFill.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            bottomFill.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            bottomFill.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
 
         let inputBottomConstraint: NSLayoutConstraint
         if #available(iOS 15.0, *) {
@@ -297,6 +315,11 @@ final class ChatViewController: UIViewController {
             inputContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             inputContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             inputBottomConstraint,
+
+            inputSeparator.topAnchor.constraint(equalTo: inputContainer.topAnchor),
+            inputSeparator.leadingAnchor.constraint(equalTo: inputContainer.leadingAnchor),
+            inputSeparator.trailingAnchor.constraint(equalTo: inputContainer.trailingAnchor),
+            inputSeparator.heightAnchor.constraint(equalToConstant: 1),
 
             inputTextView.topAnchor.constraint(equalTo: inputContainer.topAnchor, constant: 10),
             inputTextView.leadingAnchor.constraint(equalTo: inputContainer.leadingAnchor, constant: 12),
