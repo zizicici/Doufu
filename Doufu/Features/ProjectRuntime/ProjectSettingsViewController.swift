@@ -31,6 +31,8 @@ final class ProjectSettingsViewController: UITableViewController {
 
     /// Called after localStorage or IndexedDB is cleared so the workspace can reload its webView.
     var onStorageCleared: (() -> Void)?
+    /// Called after the project is deleted so the workspace can dismiss.
+    var onProjectDeleted: (() -> Void)?
 
     private var diffableDataSource: UITableViewDiffableDataSource<ProjectSettingsSectionID, ProjectSettingsItemID>!
 
@@ -273,6 +275,21 @@ final class ProjectSettingsViewController: UITableViewController {
                 tintColor: .systemRed
             )
             return cell
+
+        case .deleteProject:
+            guard
+                let cell = tableView.dequeueReusableCell(
+                    withIdentifier: SettingsCenteredButtonCell.reuseIdentifier,
+                    for: indexPath
+                ) as? SettingsCenteredButtonCell
+            else {
+                return UITableViewCell()
+            }
+            cell.configure(
+                title: String(localized: "project_settings.delete_project"),
+                tintColor: .systemRed
+            )
+            return cell
         }
     }
 
@@ -303,6 +320,8 @@ final class ProjectSettingsViewController: UITableViewController {
         if doufuBridge != nil {
             snapshot.appendItems([.clearLocalStorage, .clearIndexedDB], toSection: .storage)
         }
+        snapshot.appendSections([.dangerZone])
+        snapshot.appendItems([.deleteProject], toSection: .dangerZone)
         return snapshot
     }
 
@@ -322,7 +341,7 @@ final class ProjectSettingsViewController: UITableViewController {
         case .projectName, .capability:
             return nil
         case .projectDescription, .defaultModel, .toolPermission, .codeScan, .checkpointHistory,
-             .clearLocalStorage, .clearIndexedDB, .capabilityActivityLog:
+             .clearLocalStorage, .clearIndexedDB, .capabilityActivityLog, .deleteProject:
             return indexPath
         }
     }
@@ -351,6 +370,8 @@ final class ProjectSettingsViewController: UITableViewController {
             confirmClearLocalStorage()
         case .clearIndexedDB:
             confirmClearIndexedDB()
+        case .deleteProject:
+            presentDeleteConfirmation()
         }
     }
 
@@ -531,6 +552,48 @@ final class ProjectSettingsViewController: UITableViewController {
             self?.onStorageCleared?()
         })
         present(alert, animated: true)
+    }
+
+    // MARK: - Delete Project
+
+    private func presentDeleteConfirmation() {
+        let alert = UIAlertController(
+            title: String(localized: "home.alert.delete.title"),
+            message: String(format: String(localized: "home.alert.delete.message_format"), projectNameText),
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: String(localized: "common.action.cancel"), style: .cancel))
+        alert.addAction(UIAlertAction(
+            title: String(localized: "common.action.delete"),
+            style: .destructive
+        ) { [weak self] _ in
+            self?.deleteProject()
+        })
+        present(alert, animated: true)
+    }
+
+    private func deleteProject() {
+        let projectID = self.projectID
+        let projectURL = self.projectURL
+        let coordinator = ProjectLifecycleCoordinator.shared
+        Task { [weak self] in
+            do {
+                try await coordinator.deleteProject(projectID: projectID, projectURL: projectURL)
+                guard let self else { return }
+                self.dismiss(animated: true) {
+                    self.onProjectDeleted?()
+                }
+            } catch {
+                guard let self else { return }
+                let alert = UIAlertController(
+                    title: String(localized: "home.alert.delete_failed.title"),
+                    message: error.localizedDescription,
+                    preferredStyle: .alert
+                )
+                alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
+                self.present(alert, animated: true)
+            }
+        }
     }
 
     // MARK: - Code Scan

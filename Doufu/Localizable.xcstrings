@@ -7797,6 +7797,35 @@
         }
       }
     },
+    "project_settings.delete_project" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delete Project"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "删除项目"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "刪除專案"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "刪除專案"
+          }
+        }
+      }
+    },
     "project_settings.description_editor.save_failed.title" : {
       "extractionState" : "extracted_with_value",
       "localizations" : {
@@ -19658,7 +19687,6 @@
       }
     },
     "workspace.panel.collapse" : {
-      "extractionState" : "extracted_with_value",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -19745,7 +19773,6 @@
       }
     },
     "workspace.panel.expand_hint" : {
-      "extractionState" : "extracted_with_value",
       "localizations" : {
         "en" : {
           "stringUnit" : {

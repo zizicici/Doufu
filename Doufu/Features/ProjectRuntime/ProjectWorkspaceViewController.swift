@@ -999,6 +999,9 @@ final class ProjectWorkspaceViewController: UIViewController {
             self.doufuBridge.refreshStorageScript(on: self.webView.configuration)
             self.webView.reload()
         }
+        settingsController.onProjectDeleted = { [weak self] in
+            self?.dismiss(animated: true)
+        }
         let navigationController = UINavigationController(rootViewController: settingsController)
         navigationController.modalPresentationStyle = .pageSheet
         if let sheet = navigationController.sheetPresentationController {

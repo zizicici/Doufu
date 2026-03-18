@@ -12,6 +12,7 @@ nonisolated enum ProjectSettingsSectionID: Hashable, Sendable {
     case codeScan
     case checkpoints
     case storage
+    case dangerZone
 
     var header: String? {
         switch self {
@@ -21,6 +22,7 @@ nonisolated enum ProjectSettingsSectionID: Hashable, Sendable {
         case .codeScan: return String(localized: "project_settings.section.code_scan", defaultValue: "Security")
         case .checkpoints: return String(localized: "project_settings.section.checkpoints")
         case .storage: return String(localized: "project_settings.section.storage", defaultValue: "Storage")
+        case .dangerZone: return nil
         }
     }
 
@@ -30,7 +32,7 @@ nonisolated enum ProjectSettingsSectionID: Hashable, Sendable {
         case .chat: return String(localized: "project_settings.footer.tool_permission")
         case .checkpoints: return String(localized: "project_settings.footer.checkpoints")
         case .storage: return String(localized: "project_settings.footer.storage", defaultValue: "Clearing storage will reload the web page.")
-        case .capabilities, .codeScan: return nil
+        case .capabilities, .codeScan, .dangerZone: return nil
         }
     }
 }
@@ -46,6 +48,7 @@ nonisolated enum ProjectSettingsItemID: Hashable, Sendable {
     case checkpointHistory
     case clearLocalStorage
     case clearIndexedDB
+    case deleteProject
 }
 
 // MARK: - Checkpoint History
