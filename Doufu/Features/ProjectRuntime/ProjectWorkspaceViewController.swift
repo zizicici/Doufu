@@ -107,6 +107,19 @@ final class ProjectWorkspaceViewController: UIViewController {
     private var photoPickContext: (multiple: Bool, completion: (Result<String, DoufuBridgeCapabilityError>) -> Void)?
     private var capabilityPromptQueue: [(type: CapabilityType, completion: (Bool) -> Void)] = []
     private var isShowingCapabilityPrompt = false
+    private var activityObserver: NSObjectProtocol?
+
+    private lazy var activityBadgeLabel: InsetLabel = {
+        let label = InsetLabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.font = .preferredFont(forTextStyle: .caption2, weight: .bold)
+        label.textAlignment = .center
+        label.layer.cornerRadius = 9
+        label.layer.cornerCurve = .continuous
+        label.clipsToBounds = true
+        label.isHidden = true
+        return label
+    }()
 
     private lazy var webView: WKWebView = {
         let configuration = WKWebViewConfiguration()
@@ -277,6 +290,9 @@ final class ProjectWorkspaceViewController: UIViewController {
 
     deinit {
         autoCollapseWorkItem?.cancel()
+        if let activityObserver {
+            NotificationCenter.default.removeObserver(activityObserver)
+        }
         if let projectChangeObserver {
             NotificationCenter.default.removeObserver(projectChangeObserver)
         }
@@ -313,6 +329,16 @@ final class ProjectWorkspaceViewController: UIViewController {
         ) { [weak self] _ in
             self?.consumeVisibleProjectUpdateIfNeeded()
         }
+        view.addSubview(activityBadgeLabel)
+        NSLayoutConstraint.activate([
+            activityBadgeLabel.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
+            activityBadgeLabel.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -8),
+        ])
+        activityObserver = projectActivityStore.addObserver { [weak self] change in
+            guard let self, change.projectID == self.project.id else { return }
+            self.updateActivityBadge()
+        }
+        updateActivityBadge()
         loadProjectPage()
     }
 
@@ -344,6 +370,7 @@ final class ProjectWorkspaceViewController: UIViewController {
         } else if !isDraggingPanel {
             relayoutPanelForCurrentState()
         }
+        
     }
 
     private func configureLayout() {
@@ -499,6 +526,34 @@ final class ProjectWorkspaceViewController: UIViewController {
         }
     }
 
+    private func updateActivityBadge() {
+        let state = projectActivityStore.state(for: project.id)
+        switch state {
+        case .idle:
+            activityBadgeLabel.isHidden = true
+        case .building:
+            activityBadgeLabel.text = String(localized: "home.project.activity.building")
+            activityBadgeLabel.backgroundColor = UIColor.systemOrange.withAlphaComponent(0.96)
+            activityBadgeLabel.textColor = .white
+            activityBadgeLabel.isHidden = false
+        case .newVersionAvailable:
+            activityBadgeLabel.text = String(localized: "home.project.activity.new_version")
+            activityBadgeLabel.backgroundColor = UIColor.systemGreen.withAlphaComponent(0.96)
+            activityBadgeLabel.textColor = .white
+            activityBadgeLabel.isHidden = false
+        case .needsConfirmation:
+            activityBadgeLabel.text = String(localized: "home.project.activity.needs_confirmation")
+            activityBadgeLabel.backgroundColor = UIColor.systemBlue.withAlphaComponent(0.96)
+            activityBadgeLabel.textColor = .white
+            activityBadgeLabel.isHidden = false
+        case .error:
+            activityBadgeLabel.text = String(localized: "home.project.activity.error")
+            activityBadgeLabel.backgroundColor = UIColor.systemRed.withAlphaComponent(0.96)
+            activityBadgeLabel.textColor = .white
+            activityBadgeLabel.isHidden = false
+        }
+    }
+
     private func expandPanel(animated: Bool, scheduleAutoCollapseAfter: Bool) {
         cancelAutoCollapse()
         panelState = .expanded
@@ -518,6 +573,7 @@ final class ProjectWorkspaceViewController: UIViewController {
             }
         } else {
             panelContainer.frame = target
+            
             if scheduleAutoCollapseAfter {
                 scheduleAutoCollapse()
             }
@@ -539,6 +595,7 @@ final class ProjectWorkspaceViewController: UIViewController {
             }
         } else {
             panelContainer.frame = target
+            
         }
     }
 
@@ -668,6 +725,7 @@ final class ProjectWorkspaceViewController: UIViewController {
             let minX = panelCollapsedFrame().origin.x
             frame.origin.x = max(frame.origin.x, minX)
             panelContainer.frame = frame
+            
             updateExitTarget(for: frame)
         case .ended, .cancelled, .failed:
             isDraggingPanel = false

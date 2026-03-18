@@ -969,7 +969,7 @@ private final class ProjectCardCell: UICollectionViewCell {
     }
 }
 
-private final class InsetLabel: UILabel {
+final class InsetLabel: UILabel {
     var contentInsets = UIEdgeInsets(top: 4, left: 8, bottom: 4, right: 8)
 
     override var intrinsicContentSize: CGSize {
