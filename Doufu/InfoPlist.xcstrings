@@ -44,6 +44,18 @@
             "state" : "translated",
             "value" : "豆腐项目整体文件"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "豆腐專案整體文件"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "豆腐專案整體文件"
+          }
         }
       }
     },
@@ -59,6 +71,18 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "豆腐项目文件"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "豆腐專案文件"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "豆腐專案文件"
           }
         }
       }

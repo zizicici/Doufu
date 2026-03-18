@@ -372,7 +372,7 @@
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "權限已被用戶拒絕。"
+            "value" : "權限已被使用者拒絕。"
           }
         }
       }
@@ -888,7 +888,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "項目目錄為空，無法生成上下文。"
+            "value" : "專案目錄為空，無法生成上下文。"
           }
         },
         "zh-HK" : {
@@ -969,19 +969,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "该供应商暂无官方或自定义模型。请输入模型 ID 以继续。"
+            "value" : "该服务商暂无官方或自定义模型。请输入模型 ID 以继续。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "該供應商暫無官方或自訂模型。請輸入模型 ID 以繼續。"
+            "value" : "該服務商暫無官方或自訂模型。請輸入模型 ID 以繼續。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "該供應商暫無官方或自訂模型。請輸入模型 ID 以繼續。"
+            "value" : "該服務商暫無官方或自訂模型。請輸入模型 ID 以繼續。"
           }
         }
       }
@@ -1317,19 +1317,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "没有可用的提供商。请先在设置中添加 API Key 或 OAuth 提供商。"
+            "value" : "没有可用的服务商。请先在设置中添加 API Key 或 OAuth 服务商。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "沒有可用的提供商。請先在設置中添加 API Key 或 OAuth 提供商。"
+            "value" : "沒有可用的服務商。請先在設定中新增 API Key 或 OAuth 服務商。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "沒有可用的提供商。請先在設置中添加 API Key 或 OAuth 提供商。"
+            "value" : "沒有可用的服務商。請先在設定中新增 API Key 或 OAuth 服務商。"
           }
         }
       }
@@ -1346,19 +1346,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "没有可用线程，请先创建线程。"
+            "value" : "没有可用对话，请先创建对话。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "沒有可用線程，請先創建線程。"
+            "value" : "沒有可用對話，請先建立對話。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "沒有可用線程，請先創建線程。"
+            "value" : "沒有可用對話，請先建立對話。"
           }
         }
       }
@@ -1404,19 +1404,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "管理线程"
+            "value" : "管理对话"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "管理線程"
+            "value" : "管理對話"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "管理線程"
+            "value" : "管理對話"
           }
         }
       }
@@ -1462,19 +1462,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "新建线程"
+            "value" : "新建对话"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "新建線程"
+            "value" : "新建對話"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "新建線程"
+            "value" : "新建對話"
           }
         }
       }
@@ -1520,19 +1520,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "暂无线程"
+            "value" : "暂无对话"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "暫無線程"
+            "value" : "暫無對話"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "暫無線程"
+            "value" : "暫無對話"
           }
         }
       }
@@ -1903,7 +1903,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "項目預設模型無效"
+            "value" : "專案預設模型無效"
           }
         },
         "zh-HK" : {
@@ -1983,19 +1983,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "修复供应商凭证或添加新的供应商。"
+            "value" : "修复服务商凭证或添加新的服务商。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "修復供應商憑證或新增供應商。"
+            "value" : "修復服務商憑證或新增服務商。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "修復供應商憑證或新增供應商。"
+            "value" : "修復服務商憑證或新增服務商。"
           }
         }
       }
@@ -2097,19 +2097,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "请先配置此供应商，再刷新模型列表。"
+            "value" : "请先配置此服务商，再刷新模型列表。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "請先設定此供應商，再重新整理模型清單。"
+            "value" : "請先設定此服務商，再重新整理模型清單。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "請先設定此供應商，再重新整理模型清單。"
+            "value" : "請先設定此服務商，再重新整理模型清單。"
           }
         }
       }
@@ -2219,7 +2219,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "這個項目暫時還沒有每日 Token 使用記錄。"
+            "value" : "這個專案暫時還沒有每日 Token 使用記錄。"
           }
         },
         "zh-HK" : {
@@ -2335,7 +2335,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "項目總用量"
+            "value" : "專案總用量"
           }
         },
         "zh-HK" : {
@@ -2619,19 +2619,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "使用聊天前需要先配置 LLM 供应商。现在设置？"
+            "value" : "使用聊天前需要先配置 LLM 服务商。现在设置？"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "使用聊天前需要先設定 LLM 供應商。現在設定？"
+            "value" : "使用聊天前需要先設定 LLM 服務商。現在設定？"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "使用聊天前需要先設定 LLM 供應商。現在設定？"
+            "value" : "使用聊天前需要先設定 LLM 服務商。現在設定？"
           }
         }
       }
@@ -2648,19 +2648,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已发现已配置的供应商，但其凭证当前不可用。你可以进入设置修复，或继续以只读模式打开聊天。"
+            "value" : "已发现已配置的服务商，但其凭证当前不可用。你可以进入设置修复，或继续以只读模式打开聊天。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已發現已設定的供應商，但其憑證目前不可用。你可以前往設定修復，或繼續以唯讀模式開啟聊天。"
+            "value" : "已發現已設定的服務商，但其憑證目前不可用。你可以前往設定修復，或繼續以唯讀模式開啟聊天。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已發現已設定的供應商，但其憑證目前不可用。你可以前往設定修復，或繼續以唯讀模式開啟聊天。"
+            "value" : "已發現已設定的服務商，但其憑證目前不可用。你可以前往設定修復，或繼續以唯讀模式開啟聊天。"
           }
         }
       }
@@ -2764,19 +2764,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已恢复检查点。已开启新的聊天线程，使对话上下文与恢复后的项目状态保持一致。"
+            "value" : "已恢复检查点。已开启新的聊天对话，使对话上下文与恢复后的项目状态保持一致。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已還原檢查點。已開啟新的聊天線程，使對話上下文與還原後的專案狀態保持一致。"
+            "value" : "已還原檢查點。已開啟新的聊天對話，使對話上下文與還原後的專案狀態保持一致。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已還原檢查點。已開啟新的聊天線程，使對話上下文與還原後的專案狀態保持一致。"
+            "value" : "已還原檢查點。已開啟新的聊天對話，使對話上下文與還原後的項目狀態保持一致。"
           }
         }
       }
@@ -2822,19 +2822,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "线程记忆更新失败：%@"
+            "value" : "对话记忆更新失败：%@"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "線程記憶更新失敗：%@"
+            "value" : "對話記憶更新失敗：%@"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "線程記憶更新失敗：%@"
+            "value" : "對話記憶更新失敗：%@"
           }
         }
       }
@@ -2880,19 +2880,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "尚未配置 LLM 提供商，请先添加一个提供商。"
+            "value" : "尚未配置 LLM 服务商，请先添加一个服务商。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "尚未設定 LLM 提供商，請先新增一個提供商。"
+            "value" : "尚未設定 LLM 服務商，請先新增一個服務商。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "尚未設定 LLM 提供商，請先新增一個提供商。"
+            "value" : "尚未設定 LLM 服務商，請先新增一個服務商。"
           }
         }
       }
@@ -2909,19 +2909,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已连接提供商「%@」。你现在可以描述要改的网页需求。"
+            "value" : "已连接服务商「%@」。你现在可以描述要改的网页需求。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已連接提供商「%@」。你現在可以描述要改的網頁需求。"
+            "value" : "已連接服務商「%@」。你現在可以描述要改的網頁需求。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已連接提供商「%@」。你現在可以描述要改的網頁需求。"
+            "value" : "已連接服務商「%@」。你現在可以描述要改的網頁需求。"
           }
         }
       }
@@ -2967,19 +2967,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已创建并切换到新线程。"
+            "value" : "已创建并切换到新对话。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已創建並切換到新線程。"
+            "value" : "已建立並切換到新對話。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已創建並切換到新線程。"
+            "value" : "已建立並切換到新對話。"
           }
         }
       }
@@ -2996,19 +2996,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已切换到线程「%@」。"
+            "value" : "已切换到对话「%@」。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已切換到線程「%@」。"
+            "value" : "已切換到對話「%@」。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已切換到線程「%@」。"
+            "value" : "已切換到對話「%@」。"
           }
         }
       }
@@ -3083,19 +3083,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "线程"
+            "value" : "对话"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "線程"
+            "value" : "對話"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "線程"
+            "value" : "對話"
           }
         }
       }
@@ -3205,13 +3205,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "將所有檔案恢復到此檢查點的狀態？\n\n%@\n\n此操作不可撤銷。"
+            "value" : "將所有檔案恢復到此檢查點的狀態？\n\n%@\n\n此操作不可復原。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "將所有檔案恢復到此檢查點的狀態？\n\n%@\n\n此操作不可撤銷。"
+            "value" : "將所有檔案恢復到此檢查點的狀態？\n\n%@\n\n此操作不可復原。"
           }
         }
       }
@@ -3379,13 +3379,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "撤銷上次變更"
+            "value" : "復原上次變更"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "撤銷上次變更"
+            "value" : "復原上次變更"
           }
         }
       }
@@ -3437,13 +3437,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "撤銷完成"
+            "value" : "復原完成"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "撤銷完成"
+            "value" : "復原完成"
           }
         }
       }
@@ -3466,13 +3466,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "撤銷失敗"
+            "value" : "復原失敗"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "撤銷失敗"
+            "value" : "復原失敗"
           }
         }
       }
@@ -3495,13 +3495,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "將還原所有檔案到上次 LLM 對話前的狀態。此操作不可撤銷。"
+            "value" : "將還原所有檔案到上次 LLM 對話前的狀態。此操作不可復原。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "將還原所有檔案到上次 LLM 對話前的狀態。此操作不可撤銷。"
+            "value" : "將還原所有檔案到上次 LLM 對話前的狀態。此操作不可復原。"
           }
         }
       }
@@ -3524,13 +3524,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "撤銷上次變更？"
+            "value" : "復原上次變更？"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "撤銷上次變更？"
+            "value" : "復原上次變更？"
           }
         }
       }
@@ -3785,13 +3785,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "保存"
+            "value" : "儲存"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "保存"
+            "value" : "儲存"
           }
         }
       }
@@ -4046,13 +4046,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "此操作無法撤銷。"
+            "value" : "此操作無法復原。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "此操作無法撤銷。"
+            "value" : "此操作無法復原。"
           }
         }
       }
@@ -4278,7 +4278,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "此項目備份僅可在項目工作區中使用。"
+            "value" : "此專案備份僅可在專案工作區中使用。"
           }
         },
         "zh-HK" : {
@@ -4568,13 +4568,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "保存失敗"
+            "value" : "儲存失敗"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "保存失敗"
+            "value" : "儲存失敗"
           }
         }
       }
@@ -4597,13 +4597,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "該文件不是 UTF-8 文本，暫不支持編輯。"
+            "value" : "該文件不是 UTF-8 文字，暫不支援編輯。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "該文件不是 UTF-8 文本，暫不支持編輯。"
+            "value" : "該文件不是 UTF-8 文字，暫不支援編輯。"
           }
         }
       }
@@ -4800,7 +4800,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "刪除項目"
+            "value" : "刪除專案"
           }
         },
         "zh-HK" : {
@@ -4887,13 +4887,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "還沒有網頁項目，點擊右上角 + 創建第一個吧。"
+            "value" : "還沒有網頁專案，點擊右上角 + 建立第一個吧。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "還沒有網頁項目，點擊右上角 + 創建第一個吧。"
+            "value" : "還沒有網頁項目，點擊右上角 + 建立第一個吧。"
           }
         }
       }
@@ -4916,7 +4916,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "沒有匹配的項目，換個關鍵詞試試。"
+            "value" : "沒有匹配的專案，換個關鍵詞試試。"
           }
         },
         "zh-HK" : {
@@ -5061,13 +5061,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "設置"
+            "value" : "設定"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "設置"
+            "value" : "設定"
           }
         }
       }
@@ -5235,13 +5235,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "搜索項目"
+            "value" : "搜尋專案"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "搜索項目"
+            "value" : "搜尋項目"
           }
         }
       }
@@ -5908,7 +5908,7 @@
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "使用專案預設"
+            "value" : "使用項目預設"
           }
         }
       }
@@ -5954,19 +5954,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "注册供应商 API 未返回的模型。"
+            "value" : "注册服务商 API 未返回的模型。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "註冊供應商 API 未傳回的模型。"
+            "value" : "註冊服務商 API 未傳回的模型。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "註冊供應商 API 未傳回的模型。"
+            "value" : "註冊服務商 API 未傳回的模型。"
           }
         }
       }
@@ -6012,19 +6012,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "从供应商 API 拉取最新模型列表。"
+            "value" : "从服务商 API 拉取最新模型列表。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "從供應商 API 拉取最新模型列表。"
+            "value" : "從服務商 API 拉取最新模型列表。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "從供應商 API 拉取最新模型列表。"
+            "value" : "從服務商 API 拉取最新模型列表。"
           }
         }
       }
@@ -6337,13 +6337,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "登錄完成"
+            "value" : "登入完成"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "登錄完成"
+            "value" : "登入完成"
           }
         }
       }
@@ -6395,13 +6395,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "登錄流程已在進行中。"
+            "value" : "登入流程已在進行中。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "登錄流程已在進行中。"
+            "value" : "登入流程已在進行中。"
           }
         }
       }
@@ -6453,13 +6453,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Bearer Token 獲取失敗：登錄信息缺少 organization_id。請確認賬號已開通 OpenAI Platform 並重試。"
+            "value" : "Bearer Token 獲取失敗：登入資訊缺少 organization_id。請確認帳號已開通 OpenAI Platform 並重試。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Bearer Token 獲取失敗：登錄信息缺少 organization_id。請確認賬號已開通 OpenAI Platform 並重試。"
+            "value" : "Bearer Token 獲取失敗：登入資訊缺少 organization_id。請確認帳號已開通 OpenAI Platform 並重試。"
           }
         }
       }
@@ -6482,13 +6482,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "登錄回調缺少授權碼。"
+            "value" : "登入回調缺少授權碼。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "登錄回調缺少授權碼。"
+            "value" : "登入回調缺少授權碼。"
           }
         }
       }
@@ -6540,13 +6540,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "登錄校驗失敗（state mismatch）。"
+            "value" : "登入校驗失敗（state mismatch）。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "登錄校驗失敗（state mismatch）。"
+            "value" : "登入校驗失敗（state mismatch）。"
           }
         }
       }
@@ -6569,13 +6569,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "登錄已取消。"
+            "value" : "登入已取消。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "登錄已取消。"
+            "value" : "登入已取消。"
           }
         }
       }
@@ -6598,13 +6598,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "登錄狀態無效，請重試。"
+            "value" : "登入狀態無效，請重試。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "登錄狀態無效，請重試。"
+            "value" : "登入狀態無效，請重試。"
           }
         }
       }
@@ -6627,13 +6627,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "登錄成功，但未獲取到可用的 Bearer Token。"
+            "value" : "登入成功，但未獲取到可用的 Bearer Token。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "登錄成功，但未獲取到可用的 Bearer Token。"
+            "value" : "登入成功，但未獲取到可用的 Bearer Token。"
           }
         }
       }
@@ -6894,7 +6894,7 @@
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "專案程式碼由大型語言模型（LLM）生成，使用前需要自行設定 LLM 服務商及對應模型。"
+            "value" : "項目程式碼由大型語言模型（LLM）生成，使用前需要自行設定 LLM 服務商及對應模型。"
           }
         }
       }
@@ -7381,13 +7381,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "保存"
+            "value" : "儲存"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "保存"
+            "value" : "儲存"
           }
         }
       }
@@ -7410,13 +7410,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "保存失敗"
+            "value" : "儲存失敗"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "保存失敗"
+            "value" : "儲存失敗"
           }
         }
       }
@@ -7584,13 +7584,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "撤銷上次 LLM 變更"
+            "value" : "復原上次 LLM 變更"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "撤銷上次 LLM 變更"
+            "value" : "復原上次 LLM 變更"
           }
         }
       }
@@ -7722,19 +7722,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "选择“使用 App 默认”可继承全局模型；如需项目级默认值，请先选择供应商，再选择模型。"
+            "value" : "选择“使用 App 默认”可继承全局模型；如需项目级默认值，请先选择服务商，再选择模型。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "選擇「使用 App 預設」可繼承全域模型；如需專案級預設值，請先選擇供應商，再選擇模型。"
+            "value" : "選擇「使用 App 預設」可繼承全域模型；如需專案級預設值，請先選擇服務商，再選擇模型。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "選擇「使用 App 預設」可繼承全域模型；如需項目級預設值，請先選擇供應商，再選擇模型。"
+            "value" : "選擇「使用 App 預設」可繼承全域模型；如需項目級預設值，請先選擇服務商，再選擇模型。"
           }
         }
       }
@@ -7821,7 +7821,7 @@
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "刪除專案"
+            "value" : "刪除項目"
           }
         }
       }
@@ -7873,7 +7873,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "項目描述"
+            "value" : "專案描述"
           }
         },
         "zh-HK" : {
@@ -7960,7 +7960,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "項目名稱"
+            "value" : "專案名稱"
           }
         },
         "zh-HK" : {
@@ -8012,19 +8012,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "每次 LLM 对话前自动创建检查点。您可以撤销最近的更改或恢复到任意历史检查点。"
+            "value" : "每次 LLM 对话前自动创建检查点。你可以撤销最近的更改或恢复到任意历史检查点。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "每次 LLM 對話前自動建立檢查點。您可以撤銷最近的變更或恢復到任意歷史檢查點。"
+            "value" : "每次 LLM 對話前自動建立檢查點。你可以復原最近的變更或恢復到任意歷史檢查點。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "每次 LLM 對話前自動建立檢查點。您可以撤銷最近的變更或恢復到任意歷史檢查點。"
+            "value" : "每次 LLM 對話前自動建立檢查點。您可以復原最近的變更或恢復到任意歷史檢查點。"
           }
         }
       }
@@ -8047,13 +8047,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "項目名稱會用於首頁和項目信息展示。"
+            "value" : "專案名稱會用於首頁和專案資訊展示。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "項目名稱會用於首頁和項目信息展示。"
+            "value" : "項目名稱會用於首頁和項目資訊展示。"
           }
         }
       }
@@ -8279,7 +8279,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "項目"
+            "value" : "專案"
           }
         },
         "zh-HK" : {
@@ -8366,7 +8366,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "選擇一個快照恢復到項目"
+            "value" : "選擇一個快照恢復到專案"
           }
         },
         "zh-HK" : {
@@ -8424,13 +8424,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "保存快照"
+            "value" : "儲存快照"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "保存快照"
+            "value" : "儲存快照"
           }
         }
       }
@@ -8511,7 +8511,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "此項目的所有 IndexedDB 資料將被刪除，網頁將重新載入。"
+            "value" : "此專案的所有 IndexedDB 資料將被刪除，網頁將重新載入。"
           }
         },
         "zh-HK" : {
@@ -8598,7 +8598,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "此項目的所有 localStorage 資料將被刪除，網頁將重新載入。"
+            "value" : "此專案的所有 localStorage 資料將被刪除，網頁將重新載入。"
           }
         },
         "zh-HK" : {
@@ -8656,13 +8656,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "項目設置"
+            "value" : "專案設定"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "項目設置"
+            "value" : "項目設定"
           }
         }
       }
@@ -8801,7 +8801,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "項目路徑無效，無法刪除。"
+            "value" : "專案路徑無效，無法刪除。"
           }
         },
         "zh-HK" : {
@@ -8830,7 +8830,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "項目名稱不能為空。"
+            "value" : "專案名稱不能為空。"
           }
         },
         "zh-HK" : {
@@ -8859,13 +8859,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "創建項目失敗，請稍後重試。"
+            "value" : "建立專案失敗，請稍後重試。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "創建項目失敗，請稍後重試。"
+            "value" : "建立項目失敗，請稍後重試。"
           }
         }
       }
@@ -8888,7 +8888,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "刪除項目失敗，請稍後重試。"
+            "value" : "刪除專案失敗，請稍後重試。"
           }
         },
         "zh-HK" : {
@@ -8917,13 +8917,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "創建快照失敗，請稍後重試。"
+            "value" : "建立快照失敗，請稍後重試。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "創建快照失敗，請稍後重試。"
+            "value" : "建立快照失敗，請稍後重試。"
           }
         }
       }
@@ -9033,13 +9033,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "無法訪問本地文檔目錄。"
+            "value" : "無法訪問本地文件目錄。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "無法訪問本地文檔目錄。"
+            "value" : "無法訪問本地文件目錄。"
           }
         }
       }
@@ -9062,13 +9062,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "通過聊天告訴 LLM 你想要實現的效果。"
+            "value" : "透過聊天告訴 LLM 你想要實現的效果。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "通過聊天告訴 LLM 你想要實現的效果。"
+            "value" : "透過聊天告訴 LLM 你想要實現的效果。"
           }
         }
       }
@@ -9120,7 +9120,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "空白項目"
+            "value" : "空白專案"
           }
         },
         "zh-HK" : {
@@ -9149,13 +9149,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "通過聊天持續更新代碼。"
+            "value" : "透過聊天持續更新程式碼。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "通過聊天持續更新代碼。"
+            "value" : "透過聊天持續更新程式碼。"
           }
         }
       }
@@ -9184,7 +9184,7 @@
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "點擊選單，透過對話編輯你的專案"
+            "value" : "點擊選單，透過對話編輯你的項目"
           }
         }
       }
@@ -9207,7 +9207,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "空白網頁項目"
+            "value" : "空白網頁專案"
           }
         },
         "zh-HK" : {
@@ -9259,19 +9259,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "注册提供商 API 未返回的模型。"
+            "value" : "注册服务商 API 未返回的模型。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "註冊提供商 API 未返回的模型。"
+            "value" : "註冊服務商 API 未返回的模型。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "註冊提供商 API 未返回的模型。"
+            "value" : "註冊服務商 API 未返回的模型。"
           }
         }
       }
@@ -9317,19 +9317,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "从提供商 API 拉取最新模型列表。"
+            "value" : "从服务商 API 拉取最新模型列表。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "從提供商 API 拉取最新模型列表。"
+            "value" : "從服務商 API 拉取最新模型列表。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "從提供商 API 拉取最新模型列表。"
+            "value" : "從服務商 API 拉取最新模型列表。"
           }
         }
       }
@@ -9410,13 +9410,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "保存失敗"
+            "value" : "儲存失敗"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "保存失敗"
+            "value" : "儲存失敗"
           }
         }
       }
@@ -9439,13 +9439,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "保存模型"
+            "value" : "儲存模型"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "保存模型"
+            "value" : "儲存模型"
           }
         }
       }
@@ -9874,13 +9874,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "支持思考"
+            "value" : "支援思考"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "支持思考"
+            "value" : "支援思考"
           }
         }
       }
@@ -10158,19 +10158,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "请输入提供商名称。"
+            "value" : "请输入服务商名称。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "請輸入提供商名稱。"
+            "value" : "請輸入服務商名稱。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "請輸入提供商名稱。"
+            "value" : "請輸入服務商名稱。"
           }
         }
       }
@@ -10216,19 +10216,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "提供商保存失败，请稍后重试。"
+            "value" : "服务商保存失败，请稍后重试。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "提供商保存失敗，請稍後重試。"
+            "value" : "服務商儲存失敗，請稍後重試。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "提供商保存失敗，請稍後重試。"
+            "value" : "服務商儲存失敗，請稍後重試。"
           }
         }
       }
@@ -10280,13 +10280,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "密鑰保存失敗，請稍後重試。"
+            "value" : "密鑰儲存失敗，請稍後重試。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "密鑰保存失敗，請稍後重試。"
+            "value" : "密鑰儲存失敗，請稍後重試。"
           }
         }
       }
@@ -10303,19 +10303,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "未找到提供商，可能已被删除。"
+            "value" : "未找到服务商，可能已被删除。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "未找到提供商，可能已被刪除。"
+            "value" : "未找到服務商，可能已被刪除。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "未找到提供商，可能已被刪除。"
+            "value" : "未找到服務商，可能已被刪除。"
           }
         }
       }
@@ -10332,19 +10332,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "提供商类型"
+            "value" : "服务商类型"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "提供商類型"
+            "value" : "服務商類型"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "提供商類型"
+            "value" : "服務商類型"
           }
         }
       }
@@ -10361,19 +10361,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "添加提供商"
+            "value" : "添加服务商"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "添加提供商"
+            "value" : "新增服務商"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "添加提供商"
+            "value" : "新增服務商"
           }
         }
       }
@@ -10506,19 +10506,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "通过 API Key 添加提供商"
+            "value" : "通过 API Key 添加服务商"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "通過 API Key 添加提供商"
+            "value" : "透過 API Key 新增服務商"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "通過 API Key 添加提供商"
+            "value" : "透過 API Key 新增服務商"
           }
         }
       }
@@ -10628,13 +10628,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "登錄成功後自動填入網址與 Bearer Token"
+            "value" : "登入成功後自動填入網址與 Bearer Token"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "登錄成功後自動填入網址與 Bearer Token"
+            "value" : "登入成功後自動填入網址與 Bearer Token"
           }
         }
       }
@@ -10802,13 +10802,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "添加失敗"
+            "value" : "新增失敗"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "添加失敗"
+            "value" : "新增失敗"
           }
         }
       }
@@ -10825,19 +10825,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "提供商「%@」已添加。"
+            "value" : "服务商「%@」已添加。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "提供商「%@」已添加。"
+            "value" : "服務商「%@」已新增。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "提供商「%@」已添加。"
+            "value" : "服務商「%@」已新增。"
           }
         }
       }
@@ -10860,13 +10860,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "添加成功"
+            "value" : "新增成功"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "添加成功"
+            "value" : "新增成功"
           }
         }
       }
@@ -10883,19 +10883,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "添加提供商"
+            "value" : "添加服务商"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "添加提供商"
+            "value" : "新增服務商"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "添加提供商"
+            "value" : "新增服務商"
           }
         }
       }
@@ -10918,13 +10918,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "留空時默認使用 https://api.openai.com"
+            "value" : "留空時預設使用 https://api.openai.com"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "留空時默認使用 https://api.openai.com"
+            "value" : "留空時預設使用 https://api.openai.com"
           }
         }
       }
@@ -10999,19 +10999,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "提供商名称"
+            "value" : "服务商名称"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "提供商名稱"
+            "value" : "服務商名稱"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "提供商名稱"
+            "value" : "服務商名稱"
           }
         }
       }
@@ -11376,19 +11376,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "还没有提供商"
+            "value" : "还没有服务商"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "還沒有提供商"
+            "value" : "還沒有服務商"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "還沒有提供商"
+            "value" : "還沒有服務商"
           }
         }
       }
@@ -11405,19 +11405,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "左滑可删除提供商。"
+            "value" : "左滑可删除服务商。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "左滑可刪除提供商。"
+            "value" : "左滑可刪除服務商。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "左滑可刪除提供商。"
+            "value" : "左滑可刪除服務商。"
           }
         }
       }
@@ -11434,19 +11434,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "点击右上角 + 添加第一个提供商。"
+            "value" : "点击右上角 + 添加第一个服务商。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "點擊右上角 + 添加第一個提供商。"
+            "value" : "點擊右上角 + 新增第一個服務商。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "點擊右上角 + 添加第一個提供商。"
+            "value" : "點擊右上角 + 新增第一個服務商。"
           }
         }
       }
@@ -11550,19 +11550,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已配置提供商"
+            "value" : "已配置服务商"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已配置提供商"
+            "value" : "已設定服務商"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已配置提供商"
+            "value" : "已設定服務商"
           }
         }
       }
@@ -11579,19 +11579,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "提供商"
+            "value" : "服务商"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "提供商"
+            "value" : "服務商"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "提供商"
+            "value" : "服務商"
           }
         }
       }
@@ -11614,13 +11614,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "使用 OpenAI 登錄"
+            "value" : "使用 OpenAI 登入"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "使用 OpenAI 登錄"
+            "value" : "使用 OpenAI 登入"
           }
         }
       }
@@ -11643,13 +11643,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "請先登錄成功，或直接填寫 Bearer Token。"
+            "value" : "請先登入成功，或直接填寫 Bearer Token。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "請先登錄成功，或直接填寫 Bearer Token。"
+            "value" : "請先登入成功，或直接填寫 Bearer Token。"
           }
         }
       }
@@ -11672,13 +11672,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "點擊後將跳轉 OpenAI 登錄，成功後將自動填入網址和 Bearer Token。"
+            "value" : "點擊後將跳轉 OpenAI 登入，成功後將自動填入網址和 Bearer Token。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "點擊後將跳轉 OpenAI 登錄，成功後將自動填入網址和 Bearer Token。"
+            "value" : "點擊後將跳轉 OpenAI 登入，成功後將自動填入網址和 Bearer Token。"
           }
         }
       }
@@ -11701,13 +11701,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "或手動配置"
+            "value" : "或手動設定"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "或手動配置"
+            "value" : "或手動設定"
           }
         }
       }
@@ -11788,13 +11788,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "完成模型請求後，這裡會顯示使用數據。"
+            "value" : "完成模型請求後，這裡會顯示使用資料。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "完成模型請求後，這裡會顯示使用數據。"
+            "value" : "完成模型請求後，這裡會顯示使用資料。"
           }
         }
       }
@@ -12397,13 +12397,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "不允許匯入 — LLM 分析檢測到潛在惡意程式碼。"
+            "value" : "不允許匯入 — LLM 分析偵測到潛在惡意程式碼。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "不允許匯入 — LLM 分析檢測到潛在惡意程式碼。"
+            "value" : "不允許匯入 — LLM 分析偵測到潛在惡意程式碼。"
           }
         }
       }
@@ -12687,13 +12687,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "自動掃描發現一些可能需要注意的模式，請仔細查看以上檢測結果。"
+            "value" : "自動掃描發現一些可能需要注意的模式，請仔細查看以上偵測結果。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "自動掃描發現一些可能需要注意嘅模式，請仔細查看以上檢測結果。"
+            "value" : "自動掃描發現一些可能需要注意嘅模式，請仔細查看以上偵測結果。"
           }
         }
       }
@@ -12722,7 +12722,7 @@
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%@\n\n此專案由第三方建立，其程式碼將喺你嘅裝置上執行。匯入即表示你接受全部風險。"
+            "value" : "%@\n\n此項目由第三方建立，其程式碼將喺你嘅裝置上執行。匯入即表示你接受全部風險。"
           }
         }
       }
@@ -13876,13 +13876,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "檢測到惡意程式碼"
+            "value" : "偵測到惡意程式碼"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "檢測到惡意程式碼"
+            "value" : "偵測到惡意程式碼"
           }
         }
       }
@@ -14021,13 +14021,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "靜態分析未檢測到問題"
+            "value" : "靜態分析未偵測到問題"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "靜態分析未檢測到問題"
+            "value" : "靜態分析未偵測到問題"
           }
         }
       }
@@ -14230,7 +14230,7 @@
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "專案資訊"
+            "value" : "項目資訊"
           }
         }
       }
@@ -14369,13 +14369,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "最終用戶許可協議"
+            "value" : "最終使用者許可協議"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "最終用戶許可協議"
+            "value" : "最終使用者許可協議"
           }
         }
       }
@@ -15064,13 +15064,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已配置 %lld 個"
+            "value" : "已設定 %lld 個"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已配置 %lld 個"
+            "value" : "已設定 %lld 個"
           }
         }
       }
@@ -15087,19 +15087,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "管理提供商"
+            "value" : "管理服务商"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "管理提供商"
+            "value" : "管理服務商"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "管理提供商"
+            "value" : "管理服務商"
           }
         }
       }
@@ -15302,7 +15302,7 @@
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%d 個專案"
+            "value" : "%d 個項目"
           }
         }
       }
@@ -15493,19 +15493,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "提供商"
+            "value" : "服务商"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "提供商"
+            "value" : "服務商"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "提供商"
+            "value" : "服務商"
           }
         }
       }
@@ -15725,19 +15725,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "LLM 提供商与模型"
+            "value" : "LLM 服务商与模型"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "LLM 提供商與模型"
+            "value" : "LLM 服務商與模型"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "LLM 提供商與模型"
+            "value" : "LLM 服務商與模型"
           }
         }
       }
@@ -15754,19 +15754,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "提供商配置仅保存在本地设备。"
+            "value" : "服务商配置仅保存在本地设备。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "提供商配置僅保存在本地設備。"
+            "value" : "服務商設定僅儲存在本地裝置。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "提供商配置僅保存在本地設備。"
+            "value" : "服務商設定僅儲存在本地裝置。"
           }
         }
       }
@@ -15824,7 +15824,7 @@
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "呢啲權限由你專案入面嘅網頁應用程式請求使用。你可以喺系統設定入面更改。"
+            "value" : "呢啲權限由你項目入面嘅網頁應用程式請求使用。你可以喺系統設定入面更改。"
           }
         }
       }
@@ -15992,7 +15992,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "衷心感謝所有開源項目的開發者。"
+            "value" : "衷心感謝所有開源專案的開發者。"
           }
         },
         "zh-HK" : {
@@ -16108,13 +16108,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "設置"
+            "value" : "設定"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "設置"
+            "value" : "設定"
           }
         }
       }
@@ -16143,7 +16143,7 @@
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "專案"
+            "value" : "項目"
           }
         }
       }
@@ -16172,7 +16172,7 @@
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在 Doufu 中打開專案"
+            "value" : "在 Doufu 中打開項目"
           }
         }
       }
@@ -16201,7 +16201,7 @@
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "專案"
+            "value" : "項目"
           }
         }
       }
@@ -16230,7 +16230,7 @@
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "打開專案"
+            "value" : "打開項目"
           }
         }
       }
@@ -16282,7 +16282,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "確認恢復到 %@ 嗎？當前項目文件會被覆蓋。"
+            "value" : "確認恢復到 %@ 嗎？當前專案文件會被覆蓋。"
           }
         },
         "zh-HK" : {
@@ -16340,7 +16340,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "項目已恢復到所選快照。"
+            "value" : "專案已恢復到所選快照。"
           }
         },
         "zh-HK" : {
@@ -16485,7 +16485,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "自動快照在聊天成功修改項目後生成，最多保留 10 條。"
+            "value" : "自動快照在聊天成功修改專案後生成，最多保留 10 條。"
           }
         },
         "zh-HK" : {
@@ -16601,13 +16601,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已保存快照"
+            "value" : "已儲存快照"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已保存快照"
+            "value" : "已儲存快照"
           }
         }
       }
@@ -16682,19 +16682,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "删除线程"
+            "value" : "删除对话"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "刪除線程"
+            "value" : "刪除對話"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "刪除線程"
+            "value" : "刪除對話"
           }
         }
       }
@@ -16740,19 +16740,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "重命名线程"
+            "value" : "重命名对话"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "重新命名線程"
+            "value" : "重新命名對話"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "重新命名線程"
+            "value" : "重新命名對話"
           }
         }
       }
@@ -16769,19 +16769,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "管理线程"
+            "value" : "管理对话"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "管理線程"
+            "value" : "管理對話"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "管理線程"
+            "value" : "管理對話"
           }
         }
       }
@@ -16798,19 +16798,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "线程数据损坏，无法读取。"
+            "value" : "对话数据损坏，无法读取。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "線程數據損壞，無法讀取。"
+            "value" : "對話資料損壞，無法讀取。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "線程數據損壞，無法讀取。"
+            "value" : "對話資料損壞，無法讀取。"
           }
         }
       }
@@ -16827,19 +16827,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "线程不存在。"
+            "value" : "对话不存在。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "線程不存在。"
+            "value" : "對話不存在。"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "線程不存在。"
+            "value" : "對話不存在。"
           }
         }
       }
@@ -16856,19 +16856,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "线程 1"
+            "value" : "对话 1"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "線程 1"
+            "value" : "對話 1"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "線程 1"
+            "value" : "對話 1"
           }
         }
       }
@@ -16885,19 +16885,19 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "线程 %d"
+            "value" : "对话 %d"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "線程 %d"
+            "value" : "對話 %d"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "線程 %d"
+            "value" : "對話 %d"
           }
         }
       }
@@ -19443,7 +19443,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "確認退出當前項目並返回首頁嗎？"
+            "value" : "確認退出當前專案並返回首頁嗎？"
           }
         },
         "zh-HK" : {
@@ -19472,7 +19472,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "退出項目"
+            "value" : "退出專案"
           }
         },
         "zh-HK" : {
@@ -19646,7 +19646,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "項目入口文件 index.html 不存在。"
+            "value" : "專案入口文件 index.html 不存在。"
           }
         },
         "zh-HK" : {
@@ -19876,13 +19876,13 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "設置"
+            "value" : "設定"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "設置"
+            "value" : "設定"
           }
         }
       }
