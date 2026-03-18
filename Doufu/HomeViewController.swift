@@ -826,6 +826,7 @@ private final class ProjectCardCell: UICollectionViewCell {
         imageView.translatesAutoresizingMaskIntoConstraints = false
         imageView.contentMode = .scaleAspectFill
         imageView.clipsToBounds = true
+        imageView.isAccessibilityElement = false
         return imageView
     }()
 
@@ -834,6 +835,7 @@ private final class ProjectCardCell: UICollectionViewCell {
         imageView.translatesAutoresizingMaskIntoConstraints = false
         imageView.tintColor = .tertiaryLabel
         imageView.contentMode = .scaleAspectFit
+        imageView.isAccessibilityElement = false
         return imageView
     }()
 
@@ -888,29 +890,43 @@ private final class ProjectCardCell: UICollectionViewCell {
             placeholderIconView.isHidden = false
         }
 
+        var badgeText: String?
         switch project.activityState {
         case .idle:
             activityBadgeLabel.isHidden = true
         case .building:
-            activityBadgeLabel.text = String(localized: "home.project.activity.building")
+            badgeText = String(localized: "home.project.activity.building")
+            activityBadgeLabel.text = badgeText
             activityBadgeLabel.backgroundColor = UIColor.systemOrange.withAlphaComponent(0.96)
             activityBadgeLabel.textColor = .white
             activityBadgeLabel.isHidden = false
         case .newVersionAvailable:
-            activityBadgeLabel.text = String(localized: "home.project.activity.new_version")
+            badgeText = String(localized: "home.project.activity.new_version")
+            activityBadgeLabel.text = badgeText
             activityBadgeLabel.backgroundColor = UIColor.systemGreen.withAlphaComponent(0.96)
             activityBadgeLabel.textColor = .white
             activityBadgeLabel.isHidden = false
         case .needsConfirmation:
-            activityBadgeLabel.text = String(localized: "home.project.activity.needs_confirmation")
+            badgeText = String(localized: "home.project.activity.needs_confirmation")
+            activityBadgeLabel.text = badgeText
             activityBadgeLabel.backgroundColor = UIColor.systemBlue.withAlphaComponent(0.96)
             activityBadgeLabel.textColor = .white
             activityBadgeLabel.isHidden = false
         case .error:
-            activityBadgeLabel.text = String(localized: "home.project.activity.error")
+            badgeText = String(localized: "home.project.activity.error")
+            activityBadgeLabel.text = badgeText
             activityBadgeLabel.backgroundColor = UIColor.systemRed.withAlphaComponent(0.96)
             activityBadgeLabel.textColor = .white
             activityBadgeLabel.isHidden = false
+        }
+
+        // Accessibility: treat the entire cell as one element.
+        // Context menus are surfaced automatically via VoiceOver's Actions rotor.
+        isAccessibilityElement = true
+        accessibilityLabel = if let badgeText {
+            "\(project.name), \(badgeText)"
+        } else {
+            project.name
         }
     }
 
@@ -1009,6 +1025,7 @@ private final class AddProjectCardCell: UICollectionViewCell {
         imageView.translatesAutoresizingMaskIntoConstraints = false
         imageView.tintColor = .tertiaryLabel
         imageView.contentMode = .scaleAspectFit
+        imageView.isAccessibilityElement = false
         return imageView
     }()
 
@@ -1024,6 +1041,10 @@ private final class AddProjectCardCell: UICollectionViewCell {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
+
+        isAccessibilityElement = true
+        accessibilityTraits = .button
+        accessibilityLabel = String(localized: "home.add_project.title")
 
         var bgConfig = UIBackgroundConfiguration.clear()
         bgConfig.backgroundColor = .doufuPaper

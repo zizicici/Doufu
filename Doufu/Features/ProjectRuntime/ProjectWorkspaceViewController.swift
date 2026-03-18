@@ -175,6 +175,14 @@ final class ProjectWorkspaceViewController: UIViewController {
         return view
     }()
 
+    private lazy var handleAccessibilityButton: UIButton = {
+        let button = UIButton(type: .custom)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.accessibilityLabel = String(localized: "workspace.panel.toolbar")
+        button.addTarget(self, action: #selector(didTapHandleAccessibilityButton), for: .touchUpInside)
+        return button
+    }()
+
     private lazy var handleArea: UIView = {
         let view = UIView()
         view.translatesAutoresizingMaskIntoConstraints = false
@@ -367,10 +375,10 @@ final class ProjectWorkspaceViewController: UIViewController {
             panelContainer.alpha = 1
             panelContainer.isHidden = false
             hasInitializedPanelPosition = true
+            updatePanelAccessibility()
         } else if !isDraggingPanel {
             relayoutPanelForCurrentState()
         }
-        
     }
 
     private func configureLayout() {
@@ -421,6 +429,7 @@ final class ProjectWorkspaceViewController: UIViewController {
         panelContainer.contentView.addSubview(exitHintLabel)
         panelContainer.contentView.addSubview(handleArea)
         handleArea.addSubview(handleIndicator)
+        handleArea.addSubview(handleAccessibilityButton)
         buttonStackView = stackView
 
         NSLayoutConstraint.activate([
@@ -433,6 +442,11 @@ final class ProjectWorkspaceViewController: UIViewController {
             handleIndicator.centerYAnchor.constraint(equalTo: handleArea.centerYAnchor),
             handleIndicator.widthAnchor.constraint(equalToConstant: 3),
             handleIndicator.heightAnchor.constraint(equalToConstant: 20),
+
+            handleAccessibilityButton.leadingAnchor.constraint(equalTo: handleArea.leadingAnchor),
+            handleAccessibilityButton.trailingAnchor.constraint(equalTo: handleArea.trailingAnchor),
+            handleAccessibilityButton.topAnchor.constraint(equalTo: handleArea.topAnchor),
+            handleAccessibilityButton.bottomAnchor.constraint(equalTo: handleArea.bottomAnchor),
 
             stackView.leadingAnchor.constraint(equalTo: panelContainer.contentView.leadingAnchor, constant: 8),
             stackView.topAnchor.constraint(equalTo: panelContainer.contentView.topAnchor, constant: 6),
@@ -450,6 +464,42 @@ final class ProjectWorkspaceViewController: UIViewController {
         let tapGesture = UITapGestureRecognizer(target: self, action: #selector(didTapPanel(_:)))
         tapGesture.require(toFail: panGesture)
         panelContainer.addGestureRecognizer(tapGesture)
+
+        updatePanelAccessibility()
+    }
+
+    private func updatePanelAccessibility() {
+        switch panelState {
+        case .collapsed:
+            handleAccessibilityButton.accessibilityLabel = String(localized: "workspace.panel.toolbar")
+            handleAccessibilityButton.accessibilityHint = String(localized: "workspace.panel.expand_hint", defaultValue: "Double tap to expand toolbar")
+            buttonStackView?.accessibilityElementsHidden = true
+        case .expanded:
+            handleAccessibilityButton.accessibilityLabel = String(localized: "workspace.panel.collapse", defaultValue: "Collapse toolbar")
+            handleAccessibilityButton.accessibilityHint = nil
+            buttonStackView?.accessibilityElementsHidden = false
+        }
+    }
+
+    @objc
+    private func didTapHandleAccessibilityButton() {
+        switch panelState {
+        case .collapsed:
+            expandPanel(animated: true, scheduleAutoCollapseAfter: false)
+            UIAccessibility.post(notification: .layoutChanged, argument: buttonStackView?.arrangedSubviews.first)
+        case .expanded:
+            collapsePanel(animated: true)
+            UIAccessibility.post(notification: .layoutChanged, argument: handleAccessibilityButton)
+        }
+    }
+
+    override func accessibilityPerformEscape() -> Bool {
+        if case .expanded = panelState {
+            collapsePanel(animated: true)
+            UIAccessibility.post(notification: .layoutChanged, argument: handleAccessibilityButton)
+            return true
+        }
+        return false
     }
 
     private func makePanelIconButton(systemName: String, tintColor: UIColor?) -> UIButton {
@@ -557,6 +607,7 @@ final class ProjectWorkspaceViewController: UIViewController {
     private func expandPanel(animated: Bool, scheduleAutoCollapseAfter: Bool) {
         cancelAutoCollapse()
         panelState = .expanded
+        updatePanelAccessibility()
         let target = panelExpandedFrame()
 
         if animated {
@@ -573,7 +624,7 @@ final class ProjectWorkspaceViewController: UIViewController {
             }
         } else {
             panelContainer.frame = target
-            
+
             if scheduleAutoCollapseAfter {
                 scheduleAutoCollapse()
             }
@@ -583,6 +634,7 @@ final class ProjectWorkspaceViewController: UIViewController {
     private func collapsePanel(animated: Bool) {
         cancelAutoCollapse()
         panelState = .collapsed
+        updatePanelAccessibility()
         let target = panelCollapsedFrame()
 
         if animated {
@@ -595,12 +647,13 @@ final class ProjectWorkspaceViewController: UIViewController {
             }
         } else {
             panelContainer.frame = target
-            
+
         }
     }
 
     private func scheduleAutoCollapse() {
         cancelAutoCollapse()
+        guard !UIAccessibility.isVoiceOverRunning else { return }
         let workItem = DispatchWorkItem { [weak self] in
             guard let self, case .expanded = self.panelState else { return }
             self.collapsePanel(animated: true)
