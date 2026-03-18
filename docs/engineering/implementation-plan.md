@@ -1,10 +1,10 @@
 # 执行计划
 
-## 当前状态（2026-03-14）
+## 当前状态（2026-03-18）
 
 1. 已完成首页项目画廊（搜索、长按菜单、拖拽排序、新建入口）。
 2. 已完成项目运行页（全屏预览 + 悬浮面板 + 退出确认 + 文件入口）。
-3. 已完成项目级设置页（名称/描述修改、项目级模型、工具权限、checkpoint history 入口）。
+3. 已完成项目级设置页（名称/描述修改、项目级模型、工具权限、checkpoint history 入口、项目删除）。
 4. 已完成 Git checkpoint history（agent loop 前自动保存、实际改动后创建 checkpoint、列表恢复）。
 5. 已完成 Provider 管理全链路（OpenAI Compatible / Anthropic / Gemini / OpenRouter，均支持 API Key + OAuth）。
 6. 已完成 Provider 模型管理（发现/自定义/能力参数编辑）。
@@ -28,7 +28,7 @@
 24. 已完成 Token Usage 相关文案本地化（`en / zh-Hans / zh-Hant / zh-HK`）。
 25. 已完成 CDN 资源缓存（LocalWebServer URL 改写 + 磁盘缓存 + 离线兜底）。
 26. 已完成聊天模块职责拆分（`ChatMessageStore` / `ChatModelSelectionManager` / `ChatMenuBuilder` + 薄 VC）。
-27. 已完成消息流 FlowState 状态机（idle / progress / streaming 三态，原子转换，消除孤儿 live cell 和全部结束间隙）。
+27. 已完成消息流 FlowState 状态机（idle / progress / streaming / tool 四态，原子转换，消除孤儿 live cell 和全部结束间隙）。
 28. 已完成 SQLite 迁移（GRDB.swift）：所有结构化数据从 JSON/UserDefaults 迁移到 SQLite 数据库。
 29. 已完成项目磁盘结构 v4（`Projects/{uuid}/App/` + `AppData/`）。
 30. 已完成聊天数据 SQLite 存储（线程、消息、助理、会话记忆）。
@@ -36,6 +36,17 @@
 32. 已完成 `ProjectLifecycleCoordinator`：项目生命周期统一入口（create / delete / close / rename），修复删除执行中项目文件丢失、discard 后 session 泄漏、rename 后 session context 不同步三处 Bug。
 33. 已完成 project 状态收口：引入 `ProjectChangeCenter` 统一项目变更广播，引入 `ProjectActivityStore` 统一项目活动状态（building / newVersionAvailable / needsConfirmation / error）。
 34. 已完成数据层完善：索引优化（`token_usage.created_at`、`message(thread_id, sort_order)` 复合索引）、迁移合并为单一 `v1_initial_schema`。
+35. 已完成原生能力权限管理：Camera / Microphone / Location / Clipboard / Photo Save 六类 Per-Project 权限，两层检查（系统→项目→弹窗→DB），权限活动记录与 Toast 提示。
+36. 已完成 WebRTC Camera/Mic：本地 STUN 服务器 + loopback PeerConnection，支持任何网络环境。
+37. 已完成 Photos API（`doufu.photos.pick/savePhoto/saveVideo`）。
+38. 已完成 DoufuBridge Shim 层：localStorage 持久化、IndexedDB 完整 shim（sql.js WASM SQLite）、`doufu.db` 直接 SQL API。
+39. 已完成 LocalWebServer 安全模型：per-launch auth token、端口级 origin guard、IIFE 作用域隔离、无 CORS 头。
+40. 已完成项目导入导出（`.doufu` / `.doufull`）与导入安全扫描（静态 + LLM 辅助）。
+41. 已完成 Siri Shortcuts 集成（`Open Project` Intent）。
+42. 已完成首次使用 Onboarding 引导流程。
+43. 已完成 Accessibility（VoiceOver）支持。
+44. 已完成聊天 UI 优化与字体增强。
+45. 已完成项目设置页内删除项目功能。
 
 ## 已完成阶段回顾
 
@@ -76,17 +87,38 @@
    - 从跨 VC 闭包回调切换为 `ProjectChangeCenter` project-scoped 事件流。
    - 引入 `ProjectActivityStore`，统一首页、运行页、聊天页的执行状态语义。
    - checkpoint restore 与活跃聊天会话联动，恢复后自动开启新 thread。
+12. Phase J：原生能力与安全
+    - Per-Project 权限基础设施（`project_capability` 表、两层检查、弹窗授权）。
+    - Location / Clipboard 能力实现。
+    - Camera / Microphone WebRTC loopback 架构（含本地 STUN 服务器）。
+    - Photos API（pick / savePhoto / saveVideo）。
+    - 能力活动记录（`capability_activity` 表 + CapabilityActivityLogViewController）。
+    - 能力使用 Toast（CapabilityToastView，持续型与一次性）。
+    - LocalWebServer 安全加固（auth token、origin guard、IIFE 隔离、无 CORS 头）。
+13. Phase K：Bridge Shim 层
+    - localStorage 持久化 shim（`Object.create(null)` + Proxy + iframe 共享）。
+    - IndexedDB 完整 shim（sql.js WASM SQLite，5 表 Schema，二进制 key 编码，structured clone，async onupgradeneeded，大数据集分块）。
+    - `doufu.db` 直接 SQL API（open/exec/run/close，命名数据库独立 SQLite 文件）。
+    - CDN 资源缓存（HTML/CSS URL 改写 + 磁盘缓存 200MB LRU + 离线兜底）。
+14. Phase L：导入导出与扫描
+    - `.doufu`（仅 App/）与 `.doufull`（App/ + AppData/）归档格式。
+    - 导入时静态代码扫描（StaticCodeScanner）+ 可选 LLM 辅助扫描（LLMCodeScanner）。
+    - ImportScanViewController 扫描结果展示。
+15. Phase M：体验完善
+    - Siri Shortcuts 集成（Open Project Intent）。
+    - 首次使用 Onboarding 引导。
+    - Accessibility（VoiceOver）支持。
+    - 聊天 UI 优化与字体增强。
+    - 项目设置页内删除项目。
 
 ## 下一阶段计划
 
-1. Phase J：聊天体验增强
-   - 失败重试策略可视化、结果回滚体验、direct answer 与改代码路径的体验对齐。
-2. Phase K：项目调试能力
-   - 运行日志可视化、构建前检查、错误定位辅助。
-3. Phase L：Provider 生态扩展
-   - 连通性检测、模型能力探测、配置导入导出。
-4. Phase M：分享与导出
-   - 项目导出包、隐私检查、分享入口。
+1. 聊天体验增强
+   - 失败重试策略可视化、结果回滚体验。
+2. 运行调试能力增强
+   - 运行日志可视化、错误定位辅助。
+3. Provider 生态增强
+   - 连通性检测、模型能力探测。
 
 ## 验收口径（下一阶段）
 

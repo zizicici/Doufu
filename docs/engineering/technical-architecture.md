@@ -72,7 +72,7 @@
      - `WebToolProvider`：Web 搜索与网页抓取
      - `CodeValidator`：隐藏 WKWebView 代码验证
      - `ProjectPathResolver`：项目路径安全解析
-6. `Doufu/Features/Home/` + `Doufu/HomeViewController.swift`
+6. `Doufu/HomeViewController.swift`
    - 首页画廊与排序页，消费 `ProjectActivityStore` 展示项目状态标签。
 7. `Doufu/Features/Chat/`
    - `ChatViewController`：聊天页 UI 布局与胶水代码（线程切换、输入处理、coordinator delegate 转发）。

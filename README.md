@@ -79,6 +79,9 @@
     - `.doufu` 格式：仅导出/导入 `App/` 目录（代码文件）。
     - `.doufull` 格式：导出/导入 `App/` + `AppData/`（含用户数据）。
     - 支持重复导入同一归档，每次创建独立项目。
+12. Onboarding 引导：首次使用引导流程。
+13. Accessibility：VoiceOver 适配。
+14. 项目设置内删除：项目设置页支持直接删除当前项目。
 
 ## 维护规则
 
@@ -86,4 +89,4 @@
 2. 新增用户可见文案时，必须同步 `Localizable.xcstrings`。
 3. 涉及架构调整时，必须同步 `technical-architecture.md` 与 `module-design.md`。
 
-文档已按当前实现同步更新（2026-03-17）。所有结构化数据已迁移到 SQLite（GRDB.swift 7.10.0）。
+文档已按当前实现同步更新（2026-03-18）。所有结构化数据已迁移到 SQLite（GRDB.swift 7.10.0）。
