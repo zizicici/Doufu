@@ -127,6 +127,9 @@ final class AgentToolProvider {
     var validationServerBaseURL: URL?
     var validationBridge: DoufuBridge?
 
+    /// Optional directory for web_fetch temp files. Mapped via `__web_fetch__/` virtual prefix.
+    var webFetchTmpURL: URL?
+
     /// Tools the user has already approved in this session (for `.confirmOnce` tier).
     private var approvedOnceTools: Set<String> = []
 
@@ -508,7 +511,7 @@ final class AgentToolProvider {
     private func webFetchTool() -> AgentToolDefinition {
         AgentToolDefinition(
             name: "web_fetch",
-            description: "Fetch a web page's content. Set raw=true for original HTML.",
+            description: "Fetch a web page's content. Small pages are returned inline; large pages are saved to __web_fetch__/ and must be read with read_file/grep_files/search_files. Set raw=true for original HTML.",
             parameters: .object([
                 "type": .string("object"),
                 "properties": .object([
@@ -719,7 +722,7 @@ final class AgentToolProvider {
             return ToolExecutionResult(output: "Missing required parameter: path", isError: true, changedPaths: [])
         }
 
-        guard let resolved = resolveSafePath(path) else {
+        guard let resolved = resolveReadablePath(path) else {
             return ToolExecutionResult(output: "Invalid path: \(path)", isError: true, changedPaths: [])
         }
 
@@ -1214,8 +1217,8 @@ final class AgentToolProvider {
             return ToolExecutionResult(output: "Missing required parameter: path", isError: true, changedPaths: [])
         }
 
-        // Validate path stays within workspace sandbox
-        guard resolveSafePath(path) != nil else {
+        // Validate path stays within workspace or readable sandbox
+        guard resolveReadablePath(path) != nil else {
             return ToolExecutionResult(output: "Invalid path: \(path)", isError: true, changedPaths: [])
         }
 
@@ -1340,14 +1343,8 @@ final class AgentToolProvider {
         let searchPath = args["path"] as? String
         let includePattern = args["include"] as? String
         let filesOnly = args["files_only"] as? Bool ?? false
-        let searchRoot: URL
-        if let searchPath, !searchPath.isEmpty, searchPath != "." {
-            guard let resolved = resolveSafePath(searchPath) else {
-                return ToolExecutionResult(output: "Invalid path: \(searchPath)", isError: true, changedPaths: [])
-            }
-            searchRoot = resolved
-        } else {
-            searchRoot = workspaceURL
+        guard let searchRoot = resolveReadableDirectory(searchPath) else {
+            return ToolExecutionResult(output: "Invalid path: \(searchPath ?? "")", isError: true, changedPaths: [])
         }
 
         let includeRegex = includePattern.flatMap { buildIncludeRegex($0) }
@@ -1409,9 +1406,9 @@ final class AgentToolProvider {
                 var fileMatches: [(lineNumber: Int, text: String)] = []
                 for (index, line) in lines.enumerated() {
                     guard fileMatches.count < 5 else { break }
-                    if line.lowercased().contains(loweredQuery) {
-                        let trimmed = line.trimmingCharacters(in: .whitespaces)
-                        let preview = trimmed.count > 120 ? String(trimmed.prefix(120)) + "..." : trimmed
+                    if let matchRange = line.lowercased().range(of: loweredQuery) {
+                        let nsRange = NSRange(matchRange, in: line.lowercased())
+                        let preview = matchContextPreview(in: line, matchRange: nsRange)
                         fileMatches.append((lineNumber: index + 1, text: preview))
                     }
                 }
@@ -1473,14 +1470,8 @@ final class AgentToolProvider {
 
         let searchPath = args["path"] as? String
         let includeRegex = includePattern.flatMap { buildIncludeRegex($0) }
-        let searchRoot: URL
-        if let searchPath, !searchPath.isEmpty, searchPath != "." {
-            guard let resolved = resolveSafePath(searchPath) else {
-                return ToolExecutionResult(output: "Invalid path: \(searchPath)", isError: true, changedPaths: [])
-            }
-            searchRoot = resolved
-        } else {
-            searchRoot = workspaceURL
+        guard let searchRoot = resolveReadableDirectory(searchPath) else {
+            return ToolExecutionResult(output: "Invalid path: \(searchPath ?? "")", isError: true, changedPaths: [])
         }
 
         guard let enumerator = FileManager.default.enumerator(
@@ -1540,10 +1531,9 @@ final class AgentToolProvider {
                 var fileMatches: [(lineNumber: Int, text: String)] = []
                 for (index, line) in lines.enumerated() {
                     guard fileMatches.count < maxMatchesPerFile else { break }
-                    let range = NSRange(line.startIndex..., in: line)
-                    if regex.firstMatch(in: line, range: range) != nil {
-                        let trimmed = line.trimmingCharacters(in: .whitespaces)
-                        let preview = trimmed.count > 120 ? String(trimmed.prefix(120)) + "..." : trimmed
+                    let lineRange = NSRange(line.startIndex..., in: line)
+                    if let match = regex.firstMatch(in: line, range: lineRange) {
+                        let preview = matchContextPreview(in: line, matchRange: match.range)
                         fileMatches.append((lineNumber: index + 1, text: preview))
                     }
                 }
@@ -1588,14 +1578,8 @@ final class AgentToolProvider {
         }
 
         let searchPath = args["path"] as? String
-        let searchRoot: URL
-        if let searchPath, !searchPath.isEmpty, searchPath != "." {
-            guard let resolved = resolveSafePath(searchPath) else {
-                return ToolExecutionResult(output: "Invalid path: \(searchPath)", isError: true, changedPaths: [])
-            }
-            searchRoot = resolved
-        } else {
-            searchRoot = workspaceURL
+        guard let searchRoot = resolveReadableDirectory(searchPath) else {
+            return ToolExecutionResult(output: "Invalid path: \(searchPath ?? "")", isError: true, changedPaths: [])
         }
 
         guard let enumerator = FileManager.default.enumerator(
@@ -1771,9 +1755,18 @@ final class AgentToolProvider {
         }
 
         let raw = args["raw"] as? Bool ?? false
-        let result = await webToolProvider.webFetch(urlString: urlString, raw: raw)
+        let result = await webToolProvider.webFetch(urlString: urlString, raw: raw, tmpDirectoryURL: webFetchTmpURL)
         switch result {
         case let .success(fetchResult):
+            if let savedPath = fetchResult.savedPath {
+                let sizeDesc = fetchResult.fileSize.map { formattedByteCount($0) } ?? "unknown size"
+                return ToolExecutionResult(
+                    output: "Fetched \(urlString) (\(fetchResult.statusCode), \(sizeDesc)). Saved to \(savedPath).\nUse read_file, grep_files, or search_files to explore the content.",
+                    isError: false,
+                    changedPaths: [],
+                    metadata: .webResult(url: urlString, statusCode: fetchResult.statusCode)
+                )
+            }
             return ToolExecutionResult(
                 output: "Content from \(urlString):\n\n\(fetchResult.content)",
                 isError: false,
@@ -2123,8 +2116,49 @@ final class AgentToolProvider {
 
     // MARK: - Path Helpers (delegates to ProjectPathResolver)
 
+    private static let webFetchPrefix = "__web_fetch__/"
+
+    /// Resolves a path for **read** operations. Supports the `__web_fetch__/` virtual
+    /// prefix (maps to `webFetchTmpURL`) in addition to the normal workspace sandbox.
+    private func resolveReadablePath(_ path: String) -> URL? {
+        if path.hasPrefix(Self.webFetchPrefix), let tmpURL = webFetchTmpURL {
+            let subpath = String(path.dropFirst(Self.webFetchPrefix.count))
+            guard !subpath.isEmpty,
+                  !subpath.contains(".."),
+                  !subpath.contains("/") else { return nil }
+            let resolved = tmpURL.appendingPathComponent(subpath).standardizedFileURL
+            // Ensure the resolved path stays within tmpURL
+            guard resolved.path.hasPrefix(tmpURL.standardizedFileURL.path) else { return nil }
+            return resolved
+        }
+        return ProjectPathResolver.resolveSafePath(path, in: workspaceURL)
+    }
+
+    /// Resolves the search root for read-only enumeration tools (search/grep/glob).
+    /// Handles `__web_fetch__/` prefix by returning the tmp directory as root.
+    private func resolveReadableDirectory(_ path: String?) -> URL? {
+        guard let path, !path.isEmpty, path != "." else { return workspaceURL }
+        if path == "__web_fetch__" || path == "__web_fetch__/" {
+            return webFetchTmpURL
+        }
+        if path.hasPrefix(Self.webFetchPrefix), let tmpURL = webFetchTmpURL {
+            let subpath = String(path.dropFirst(Self.webFetchPrefix.count))
+            guard !subpath.contains("..") else { return nil }
+            let resolved = tmpURL.appendingPathComponent(subpath).standardizedFileURL
+            guard resolved.path.hasPrefix(tmpURL.standardizedFileURL.path) else { return nil }
+            return resolved
+        }
+        return ProjectPathResolver.resolveSafePath(path, in: workspaceURL)
+    }
+
     private func resolveSafePath(_ path: String) -> URL? {
         ProjectPathResolver.resolveSafePath(path, in: workspaceURL)
+    }
+
+    /// Removes the web_fetch temp directory if it exists.
+    func cleanUpWebFetchTmp() {
+        guard let tmpURL = webFetchTmpURL else { return }
+        try? FileManager.default.removeItem(at: tmpURL)
     }
 
     private func normalizeRelativePath(_ path: String) -> String {
@@ -2137,6 +2171,52 @@ final class AgentToolProvider {
 
     private func isTextFile(_ relativePath: String) -> Bool {
         ProjectPathResolver.isTextFile(relativePath)
+    }
+
+    // MARK: - Match Preview
+
+    /// Maximum characters in a single match preview line.
+    private static let matchPreviewMaxLength = 120
+
+    /// Returns a context window around the match position, with ellipsis
+    /// if the line extends beyond the window in either direction.
+    private func matchContextPreview(in line: String, matchRange: NSRange) -> String {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        let maxLen = Self.matchPreviewMaxLength
+        guard trimmed.count > maxLen else { return trimmed }
+
+        let nsLine = line as NSString
+
+        // Compute match start/end in character offsets
+        let matchStart = matchRange.location
+        let matchEnd = matchRange.location + matchRange.length
+
+        // Calculate a window centered on the match
+        let matchLen = matchRange.length
+        let contextBudget = max(0, maxLen - matchLen)
+        let leadContext = contextBudget / 2
+        let trailContext = contextBudget - leadContext
+
+        var windowStart = max(0, matchStart - leadContext)
+        var windowEnd = min(nsLine.length, matchEnd + trailContext)
+
+        // If the window is still shorter than maxLen, expand in the available direction
+        let windowLen = windowEnd - windowStart
+        if windowLen < maxLen {
+            let deficit = maxLen - windowLen
+            if windowStart > 0 {
+                windowStart = max(0, windowStart - deficit)
+            }
+            if windowEnd - windowStart < maxLen {
+                windowEnd = min(nsLine.length, windowStart + maxLen)
+            }
+        }
+
+        let snippet = nsLine.substring(with: NSRange(location: windowStart, length: windowEnd - windowStart))
+            .trimmingCharacters(in: .whitespaces)
+        let prefix = windowStart > 0 ? "..." : ""
+        let suffix = windowEnd < nsLine.length ? "..." : ""
+        return prefix + snippet + suffix
     }
 
     // MARK: - Minified Code Formatter

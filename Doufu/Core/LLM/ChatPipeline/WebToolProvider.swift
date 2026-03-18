@@ -139,9 +139,13 @@ final class WebToolProvider {
     struct WebFetchResult {
         let content: String
         let statusCode: Int
+        /// Virtual path if content was saved to a temp file (e.g. `__web_fetch__/a1b2c3.txt`).
+        let savedPath: String?
+        /// Size in bytes of the saved file, if any.
+        let fileSize: Int?
     }
 
-    func webFetch(urlString: String, raw: Bool = false) async -> Result<WebFetchResult, WebToolError> {
+    func webFetch(urlString: String, raw: Bool = false, tmpDirectoryURL: URL? = nil) async -> Result<WebFetchResult, WebToolError> {
         let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             return .failure(WebToolError(message: "Missing required parameter: url"))
@@ -180,7 +184,8 @@ final class WebToolProvider {
 
         let actualStatusCode = (response as? HTTPURLResponse)?.statusCode ?? 200
 
-        let truncatedData = data.prefix(configuration.webFetchMaxBytes * 2)
+        let maxDataBytes = configuration.webFetchFileMaxBytes
+        let truncatedData = data.prefix(maxDataBytes)
         guard let rawText = String(data: truncatedData, encoding: .utf8)
                 ?? String(data: truncatedData, encoding: .ascii) else {
             return .failure(WebToolError(message: "Failed to decode response as text"))
@@ -203,15 +208,47 @@ final class WebToolProvider {
             return .failure(WebToolError(message: "Page returned empty content"))
         }
 
-        // Truncate to byte limit
-        if trimmedResult.utf8.count > configuration.webFetchMaxBytes {
-            let truncated = truncateToUTF8ByteCount(trimmedResult, maxBytes: configuration.webFetchMaxBytes)
-            return .success(WebFetchResult(
-                content: truncated + "\n\n[Content truncated at \(configuration.webFetchMaxBytes) bytes]",
-                statusCode: actualStatusCode
-            ))
+        let contentBytes = trimmedResult.utf8.count
+
+        // Small content: return inline
+        if contentBytes <= configuration.webFetchInlineMaxBytes {
+            return .success(WebFetchResult(content: trimmedResult, statusCode: actualStatusCode, savedPath: nil, fileSize: nil))
         }
-        return .success(WebFetchResult(content: trimmedResult, statusCode: actualStatusCode))
+
+        // Large content: try to save to temp file
+        if let tmpDir = tmpDirectoryURL {
+            let ext = raw ? "html" : "txt"
+            let fileName = UUID().uuidString.prefix(8).lowercased() + "." + ext
+            let fileURL = tmpDir.appendingPathComponent(fileName)
+
+            do {
+                try FileManager.default.createDirectory(at: tmpDir, withIntermediateDirectories: true)
+                // Format for readability (break long lines), then truncate if needed
+                let formatted = raw ? breakLongHTMLLines(trimmedResult) : wrapLongTextLines(trimmedResult)
+                let contentToWrite: String
+                if formatted.utf8.count > configuration.webFetchFileMaxBytes {
+                    contentToWrite = truncateToUTF8ByteCount(formatted, maxBytes: configuration.webFetchFileMaxBytes)
+                } else {
+                    contentToWrite = formatted
+                }
+                try contentToWrite.write(to: fileURL, atomically: true, encoding: .utf8)
+                let savedBytes = contentToWrite.utf8.count
+                let virtualPath = "__web_fetch__/" + fileName
+                return .success(WebFetchResult(content: "", statusCode: actualStatusCode, savedPath: virtualPath, fileSize: savedBytes))
+            } catch {
+                // Fall through to inline truncation if file save fails
+            }
+        }
+
+        // Fallback: inline with truncation
+        let inlineMax = configuration.webFetchInlineMaxBytes
+        let truncated = truncateToUTF8ByteCount(trimmedResult, maxBytes: inlineMax)
+        return .success(WebFetchResult(
+            content: truncated + "\n\n[Content truncated at \(inlineMax) bytes]",
+            statusCode: actualStatusCode,
+            savedPath: nil,
+            fileSize: nil
+        ))
     }
 
     // MARK: - DuckDuckGo HTML Parser
@@ -498,6 +535,78 @@ final class WebToolProvider {
             }
         }
         return result
+    }
+
+    // MARK: - Content Formatting
+
+    /// Maximum characters per line in saved files.
+    private static let maxLineLength = 200
+
+    /// Wrap long lines in extracted text at word boundaries.
+    private func wrapLongTextLines(_ text: String) -> String {
+        let maxLen = Self.maxLineLength
+        let lines = text.components(separatedBy: "\n")
+        var result: [String] = []
+
+        for line in lines {
+            if line.count <= maxLen {
+                result.append(line)
+                continue
+            }
+            // Wrap at word boundaries
+            var current = ""
+            for word in line.split(separator: " ", omittingEmptySubsequences: false) {
+                if current.isEmpty {
+                    current = String(word)
+                } else if current.count + 1 + word.count > maxLen {
+                    result.append(current)
+                    current = String(word)
+                } else {
+                    current += " " + word
+                }
+            }
+            if !current.isEmpty {
+                result.append(current)
+            }
+        }
+        return result.joined(separator: "\n")
+    }
+
+    /// Break long lines in raw HTML at tag boundaries (`>` / `<`).
+    private func breakLongHTMLLines(_ html: String) -> String {
+        let maxLen = Self.maxLineLength
+        let lines = html.components(separatedBy: "\n")
+        var result: [String] = []
+
+        for line in lines {
+            if line.count <= maxLen {
+                result.append(line)
+                continue
+            }
+            // Insert newlines after `>` when the line has grown long enough
+            var output = ""
+            var col = 0
+            var inTag = false
+            for ch in line {
+                if ch == "<" && !inTag && col >= maxLen {
+                    // Break before opening a new tag
+                    output.append("\n")
+                    col = 0
+                }
+                output.append(ch)
+                col += 1
+                if ch == "<" { inTag = true }
+                if ch == ">" {
+                    inTag = false
+                    if col >= maxLen {
+                        output.append("\n")
+                        col = 0
+                    }
+                }
+            }
+            result.append(output)
+        }
+        return result.joined(separator: "\n")
     }
 
     // MARK: - Helpers

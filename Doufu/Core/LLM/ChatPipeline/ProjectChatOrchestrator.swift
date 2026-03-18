@@ -105,6 +105,7 @@ final class ProjectChatOrchestrator {
         let requestMemory = memoryManager.buildRequestMemory(base: memory, latestUserMessage: trimmedMessage)
         let usageAccumulator = UsageAccumulator()
         let toolProvider = AgentToolProvider(workspaceURL: workspaceURL, configuration: configuration)
+        toolProvider.webFetchTmpURL = sessionContext.projectRootURL.appendingPathComponent("tmp/web_fetch")
         toolProvider.confirmationHandler = confirmationHandler
         toolProvider.permissionMode = permissionMode
         toolProvider.codeValidator = CodeValidator()
@@ -112,6 +113,8 @@ final class ProjectChatOrchestrator {
         toolProvider.validationBridge = validationBridge
 
         var state = AgentLoopState(conversation: [])
+
+        defer { toolProvider.cleanUpWebFetchTmp() }
 
         do {
         autoSaveBeforeAgentLoop(workspaceURL: workspaceURL)

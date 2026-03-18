@@ -31,7 +31,8 @@ struct ProjectChatConfiguration {
 
     let maxLongContentCharactersInPrompt = 16_000
 
-    let webFetchMaxBytes = 65_000
+    let webFetchInlineMaxBytes = 12_000
+    let webFetchFileMaxBytes = 2_097_152
     let webFetchTimeoutSeconds: TimeInterval = 15
     let webSearchMaxResults = 10
 

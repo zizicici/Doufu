@@ -41,7 +41,7 @@ final class PromptBuilder {
         - **Write**: `write_file` for new files or complete rewrites only.
         - **Revert**: `revert_file` to restore a file to its checkpoint state.
         - **Review**: `diff_file` / `changed_files` to review your modifications.
-        - **Web**: `web_search` / `web_fetch` for external info.
+        - **Web**: `web_search` / `web_fetch` for external info. Large fetched pages are saved to `__web_fetch__/` — use `read_file`, `grep_files`, or `search_files` with that path to explore the content.
         - **Validate**: `validate_code` after completing a group of related changes — not after every edit.
 
         ## Doufu Runtime Environment
