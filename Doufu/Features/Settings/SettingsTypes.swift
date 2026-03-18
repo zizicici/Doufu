@@ -65,6 +65,7 @@ nonisolated enum SettingsItemID: Hashable, Sendable {
     // Project
     case toolPermission(secondaryText: String)
     case pipProgress(secondaryText: String)
+    case panelDockedOpacity(secondaryText: String)
 
     // Contact
     case email

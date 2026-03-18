@@ -12,6 +12,39 @@ import PhotosUI
 import UIKit
 import WebKit
 
+enum PanelDockedOpacity: Int, CaseIterable {
+    case opaque = 0
+    case translucent = 1
+    case transparent = 2
+
+    private static let key = "panelDockedOpacity"
+
+    var contentAlpha: CGFloat {
+        switch self {
+        case .opaque: return 1.0
+        case .translucent: return 0.4
+        case .transparent: return 0.0
+        }
+    }
+
+    var displayName: String {
+        switch self {
+        case .opaque: return String(localized: "settings.project.panel_opacity.opaque")
+        case .translucent: return String(localized: "settings.project.panel_opacity.translucent")
+        case .transparent: return String(localized: "settings.project.panel_opacity.transparent")
+        }
+    }
+
+    static var current: PanelDockedOpacity {
+        get {
+            PanelDockedOpacity(rawValue: UserDefaults.standard.integer(forKey: key)) ?? .opaque
+        }
+        set {
+            UserDefaults.standard.set(newValue.rawValue, forKey: key)
+        }
+    }
+}
+
 class ProjectWebView: WKWebView {
     /// Called before every reload so the caller can refresh injected user scripts.
     var onBeforeReload: (() -> Void)?
@@ -372,7 +405,7 @@ final class ProjectWorkspaceViewController: UIViewController {
         if !hasInitializedPanelPosition {
             panelContainer.frame = panelCollapsedFrame()
             panelState = .collapsed
-            panelContainer.alpha = 1
+            applyPanelAppearance(alpha: PanelDockedOpacity.current.contentAlpha)
             panelContainer.isHidden = false
             hasInitializedPanelPosition = true
             updatePanelAccessibility()
@@ -617,6 +650,7 @@ final class ProjectWorkspaceViewController: UIViewController {
                 options: [.curveEaseOut, .beginFromCurrentState]
             ) {
                 self.panelContainer.frame = target
+                self.applyPanelAppearance(alpha: 1)
             } completion: { _ in
                 if scheduleAutoCollapseAfter {
                     self.scheduleAutoCollapse()
@@ -624,6 +658,7 @@ final class ProjectWorkspaceViewController: UIViewController {
             }
         } else {
             panelContainer.frame = target
+            applyPanelAppearance(alpha: 1)
 
             if scheduleAutoCollapseAfter {
                 scheduleAutoCollapse()
@@ -636,6 +671,7 @@ final class ProjectWorkspaceViewController: UIViewController {
         panelState = .collapsed
         updatePanelAccessibility()
         let target = panelCollapsedFrame()
+        let dockedAlpha = PanelDockedOpacity.current.contentAlpha
 
         if animated {
             UIView.animate(
@@ -644,11 +680,20 @@ final class ProjectWorkspaceViewController: UIViewController {
                 options: [.curveEaseOut, .beginFromCurrentState]
             ) {
                 self.panelContainer.frame = target
+                self.applyPanelAppearance(alpha: dockedAlpha)
             }
         } else {
             panelContainer.frame = target
-
+            applyPanelAppearance(alpha: dockedAlpha)
         }
+    }
+
+    private static let panelBorderColor = UIColor.separator.withAlphaComponent(0.35)
+
+    private func applyPanelAppearance(alpha: CGFloat) {
+        panelContainer.contentView.alpha = alpha
+        panelContainer.effect = alpha > 0 ? UIBlurEffect(style: .systemThinMaterial) : nil
+        panelContainer.layer.borderColor = Self.panelBorderColor.withAlphaComponent(0.35 * alpha).cgColor
     }
 
     private func scheduleAutoCollapse() {

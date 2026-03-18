@@ -192,6 +192,15 @@ final class SettingsViewController: UITableViewController {
             cell.contentConfiguration = configuration
             return cell
 
+        case .panelDockedOpacity(let secondaryText):
+            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
+            cell.accessoryType = .disclosureIndicator
+            var configuration = UIListContentConfiguration.valueCell()
+            configuration.text = String(localized: "settings.project.panel_opacity.title")
+            configuration.secondaryText = secondaryText
+            cell.contentConfiguration = configuration
+            return cell
+
         case .email:
             let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
             cell.accessoryType = .disclosureIndicator
@@ -307,6 +316,7 @@ final class SettingsViewController: UITableViewController {
             .pipProgress(secondaryText: PiPProgressManager.shared.isEnabled
                 ? String(localized: "settings.common.on")
                 : String(localized: "settings.common.off")),
+            .panelDockedOpacity(secondaryText: PanelDockedOpacity.current.displayName),
         ], toSection: .project)
 
         // Permissions
@@ -393,6 +403,10 @@ final class SettingsViewController: UITableViewController {
 
         case .pipProgress:
             let controller = makePiPProgressPicker()
+            navigationController?.pushViewController(controller, animated: true)
+
+        case .panelDockedOpacity:
+            let controller = makePanelDockedOpacityPicker()
             navigationController?.pushViewController(controller, animated: true)
 
         case .email:
@@ -500,6 +514,21 @@ final class SettingsViewController: UITableViewController {
             footerText: String(localized: "settings.chat.pip_progress.footer"),
             selectedIndex: { PiPProgressManager.shared.isEnabled ? 0 : 1 },
             onSelect: { index in PiPProgressManager.shared.isEnabled = (index == 0) }
+        )
+    }
+
+    private func makePanelDockedOpacityPicker() -> SettingsPickerViewController {
+        let allCases = PanelDockedOpacity.allCases
+        return SettingsPickerViewController(
+            title: String(localized: "settings.project.panel_opacity.title"),
+            options: allCases.map { SettingsPickerOption($0.displayName) },
+            footerText: String(localized: "settings.project.panel_opacity.footer"),
+            selectedIndex: { PanelDockedOpacity.current.rawValue },
+            onSelect: { index in
+                if let opacity = PanelDockedOpacity(rawValue: index) {
+                    PanelDockedOpacity.current = opacity
+                }
+            }
         )
     }
 
