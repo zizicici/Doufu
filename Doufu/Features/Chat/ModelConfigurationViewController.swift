@@ -33,6 +33,7 @@ final class ModelConfigurationViewController: UITableViewController {
     private var usageByProviderModel: [String: Int64] = [:]
     private var isRefreshingModels = false
     private var modelRefreshTask: Task<Void, Never>?
+    private var modelFilterText: String = ""
 
     private let numberFormatter: NumberFormatter = {
         let formatter = NumberFormatter()
@@ -72,6 +73,7 @@ final class ModelConfigurationViewController: UITableViewController {
         tableView.backgroundColor = .doufuBackground
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "ProjectModelConfigCell")
         tableView.register(SettingsToggleCell.self, forCellReuseIdentifier: SettingsToggleCell.reuseIdentifier)
+        tableView.register(ModelSearchBarCell.self, forCellReuseIdentifier: ModelSearchBarCell.reuseIdentifier)
         configureDiffableDataSource()
         reloadProviderContext()
         reloadUsageData()
@@ -108,6 +110,21 @@ final class ModelConfigurationViewController: UITableViewController {
         itemID: ModelConfigItemID
     ) -> UITableViewCell {
         switch itemID {
+        case .modelSearchBar:
+            guard let cell = tableView.dequeueReusableCell(
+                withIdentifier: ModelSearchBarCell.reuseIdentifier,
+                for: indexPath
+            ) as? ModelSearchBarCell else {
+                return UITableViewCell()
+            }
+            cell.configure(text: modelFilterText)
+            cell.onTextChanged = { [weak self] text in
+                guard let self else { return }
+                self.modelFilterText = text
+                self.applySnapshot()
+            }
+            return cell
+
         case .inheritToggle:
             guard let cell = tableView.dequeueReusableCell(
                 withIdentifier: SettingsToggleCell.reuseIdentifier,
@@ -366,7 +383,20 @@ final class ModelConfigurationViewController: UITableViewController {
             let modelRecordID = trimmedModelRecordID(in: inherited)
             snapshot.appendItems([.model(id: modelRecordID, inherited: true)], toSection: .model)
         } else if let provider = selectedProviderRecord() {
-            let models = availableModels(for: provider)
+            let allModels = availableModels(for: provider)
+            if allModels.count >= 10 {
+                snapshot.appendItems([.modelSearchBar], toSection: .model)
+            }
+            let models: [LLMProviderModelRecord]
+            if modelFilterText.isEmpty {
+                models = allModels
+            } else {
+                let query = modelFilterText.lowercased()
+                models = allModels.filter {
+                    $0.effectiveDisplayName.lowercased().contains(query)
+                        || $0.modelID.lowercased().contains(query)
+                }
+            }
             snapshot.appendItems(models.map { .model(id: $0.id, inherited: false) }, toSection: .model)
         }
 
@@ -477,7 +507,7 @@ final class ModelConfigurationViewController: UITableViewController {
             return nil
         }
         switch itemID {
-        case .inheritToggle, .thinkingToggle:
+        case .inheritToggle, .thinkingToggle, .modelSearchBar:
             return nil
         case .provider(_, let inherited), .model(_, let inherited), .reasoningEffort(_, let inherited):
             return inherited ? nil : indexPath
@@ -518,7 +548,7 @@ final class ModelConfigurationViewController: UITableViewController {
             return
         }
         switch itemID {
-        case .inheritToggle, .thinkingToggle:
+        case .inheritToggle, .thinkingToggle, .modelSearchBar:
             return
 
         case .provider(_, true), .model(_, true), .reasoningEffort(_, true):
@@ -535,6 +565,7 @@ final class ModelConfigurationViewController: UITableViewController {
             state.selectedModelRecordID = availableModels(for: selectedProvider).first?.id ?? ""
             state.selectedReasoningEffort = nil
             state.selectedThinkingEnabled = nil
+            modelFilterText = ""
             notifySelectionChanged()
             applySnapshot()
 

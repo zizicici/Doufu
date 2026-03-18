@@ -13,8 +13,8 @@ final class ProviderAPIKeyFormViewController: UITableViewController {
         case label
         case apiKey
         case customAPI
-        case storedModels
         case manageModels
+        case storedModels
         case addProvider
     }
 

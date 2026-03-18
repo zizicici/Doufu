@@ -21,4 +21,5 @@ nonisolated enum ModelConfigItemID: Hashable, Sendable {
     case manageProviders
     case manageRefreshModels(isRefreshing: Bool)
     case manageAddCustomModel
+    case modelSearchBar
 }

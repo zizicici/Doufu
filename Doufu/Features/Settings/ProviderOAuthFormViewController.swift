@@ -15,8 +15,8 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
         case label
         case oauth
         case manual
-        case storedModels
         case manageModels
+        case storedModels
         case addProvider
     }
 

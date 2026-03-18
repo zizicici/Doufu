@@ -6058,6 +6058,28 @@
         }
       }
     },
+    "model_config.search.placeholder" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "筛选模型"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "篩選模型"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "篩選模型"
+          }
+        }
+      }
+    },
     "model_config.section.manage_models" : {
       "extractionState" : "manual",
       "localizations" : {
