@@ -64,43 +64,43 @@
 15a. `Capability Activity Store`
     - 主要文件：`Core/Projects/CapabilityActivityStore.swift`
     - 责任：能力活动事件写入 `capability_activity` 表（`recordEvent`），支持按项目或按能力类型查询（JOIN project 取项目名）。
-15. `Project Lifecycle Coordinator`
+16. `Project Lifecycle Coordinator`
    - 主要文件：`Core/Projects/ProjectLifecycleCoordinator.swift`
    - 责任：项目生命周期操作（create / delete / close / rename）的统一入口；确保 ChatSession 状态与项目变更一致（delete 前 cancel + flush + endSession；rename 同步 session context；close 时按执行状态决定是否 endSession）。
-16. `Project Change Center`
+17. `Project Change Center`
    - 主要文件：`Core/Projects/ProjectChangeCenter.swift`
    - 责任：project-scoped 变更事件中心；统一广播文件改动、checkpoint restore、rename、description/tool permission/model selection 变化，并在文件/restore 事件里统一维护 `updatedAt`。
-17. `Project Activity Store`
+18. `Project Activity Store`
    - 主要文件：`Core/Projects/ProjectActivityStore.swift`
    - 责任：project-scoped 活动状态源；维护 `idle / building / newVersionAvailable / needsConfirmation / error`，供 Home / Workspace / Chat 共享消费。
-18. `Project Git Service`
+19. `Project Git Service`
    - 主要文件：`Core/Projects/ProjectGitService.swift`
    - 责任：项目级 Git 初始化、agent loop 前自动保存、检查点创建、历史恢复、变更查询。
-19. `Provider Storage`
+20. `Provider Storage`
    - 主要文件：`Core/LLM/LLMProviderSettingsStore.swift`
    - 责任：Provider / Model CRUD 通过 GRDB（`llm_provider` + `llm_provider_model` 表）、Keychain 凭证管理、三层 ModelSelection CRUD。
-20. `Model Registry`
+21. `Model Registry`
    - 主要文件：`Core/LLM/LLMModelRegistry.swift`
    - 责任：统一模型能力解析，多级优先级回退（用户自定义 > 内置 > 发现 > 保守默认）。
-21. `Model Selection Store`
+22. `Model Selection Store`
    - 主要文件：`Core/LLM/ModelSelectionStateStore.swift`、`Core/LLM/ModelSelectionResolver.swift`
    - 责任：App / Project / Thread 三层 `ModelSelection` 的共享状态源、缓存、变更通知、解析与归一化。从 `LLMProviderSettingsStore` 读取数据（不再依赖 `ChatDataService`）。
-22. `Chat Data Storage`
+23. `Chat Data Storage`
    - 主要文件：`Core/Chat/ChatDataStore.swift`、`Core/Chat/ChatDataService.swift`、`Core/Chat/ChatSessionContext.swift`
    - 责任：`ChatDataStore`（`final class`）通过 GRDB 同步读写聊天数据；`ChatDataService`（`@MainActor`）绑定单个 projectID 提供自动持久化。
-23. `OAuth Service`
+24. `OAuth Service`
    - 主要文件：`Core/LLM/OpenAIOAuthService.swift`、`Core/LLM/OpenRouterOAuthService.swift`
    - 责任：OpenAI OAuth（PKCE + localhost 回调，返回 Bearer Token）；OpenRouter OAuth（PKCE，返回 API Key）。
-24. `Agent Chat Pipeline`
+25. `Agent Chat Pipeline`
    - 主要文件：`Core/LLM/ProjectChatService.swift` + `Core/LLM/ChatPipeline/*`
    - 责任：对外 `sendAndApply`、agent loop 控制、工具定义与执行、流式请求、上下文压缩、进度事件。
-25. `Token Usage Analytics`
+26. `Token Usage Analytics`
    - 主要文件：`Core/LLM/LLMTokenUsageStore.swift`、`Features/Settings/TokenUsageViewController.swift`、`Features/ProjectRuntime/ProjectTokenUsageViewController.swift`
    - 责任：token 用量写入 `token_usage` 表，SQL GROUP BY / SUM 查询，驱动全局与项目视角展示。
-26. `Import Security Scan`
+27. `Import Security Scan`
    - 主要文件：`Core/Security/StaticCodeScanner.swift`、`Core/Security/LLMCodeScanner.swift`、`Core/Security/ImportScanModels.swift`、`Features/ImportScan/ImportScanViewController.swift`、`Features/ImportScan/ImportScanFindingCell.swift`、`Features/ImportScan/ImportScanTypes.swift`
    - 责任：导入项目时的安全扫描；`StaticCodeScanner` 执行静态规则匹配，`LLMCodeScanner` 可选的 LLM 辅助扫描；`ImportScanViewController` 展示扫描结果供用户确认。
-27. `App Intents / Shortcuts`
+28. `App Intents / Shortcuts`
    - 主要文件：`Core/AppIntents/DoufuShortcuts.swift`、`Core/AppIntents/OpenProjectIntent.swift`、`Core/AppIntents/ProjectEntity.swift`
    - 责任：Siri Shortcuts 集成，提供 `Open Project` Intent，支持通过快捷指令直接打开指定项目。
 

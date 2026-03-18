@@ -13,9 +13,9 @@
 2. ViewController 只处理 UI 组装和交互转发。
 3. 业务逻辑进入 Service / Repository。
 4. 项目生命周期操作（create / delete / close / rename）必须通过 `ProjectLifecycleCoordinator` 执行，不可直接调用 `AppProjectStore` 或 `ChatSessionManager`，以保证 session 状态一致性。
-4. 聊天模块 UI 位于 `Features/Chat/` 目录，主要文件：`ChatViewController`（UI + 胶水）、`ChatMessageStore`（消息状态机）、`ChatMenuBuilder`（菜单构建）。聊天运行时位于 `Core/Chat/` 目录：`ChatSession`、`ChatThreadManager`（线程管理）、`ChatModelSelectionManager`（模型选择）。
-5. 设置页风格优先复用 `Features/Settings/Components` 中的通用 Cell。
-6. 所有用户可见文案必须接入 `Localizable.xcstrings`，禁止新增硬编码显示文本。
+5. 聊天模块 UI 位于 `Features/Chat/` 目录，主要文件：`ChatViewController`（UI + 胶水）、`ChatMessageStore`（消息状态机）、`ChatMenuBuilder`（菜单构建）。聊天运行时位于 `Core/Chat/` 目录：`ChatSession`、`ChatThreadManager`（线程管理）、`ChatModelSelectionManager`（模型选择）。
+6. 设置页风格优先复用 `Features/Settings/Components` 中的通用 Cell。
+7. 所有用户可见文案必须接入 `Localizable.xcstrings`，禁止新增硬编码显示文本。
 
 ## 性能与稳定性
 

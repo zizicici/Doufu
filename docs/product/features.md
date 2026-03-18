@@ -84,10 +84,10 @@
     - 文件操作限制在项目目录，含路径安全校验。
     - 调试日志脱敏，禁止输出凭证。
 13. CDN 资源缓存
-   - HTML/CSS 中外部 `https://` 资源自动改写为走本地代理。
-   - 代理层磁盘缓存（`Caches/CDNCache/`），首次加载后离线可用。
-   - 容量上限 200 MB，LRU 淘汰；系统存储压力时可自动清除。
-   - fetch/XHR 发起的 API 请求不受影响，不会被缓存。
+    - HTML/CSS 中外部 `https://` 资源自动改写为走本地代理。
+    - 代理层磁盘缓存（`Caches/CDNCache/`），首次加载后离线可用。
+    - 容量上限 200 MB，LRU 淘汰；系统存储压力时可自动清除。
+    - fetch/XHR 发起的 API 请求不受影响，不会被缓存。
 14. 项目导入导出（`.doufu` / `.doufull`）
    - `Export Code` 导出为 `.doufu`（ZIP 语义，仅包含 `App/`）。
    - `Export Project Backup` 导出为 `.doufull`（ZIP 语义，包含 `App/` + `AppData/`，不包含 `preview.jpg`）。
