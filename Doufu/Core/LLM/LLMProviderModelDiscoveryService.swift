@@ -65,8 +65,10 @@ final class LLMProviderModelDiscoveryService {
         bearerToken: String
     ) async throws -> [LLMProviderModelRecord] {
         switch provider.kind {
-        case .openAICompatible, .openRouter:
+        case .openAICompatible:
             return try await fetchOpenAICompatibleModels(for: provider, bearerToken: bearerToken)
+        case .openRouter:
+            return try await fetchOpenRouterModels(for: provider, bearerToken: bearerToken)
         case .anthropic:
             return try await fetchAnthropicModels(for: provider, bearerToken: bearerToken)
         case .googleGemini:
@@ -93,16 +95,71 @@ final class LLMProviderModelDiscoveryService {
         let (data, response) = try await URLSession.shared.data(for: request)
         try validate(response: response, data: data)
         let modelEntries = try parseOpenAIModelEntries(from: data)
-        let providerKind = provider.kind
         return modelEntries.map { model in
             LLMProviderModelRecord(
                 id: officialRecordID(for: model.modelID),
                 modelID: model.modelID,
                 displayName: model.displayName ?? model.modelID,
                 source: .official,
-                capabilities: .defaults(for: providerKind, modelID: model.modelID)
+                capabilities: .defaults(for: provider.kind, modelID: model.modelID)
             )
         }
+    }
+
+    private func fetchOpenRouterModels(
+        for provider: LLMProviderRecord,
+        bearerToken: String
+    ) async throws -> [LLMProviderModelRecord] {
+        let url = try buildURL(baseURLString: provider.effectiveBaseURLString, path: "models")
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validate(response: response, data: data)
+        return try parseOpenRouterModels(from: data)
+    }
+
+    private func parseOpenRouterModels(from data: Data) throws -> [LLMProviderModelRecord] {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let models = root["data"] as? [[String: Any]]
+        else {
+            throw ProjectChatService.ServiceError.invalidResponse
+        }
+
+        var seen: Set<String> = []
+        var records: [LLMProviderModelRecord] = []
+        for model in models {
+            guard let id = model["id"] as? String, !id.isEmpty else { continue }
+            let normalizedID = id.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !seen.contains(normalizedID) else { continue }
+            seen.insert(normalizedID)
+
+            let displayName = (model["name"] as? String) ?? id
+            var capabilities = LLMProviderModelCapabilities.defaults(for: .openRouter, modelID: id)
+
+            if let contextLength = model["context_length"] as? Int, contextLength > 0 {
+                capabilities.contextWindowTokensOverride = contextLength
+            }
+            if let topProvider = model["top_provider"] as? [String: Any],
+               let maxCompletionTokens = topProvider["max_completion_tokens"] as? Int,
+               maxCompletionTokens > 0 {
+                capabilities.maxOutputTokensOverride = maxCompletionTokens
+            }
+
+            records.append(LLMProviderModelRecord(
+                id: officialRecordID(for: id),
+                modelID: id,
+                displayName: displayName,
+                source: .official,
+                capabilities: capabilities
+            ))
+        }
+        guard !records.isEmpty else {
+            throw ProjectChatService.ServiceError.invalidResponse
+        }
+        return records
     }
 
     private func buildOpenAIModelsURL(for provider: LLMProviderRecord) throws -> URL {
