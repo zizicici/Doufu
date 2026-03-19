@@ -5,6 +5,7 @@
 //  Created by Salley Garden on 2026/02/14.
 //
 
+import StoreKit
 import UIKit
 
 class SceneDelegate: UIResponder, UIWindowSceneDelegate {
@@ -110,13 +111,42 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         return nav.viewControllers.first as? HomeViewController
     }
 
+    // MARK: - App Store Review
+
+    private static let reviewPromptedDateKey = "lastReviewPromptedDate"
+    private static let firstPromptDelay: TimeInterval = 3 * 24 * 60 * 60
+    private static let repeatInterval: TimeInterval = 180 * 24 * 60 * 60
+
+    private func requestReviewIfEligible() {
+        guard AppProjectStore.shared.hasCompletedOnboarding else { return }
+
+        let defaults = UserDefaults.standard
+
+        if let lastPrompted = defaults.object(forKey: Self.reviewPromptedDateKey) as? Date {
+            guard Date().timeIntervalSince(lastPrompted) >= Self.repeatInterval else { return }
+        } else {
+            let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+            let dbURL = documentsURL.appendingPathComponent("doufu.sqlite")
+            guard let attrs = try? FileManager.default.attributesOfItem(atPath: dbURL.path),
+                  let creationDate = attrs[.creationDate] as? Date,
+                  Date().timeIntervalSince(creationDate) >= Self.firstPromptDelay else { return }
+        }
+
+        defaults.set(Date(), forKey: Self.reviewPromptedDateKey)
+
+        guard let windowScene = window?.windowScene else { return }
+        SKStoreReviewController.requestReview(in: windowScene)
+    }
+
     func sceneDidDisconnect(_ scene: UIScene) {
         if let observer = openProjectObserver {
             NotificationCenter.default.removeObserver(observer)
             openProjectObserver = nil
         }
     }
-    func sceneDidBecomeActive(_ scene: UIScene) {}
+    func sceneDidBecomeActive(_ scene: UIScene) {
+        requestReviewIfEligible()
+    }
     func sceneWillResignActive(_ scene: UIScene) {}
     func sceneWillEnterForeground(_ scene: UIScene) {}
     func sceneDidEnterBackground(_ scene: UIScene) {}

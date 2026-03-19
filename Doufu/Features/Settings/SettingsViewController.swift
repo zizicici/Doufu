@@ -24,7 +24,7 @@ final class SettingsViewController: UITableViewController {
     private let modelSelectionStore = ModelSelectionStateStore.shared
     private var modelSelectionObserver: NSObjectProtocol?
     private var appJunApps: [AppInfo.App] = []
-    private var aboutRows: [SettingsItemID] = [.specifications, .eula, .privacyPolicy]
+    private var aboutRows: [SettingsItemID] = [.specifications, .review, .share, .eula, .privacyPolicy]
 
     private var diffableDataSource: UITableViewDiffableDataSource<SettingsSectionID, SettingsItemID>!
 
