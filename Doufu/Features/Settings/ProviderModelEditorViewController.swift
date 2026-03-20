@@ -34,8 +34,8 @@ final class ProviderModelEditorViewController: UITableViewController {
     }
 
     private let provider: ProjectChatService.ProviderCredential
-    private let existingModel: LLMProviderModelRecord?
-    private let readOnly: Bool
+    private var existingModel: LLMProviderModelRecord?
+    private var readOnly: Bool
     private var modelIDText: String
     private var displayNameText: String
     private var reasoningEfforts: Set<ProjectChatService.ReasoningEffort>
@@ -85,6 +85,12 @@ final class ProviderModelEditorViewController: UITableViewController {
         tableView.backgroundColor = .doufuBackground
         if readOnly {
             title = String(localized: "provider_model.editor.title.detail")
+            navigationItem.rightBarButtonItem = UIBarButtonItem(
+                title: String(localized: "provider_model.editor.button.duplicate"),
+                style: .plain,
+                target: self,
+                action: #selector(duplicateAsCustomModel)
+            )
         } else {
             title = existingModel == nil
                 ? String(localized: "provider_model.editor.title.add")
@@ -336,6 +342,14 @@ final class ProviderModelEditorViewController: UITableViewController {
         )
         onSave?(payload)
         navigationController?.popViewController(animated: true)
+    }
+
+    @objc private func duplicateAsCustomModel() {
+        readOnly = false
+        existingModel = nil
+        title = String(localized: "provider_model.editor.title.add")
+        navigationItem.rightBarButtonItem = nil
+        tableView.reloadData()
     }
 
     private func canSave() -> Bool {

@@ -87,6 +87,28 @@ final class ProviderModelManagementCoordinator {
             existingModel: model,
             readOnly: true
         )
+        editor.onSave = { [weak controller, weak self] payload in
+            guard let self else { return }
+            do {
+                _ = try self.store.saveCustomModel(
+                    providerID: provider.id,
+                    modelID: payload.modelID,
+                    displayName: payload.displayName,
+                    capabilities: payload.capabilities,
+                    existingRecordID: nil
+                )
+                controller?.tableView.reloadData()
+            } catch {
+                guard let controller else { return }
+                let alert = UIAlertController(
+                    title: String(localized: "provider_model.alert.save_failed.title"),
+                    message: error.localizedDescription,
+                    preferredStyle: .alert
+                )
+                alert.addAction(UIAlertAction(title: String(localized: "common.action.ok"), style: .default))
+                controller.present(alert, animated: true)
+            }
+        }
         controller.navigationController?.pushViewController(editor, animated: true)
     }
 
