@@ -8,12 +8,15 @@
 import UIKit
 
 final class AddProviderViewController: UITableViewController {
-    private let providerKinds: [LLMProviderRecord.Kind] = [
-        .openAICompatible,
-        .anthropic,
-        .googleGemini,
-        .openRouter,
-        .xiaomiMiMo
+    private let sections: [(title: String, kinds: [LLMProviderRecord.Kind])] = [
+        (
+            String(localized: "providers.add.section.standard"),
+            [.openAIResponses, .openAIChatCompletions, .anthropic]
+        ),
+        (
+            String(localized: "providers.add.section.other"),
+            [.googleGemini, .openRouter, .xiaomiMiMo]
+        )
     ]
 
     init() {
@@ -33,18 +36,18 @@ final class AddProviderViewController: UITableViewController {
     }
 
     override func numberOfSections(in tableView: UITableView) -> Int {
-        1
+        sections.count
     }
 
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        providerKinds.count
+        sections[section].kinds.count
     }
 
     override func tableView(
         _ tableView: UITableView,
         titleForHeaderInSection section: Int
     ) -> String? {
-        String(localized: "providers.add.section.provider_type")
+        sections[section].title
     }
 
     override func tableView(
@@ -53,10 +56,7 @@ final class AddProviderViewController: UITableViewController {
     ) -> UITableViewCell {
         let cell = tableView.dequeueReusableCell(withIdentifier: "ProviderOptionCell", for: indexPath)
         cell.accessoryType = .disclosureIndicator
-        guard indexPath.row < providerKinds.count else {
-            return cell
-        }
-        let kind = providerKinds[indexPath.row]
+        let kind = sections[indexPath.section].kinds[indexPath.row]
 
         var configuration = cell.defaultContentConfiguration()
         configuration.text = kind.displayName
@@ -68,23 +68,14 @@ final class AddProviderViewController: UITableViewController {
 
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
-        guard indexPath.row < providerKinds.count else {
-            return
-        }
-        let kind = providerKinds[indexPath.row]
+        let kind = sections[indexPath.section].kinds[indexPath.row]
         let controller: UIViewController
         switch kind {
-        case .openAICompatible:
-            // OpenAI Compatible supports both API Key and OAuth — let the
-            // user choose on the next screen.
+        case .openAIResponses:
             controller = ProviderAuthMethodViewController()
         case .openRouter:
-            // OpenRouter supports API Key and OAuth PKCE — reuse the auth
-            // method selection page.
             controller = ProviderAuthMethodViewController(providerKind: .openRouter)
-        case .anthropic, .googleGemini, .xiaomiMiMo:
-            // Only API Key is available — skip the auth method selection
-            // page and go straight to the form.
+        case .openAIChatCompletions, .anthropic, .googleGemini, .xiaomiMiMo:
             controller = ProviderAPIKeyFormViewController(providerKind: kind)
         }
         navigationController?.pushViewController(controller, animated: true)

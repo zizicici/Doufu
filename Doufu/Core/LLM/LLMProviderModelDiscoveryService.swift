@@ -97,7 +97,7 @@ final class LLMProviderModelDiscoveryService {
         bearerToken: String
     ) async throws -> [LLMProviderModelRecord] {
         switch provider.kind {
-        case .openAICompatible, .xiaomiMiMo:
+        case .openAIResponses, .openAIChatCompletions, .xiaomiMiMo:
             return try await fetchOpenAICompatibleModels(for: provider, bearerToken: bearerToken)
         case .openRouter:
             return try await fetchOpenRouterModels(for: provider, bearerToken: bearerToken)

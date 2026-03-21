@@ -406,7 +406,7 @@ final class ModelConfigurationViewController: UITableViewController {
         if let selectedProvider = providerRecord(for: currentSelection),
            let selectedModel = selectedModelRecord(for: selectedProvider, selection: currentSelection) {
             switch selectedProvider.kind {
-            case .openAICompatible, .openRouter:
+            case .openAIResponses, .openAIChatCompletions, .openRouter:
                 if isFollowingParent {
                     let effort = resolvedReasoningEffort(
                         for: selectedProvider,
@@ -475,7 +475,7 @@ final class ModelConfigurationViewController: UITableViewController {
                 return nil
             }
             switch selectedProvider.kind {
-            case .openAICompatible, .openRouter:
+            case .openAIResponses, .openAIChatCompletions, .openRouter:
                 return String(localized: "chat.menu.reasoning")
             case .anthropic, .googleGemini, .xiaomiMiMo:
                 return String(localized: "chat.menu.thinking")
@@ -711,7 +711,7 @@ final class ModelConfigurationViewController: UITableViewController {
         for provider: LLMProviderRecord,
         modelID: String
     ) -> (supported: [ProjectChatService.ReasoningEffort], defaultEffort: ProjectChatService.ReasoningEffort)? {
-        guard provider.kind == .openAICompatible || provider.kind == .openRouter else {
+        guard provider.kind == .openAIResponses || provider.kind == .openAIChatCompletions || provider.kind == .openRouter else {
             return nil
         }
         let supported = resolveModelProfile(for: provider, modelID: modelID).reasoningEfforts

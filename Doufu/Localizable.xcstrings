@@ -10400,31 +10400,60 @@
         }
       }
     },
-    "providers.add.section.provider_type" : {
+    "providers.add.section.other" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Provider Type"
+            "value" : "Other Providers"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "服务商类型"
+            "value" : "其他服务商"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "服務商類型"
+            "value" : "其他服務商"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "服務商類型"
+            "value" : "其他服務商"
+          }
+        }
+      }
+    },
+    "providers.add.section.standard" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Standard Protocols"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "通用协议"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "通用協議"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "通用協議"
           }
         }
       }
@@ -11386,7 +11415,7 @@
         }
       }
     },
-    "providers.kind.openai_compatible.subtitle" : {
+    "providers.kind.openai_responses.subtitle" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
@@ -11415,7 +11444,65 @@
         }
       }
     },
-    "providers.kind.openai_compatible.title" : {
+    "providers.kind.openai_responses.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OpenAI"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OpenAI"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OpenAI"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OpenAI"
+          }
+        }
+      }
+    },
+    "providers.kind.openai_chat_completions.subtitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OpenAI Chat Completions API"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OpenAI Chat Completions API"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OpenAI Chat Completions API"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OpenAI Chat Completions API"
+          }
+        }
+      }
+    },
+    "providers.kind.openai_chat_completions.title" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {

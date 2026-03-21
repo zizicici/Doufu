@@ -144,7 +144,7 @@ struct ModelSelectionResolver {
 
         if let provider, modelExists {
             switch provider.kind {
-            case .openAICompatible, .openRouter:
+            case .openAIResponses, .openAIChatCompletions, .openRouter:
                 if let profile = reasoningProfile(
                     providerID: trimmedProviderID,
                     providerKind: provider.kind,
@@ -278,7 +278,7 @@ struct ModelSelectionResolver {
         modelID: String,
         providerStore: LLMProviderSettingsStore
     ) -> (supported: [ProjectChatService.ReasoningEffort], defaultEffort: ProjectChatService.ReasoningEffort)? {
-        guard providerKind == .openAICompatible || providerKind == .openRouter else {
+        guard providerKind == .openAIResponses || providerKind == .openAIChatCompletions || providerKind == .openRouter else {
             return nil
         }
         let supported = resolveModelProfile(

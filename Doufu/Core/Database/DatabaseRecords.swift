@@ -315,22 +315,24 @@ struct DBThreadModelSelection: Codable, FetchableRecord, PersistableRecord {
 // MARK: - Domain ↔ DB Mapping
 
 extension DBProvider {
-    static let kindOpenAICompatible = 0
+    static let kindOpenAIResponses = 0
     static let kindAnthropic = 1
     static let kindGoogleGemini = 2
     static let kindOpenRouter = 3
     static let kindXiaomiMiMo = 4
+    static let kindOpenAIChatCompletions = 5
 
     static let authModeAPIKey = 0
     static let authModeOAuth = 1
 
     static func kindInt(from kind: LLMProviderRecord.Kind) -> Int {
         switch kind {
-        case .openAICompatible: return kindOpenAICompatible
+        case .openAIResponses: return kindOpenAIResponses
         case .anthropic: return kindAnthropic
         case .googleGemini: return kindGoogleGemini
         case .openRouter: return kindOpenRouter
         case .xiaomiMiMo: return kindXiaomiMiMo
+        case .openAIChatCompletions: return kindOpenAIChatCompletions
         }
     }
 
@@ -340,7 +342,8 @@ extension DBProvider {
         case kindGoogleGemini: return .googleGemini
         case kindOpenRouter: return .openRouter
         case kindXiaomiMiMo: return .xiaomiMiMo
-        default: return .openAICompatible
+        case kindOpenAIChatCompletions: return .openAIChatCompletions
+        default: return .openAIResponses
         }
     }
 

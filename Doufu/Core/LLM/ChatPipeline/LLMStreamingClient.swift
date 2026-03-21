@@ -14,6 +14,7 @@ final class LLMStreamingClient {
     private lazy var geminiProvider = GeminiProvider(configuration: configuration)
     private lazy var openRouterProvider = OpenRouterProvider(configuration: configuration)
     private lazy var mimoProvider = MiMoProvider(configuration: configuration)
+    private lazy var openAIChatCompletionsProvider = OpenAIChatCompletionsProvider(configuration: configuration)
 
     init(configuration: ProjectChatConfiguration) {
         self.configuration = configuration
@@ -124,11 +125,12 @@ final class LLMStreamingClient {
 
     private func provider(for kind: LLMProviderRecord.Kind) -> LLMProviderAdapter {
         switch kind {
-        case .openAICompatible: return openAIProvider
+        case .openAIResponses: return openAIProvider
         case .anthropic: return anthropicProvider
         case .googleGemini: return geminiProvider
         case .openRouter: return openRouterProvider
         case .xiaomiMiMo: return mimoProvider
+        case .openAIChatCompletions: return openAIChatCompletionsProvider
         }
     }
 }

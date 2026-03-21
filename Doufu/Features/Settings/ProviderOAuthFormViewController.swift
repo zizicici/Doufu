@@ -409,7 +409,7 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
 
     private func signInWithProvider() {
         switch providerKind {
-        case .openAICompatible, .openRouter:
+        case .openAIResponses, .openRouter:
             signInWithOpenAIOAuth()
         case .anthropic:
             guard let loginURL = oauthLoginURL(for: providerKind) else {
@@ -420,9 +420,9 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
             safariController.delegate = self
             loginSafariViewController = safariController
             present(safariController, animated: true)
-        case .googleGemini, .xiaomiMiMo:
-            // Gemini/MiMo only supports API Key auth; this VC should not be
-            // reachable for these providers.
+        case .openAIChatCompletions, .googleGemini, .xiaomiMiMo:
+            // These providers only support API Key auth; this VC should not be
+            // reachable for them.
             break
         }
     }
@@ -452,7 +452,7 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
 
         do {
             let autoAppendV1 = resolveAutoAppendV1()
-            let accountID = (providerKind == .openAICompatible || providerKind == .openRouter) ? oauthDerivedChatGPTAccountID : nil
+            let accountID = (providerKind == .openAIResponses || providerKind == .openRouter) ? oauthDerivedChatGPTAccountID : nil
             if let editingProvider {
                 _ = try store.updateProviderUsingOAuth(
                     providerID: editingProvider.id,
@@ -633,33 +633,33 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
 
     private func signInButtonTitle() -> String {
         switch providerKind {
-        case .openAICompatible, .openRouter:
+        case .openAIResponses, .openRouter:
             return String(localized: "providers.oauth_form.button.sign_in")
         case .anthropic:
             return String(localized: "providers.oauth_form.button.sign_in_anthropic", defaultValue: "Sign in with Anthropic")
-        case .googleGemini, .xiaomiMiMo:
+        case .openAIChatCompletions, .googleGemini, .xiaomiMiMo:
             return ""
         }
     }
 
     private func oauthFooterText() -> String {
         switch providerKind {
-        case .openAICompatible, .openRouter:
+        case .openAIResponses, .openRouter:
             return String(localized: "providers.oauth_form.footer.oauth")
         case .anthropic:
             return String(localized: "providers.oauth_form.footer.anthropic", defaultValue: "Login opens Anthropic account page. Paste OAuth bearer token below.")
-        case .googleGemini, .xiaomiMiMo:
+        case .openAIChatCompletions, .googleGemini, .xiaomiMiMo:
             return ""
         }
     }
 
     private func oauthLoginURL(for kind: LLMProviderRecord.Kind) -> URL? {
         switch kind {
-        case .openAICompatible, .openRouter:
+        case .openAIResponses, .openRouter:
             return URL(string: "https://auth.openai.com/log-in")
         case .anthropic:
             return URL(string: "https://console.anthropic.com/login")
-        case .googleGemini, .xiaomiMiMo:
+        case .openAIChatCompletions, .googleGemini, .xiaomiMiMo:
             return nil
         }
     }

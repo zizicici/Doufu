@@ -8,7 +8,7 @@
 import Foundation
 
 struct ProjectChatConfiguration {
-    let defaultModel = LLMProviderRecord.Kind.openAICompatible.defaultModelID
+    let defaultModel = LLMProviderRecord.Kind.openAIResponses.defaultModelID
 
     let maxBytesPerCatalogFile = 120_000
     let maxBytesPerContextFile = 65_000

@@ -51,7 +51,7 @@ final class ProviderAuthMethodViewController: UITableViewController, ASWebAuthen
     private let providerKind: LLMProviderRecord.Kind
     private lazy var oauthRows: [OAuthRow] = {
         switch providerKind {
-        case .openAICompatible:
+        case .openAIResponses:
             return [.openAI]
         case .openRouter:
             return [.openRouter]
@@ -69,7 +69,7 @@ final class ProviderAuthMethodViewController: UITableViewController, ASWebAuthen
 
     // MARK: - Lifecycle
 
-    init(providerKind: LLMProviderRecord.Kind = .openAICompatible) {
+    init(providerKind: LLMProviderRecord.Kind = .openAIResponses) {
         self.providerKind = providerKind
         super.init(style: .insetGrouped)
     }
@@ -210,7 +210,7 @@ final class ProviderAuthMethodViewController: UITableViewController, ASWebAuthen
     private func createOpenAIProvider(from payload: OpenAIOAuthService.SignInResult) {
         do {
             let provider = try store.addProviderUsingOAuth(
-                kind: .openAICompatible,
+                kind: .openAIResponses,
                 label: "OpenAI",
                 baseURLString: payload.baseURLString,
                 autoAppendV1: payload.autoAppendV1,

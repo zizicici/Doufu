@@ -109,7 +109,7 @@ struct LLMModelRegistry {
         let key = modelID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let registry: [String: ModelEntry]
         switch providerKind {
-        case .openAICompatible: registry = openAIRegistry
+        case .openAIResponses, .openAIChatCompletions: registry = openAIRegistry
         case .anthropic:        registry = anthropicRegistry
         case .googleGemini:     registry = geminiRegistry
         case .openRouter:       registry = openRouterRegistry
@@ -146,7 +146,7 @@ struct LLMModelRegistry {
         providerKind: LLMProviderRecord.Kind
     ) -> ModelEntry {
         switch providerKind {
-        case .openAICompatible:
+        case .openAIResponses, .openAIChatCompletions:
             return ModelEntry(
                 reasoningEfforts: [],
                 thinkingSupported: false,

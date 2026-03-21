@@ -171,7 +171,7 @@ final class ChatModelSelectionManager {
         providerID: String,
         providerKind: LLMProviderRecord.Kind
     ) -> (supported: [ProjectChatService.ReasoningEffort], defaultEffort: ProjectChatService.ReasoningEffort)? {
-        guard providerKind == .openAICompatible || providerKind == .openRouter else { return nil }
+        guard providerKind == .openAIResponses || providerKind == .openAIChatCompletions || providerKind == .openRouter else { return nil }
         let profile = resolveModelProfile(providerID: providerID, providerKind: providerKind, modelID: modelID)
         let supported = profile.reasoningEfforts
         guard !supported.isEmpty else { return nil }
@@ -226,7 +226,7 @@ final class ChatModelSelectionManager {
         )
 
         switch providerKind {
-        case .openAICompatible, .openRouter:
+        case .openAIResponses, .openAIChatCompletions, .openRouter:
             return ProjectChatService.ModelExecutionOptions(
                 reasoningEffort: reasoningEffort,
                 anthropicThinkingEnabled: true,
@@ -340,7 +340,7 @@ final class ChatModelSelectionManager {
             let capabilities = selectedModel.capabilities
             let selectionKey = selectedModel.id
             switch providerKind {
-            case .openAICompatible, .openRouter:
+            case .openAIResponses, .openAIChatCompletions, .openRouter:
                 guard reasoningProfile(forModelID: selectionKey, providerID: credential.providerID, providerKind: providerKind) != nil else {
                     return providerTitle + " · " + modelTitle
                 }

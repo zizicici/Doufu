@@ -65,7 +65,8 @@ struct LLMProviderModelRecord: Codable, Equatable, Hashable {
 
 struct LLMProviderRecord: Codable, Equatable, Hashable {
     enum Kind: String, Codable {
-        case openAICompatible = "openai_compatible"
+        case openAIResponses = "openai_responses"
+        case openAIChatCompletions = "openai_chat_completions"
         case anthropic
         case googleGemini = "google_gemini"
         case openRouter = "open_router"
@@ -73,8 +74,10 @@ struct LLMProviderRecord: Codable, Equatable, Hashable {
 
         var displayName: String {
             switch self {
-            case .openAICompatible:
-                return String(localized: "providers.kind.openai_compatible.title")
+            case .openAIResponses:
+                return String(localized: "providers.kind.openai_responses.title")
+            case .openAIChatCompletions:
+                return String(localized: "providers.kind.openai_chat_completions.title")
             case .anthropic:
                 return String(localized: "providers.kind.anthropic.title")
             case .googleGemini:
@@ -88,8 +91,10 @@ struct LLMProviderRecord: Codable, Equatable, Hashable {
 
         var subtitle: String {
             switch self {
-            case .openAICompatible:
-                return String(localized: "providers.kind.openai_compatible.subtitle")
+            case .openAIResponses:
+                return String(localized: "providers.kind.openai_responses.subtitle")
+            case .openAIChatCompletions:
+                return String(localized: "providers.kind.openai_chat_completions.subtitle")
             case .anthropic:
                 return String(localized: "providers.kind.anthropic.subtitle")
             case .googleGemini:
@@ -103,7 +108,7 @@ struct LLMProviderRecord: Codable, Equatable, Hashable {
 
         var defaultBaseURLString: String {
             switch self {
-            case .openAICompatible:
+            case .openAIResponses, .openAIChatCompletions:
                 return "https://api.openai.com"
             case .anthropic:
                 return "https://api.anthropic.com/v1"
@@ -118,7 +123,7 @@ struct LLMProviderRecord: Codable, Equatable, Hashable {
 
         var defaultAutoAppendV1: Bool {
             switch self {
-            case .openAICompatible, .openRouter, .xiaomiMiMo:
+            case .openAIResponses, .openAIChatCompletions, .openRouter, .xiaomiMiMo:
                 return true
             case .anthropic, .googleGemini:
                 return false
@@ -127,7 +132,7 @@ struct LLMProviderRecord: Codable, Equatable, Hashable {
 
         var builtInModels: [String] {
             switch self {
-            case .openAICompatible:
+            case .openAIResponses, .openAIChatCompletions:
                 return ["gpt-5.3-codex", "gpt-5.4", "gpt-5.4-pro", "gpt-5-mini"]
             case .anthropic:
                 return ["claude-opus-4-6", "claude-sonnet-4-5", "claude-haiku-4-5"]
@@ -318,7 +323,7 @@ final class LLMProviderSettingsStore {
 
     func loadProviders() -> [LLMProviderRecord] {
         guard let result = try? dbPool.read({ db -> [LLMProviderRecord] in
-            let dbProviders = try DBProvider.order(Column("updated_at").desc).fetchAll(db)
+            let dbProviders = try DBProvider.order(Column("id").asc).fetchAll(db)
             return try dbProviders.map { dbProvider in
                 let dbModels = try DBProviderModel
                     .filter(Column("provider_id") == dbProvider.id)
@@ -364,7 +369,7 @@ final class LLMProviderSettingsStore {
         modelID: String?
     ) throws -> LLMProviderRecord {
         try addProviderUsingAPIKey(
-            kind: .openAICompatible,
+            kind: .openAIResponses,
             label: label,
             apiKey: apiKey,
             baseURLString: baseURLString,
@@ -426,7 +431,7 @@ final class LLMProviderSettingsStore {
         modelID: String?
     ) throws -> LLMProviderRecord {
         try addProviderUsingOAuth(
-            kind: .openAICompatible,
+            kind: .openAIResponses,
             label: label,
             baseURLString: baseURLString,
             autoAppendV1: autoAppendV1,
