@@ -224,21 +224,21 @@ struct LLMModelRegistry {
             structuredOutputSupported: true,
             maxOutputTokens: 128_000, contextWindowTokens: 400_000
         ),
-        // GPT-4.1 family
+        // GPT-4.1 family (non-reasoning models — no reasoning efforts)
         "gpt-4.1": ModelEntry(
-            reasoningEfforts: [.low, .medium, .high, .xhigh],
+            reasoningEfforts: [],
             thinkingSupported: false, thinkingCanDisable: false,
             structuredOutputSupported: true,
             maxOutputTokens: 32_768, contextWindowTokens: 1_047_576
         ),
         "gpt-4.1-mini": ModelEntry(
-            reasoningEfforts: [.low, .medium, .high],
+            reasoningEfforts: [],
             thinkingSupported: false, thinkingCanDisable: false,
             structuredOutputSupported: true,
             maxOutputTokens: 32_768, contextWindowTokens: 1_047_576
         ),
         "gpt-4.1-nano": ModelEntry(
-            reasoningEfforts: [.low, .medium, .high],
+            reasoningEfforts: [],
             thinkingSupported: false, thinkingCanDisable: false,
             structuredOutputSupported: true,
             maxOutputTokens: 32_768, contextWindowTokens: 1_047_576
@@ -256,15 +256,15 @@ struct LLMModelRegistry {
             structuredOutputSupported: true,
             maxOutputTokens: 100_000, contextWindowTokens: 200_000
         ),
-        // GPT-4o
+        // GPT-4o (non-reasoning models — no reasoning efforts)
         "gpt-4o": ModelEntry(
-            reasoningEfforts: [.low, .medium, .high, .xhigh],
+            reasoningEfforts: [],
             thinkingSupported: false, thinkingCanDisable: false,
             structuredOutputSupported: true,
             maxOutputTokens: 16_384, contextWindowTokens: 128_000
         ),
         "gpt-4o-mini": ModelEntry(
-            reasoningEfforts: [.low, .medium, .high],
+            reasoningEfforts: [],
             thinkingSupported: false, thinkingCanDisable: false,
             structuredOutputSupported: true,
             maxOutputTokens: 16_384, contextWindowTokens: 128_000
