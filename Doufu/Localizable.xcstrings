@@ -11009,6 +11009,64 @@
         }
       }
     },
+    "providers.form.footer.default_base_url %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Default Base URL: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "默认 Base URL：%@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "預設 Base URL：%@"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "預設 Base URL：%@"
+          }
+        }
+      }
+    },
+    "providers.form.footer.default_url %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Default: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "默认：%@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "預設：%@"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "預設：%@"
+          }
+        }
+      }
+    },
     "providers.form.placeholder.base_url" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -11788,6 +11846,93 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "請先登入成功，或直接填寫 Bearer Token。"
+          }
+        }
+      }
+    },
+    "providers.oauth_form.error.login_url_unavailable" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OAuth login URL unavailable."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OAuth 登录地址不可用。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OAuth 登入網址不可用。"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OAuth 登入網址不可用。"
+          }
+        }
+      }
+    },
+    "providers.oauth_form.footer.anthropic" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Login opens Anthropic account page. Paste OAuth bearer token below."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "登录后将打开 Anthropic 帐户页面，请将 OAuth Bearer Token 粘贴至下方。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "登入後將開啟 Anthropic 帳戶頁面，請將 OAuth Bearer Token 貼到下方。"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "登入後將開啟 Anthropic 帳戶頁面，請將 OAuth Bearer Token 貼到下方。"
+          }
+        }
+      }
+    },
+    "providers.oauth_form.button.sign_in_anthropic" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sign in with Anthropic"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用 Anthropic 登录"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用 Anthropic 登入"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用 Anthropic 登入"
           }
         }
       }

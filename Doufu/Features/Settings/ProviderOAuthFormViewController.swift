@@ -164,7 +164,7 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
         case .oauth:
             return oauthFooterText()
         case .manual:
-            return "Default Base URL: \(providerKind.defaultBaseURLString)"
+            return String(localized: "providers.form.footer.default_base_url \(providerKind.defaultBaseURLString)")
         default:
             return nil
         }
@@ -413,7 +413,7 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
             signInWithOpenAIOAuth()
         case .anthropic:
             guard let loginURL = oauthLoginURL(for: providerKind) else {
-                showError(message: "OAuth login URL unavailable.")
+                showError(message: String(localized: "providers.oauth_form.error.login_url_unavailable", defaultValue: "OAuth login URL unavailable."))
                 return
             }
             let safariController = SFSafariViewController(url: loginURL)
@@ -636,7 +636,7 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
         case .openAICompatible, .openRouter:
             return String(localized: "providers.oauth_form.button.sign_in")
         case .anthropic:
-            return "Sign in with Anthropic"
+            return String(localized: "providers.oauth_form.button.sign_in_anthropic", defaultValue: "Sign in with Anthropic")
         case .googleGemini, .xiaomiMiMo:
             return ""
         }
@@ -647,7 +647,7 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
         case .openAICompatible, .openRouter:
             return String(localized: "providers.oauth_form.footer.oauth")
         case .anthropic:
-            return "Login opens Anthropic account page. Paste OAuth bearer token below."
+            return String(localized: "providers.oauth_form.footer.anthropic", defaultValue: "Login opens Anthropic account page. Paste OAuth bearer token below.")
         case .googleGemini, .xiaomiMiMo:
             return ""
         }

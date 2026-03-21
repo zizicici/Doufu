@@ -156,7 +156,7 @@ final class ProviderAPIKeyFormViewController: UITableViewController {
 
         switch section {
         case .customAPI:
-            return "Default: \(providerKind.defaultBaseURLString)"
+            return String(localized: "providers.form.footer.default_url \(providerKind.defaultBaseURLString)")
         default:
             return nil
         }
