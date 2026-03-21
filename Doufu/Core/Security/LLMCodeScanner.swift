@@ -273,7 +273,7 @@ nonisolated final class LLMCodeScanner {
             return ScanResult(
                 findings: [],
                 summary: String(localized: "scan.llm.parse_failed", defaultValue: "Failed to parse AI response."),
-                riskLevel: .low
+                riskLevel: .high
             )
         }
 
@@ -294,7 +294,7 @@ nonisolated final class LLMCodeScanner {
             return ScanResult(
                 findings: [],
                 summary: String(localized: "scan.llm.parse_failed", defaultValue: "Failed to parse AI response."),
-                riskLevel: .low
+                riskLevel: .high
             )
         }
 
