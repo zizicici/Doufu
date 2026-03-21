@@ -448,10 +448,18 @@ struct GeminiToolUseRequest: Encodable {
 
     struct GenerationConfig: Encodable {
         struct ThinkingConfig: Encodable {
-            let thinkingBudget: Int
+            let thinkingBudget: Int?
+            let thinkingLevel: String?
+
+            func encode(to encoder: Encoder) throws {
+                var container = encoder.container(keyedBy: CodingKeys.self)
+                try container.encodeIfPresent(thinkingBudget, forKey: .thinkingBudget)
+                try container.encodeIfPresent(thinkingLevel, forKey: .thinkingLevel)
+            }
 
             private enum CodingKeys: String, CodingKey {
                 case thinkingBudget = "thinking_budget"
+                case thinkingLevel = "thinking_level"
             }
         }
 
@@ -470,18 +478,18 @@ struct GeminiTextPart: Encodable {
 
 enum GeminiPart: Encodable {
     case text(String)
-    case functionCall(name: String, args: JSONValue)
-    case functionResponse(name: String, response: JSONValue)
+    case functionCall(id: String?, name: String, args: JSONValue)
+    case functionResponse(id: String?, name: String, response: JSONValue)
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         switch self {
         case let .text(text):
             try container.encode(text, forKey: .text)
-        case let .functionCall(name, args):
-            try container.encode(FunctionCallPayload(name: name, args: args), forKey: .functionCall)
-        case let .functionResponse(name, response):
-            try container.encode(FunctionResponsePayload(name: name, response: response), forKey: .functionResponse)
+        case let .functionCall(id, name, args):
+            try container.encode(FunctionCallPayload(id: id, name: name, args: args), forKey: .functionCall)
+        case let .functionResponse(id, name, response):
+            try container.encode(FunctionResponsePayload(id: id, name: name, response: response), forKey: .functionResponse)
         }
     }
 
@@ -490,13 +498,29 @@ enum GeminiPart: Encodable {
     }
 
     private struct FunctionCallPayload: Encodable {
+        let id: String?
         let name: String
         let args: JSONValue
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encodeIfPresent(id, forKey: .id)
+            try container.encode(name, forKey: .name)
+            try container.encode(args, forKey: .args)
+        }
+        private enum CodingKeys: String, CodingKey { case id, name, args }
     }
 
     private struct FunctionResponsePayload: Encodable {
+        let id: String?
         let name: String
         let response: JSONValue
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encodeIfPresent(id, forKey: .id)
+            try container.encode(name, forKey: .name)
+            try container.encode(response, forKey: .response)
+        }
+        private enum CodingKeys: String, CodingKey { case id, name, response }
     }
 }
 

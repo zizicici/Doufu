@@ -87,6 +87,7 @@ final class LLMProviderModelDiscoveryService {
         }
 
         let models: [Model]
+        let nextPageToken: String?
     }
 
     private let decoder = JSONDecoder()
@@ -281,25 +282,46 @@ final class LLMProviderModelDiscoveryService {
         for provider: LLMProviderRecord,
         bearerToken: String
     ) async throws -> [LLMProviderModelRecord] {
-        var components = try buildURLComponents(baseURLString: provider.effectiveBaseURLString, path: "models")
-        if provider.authMode == .apiKey {
-            components.queryItems = (components.queryItems ?? []) + [URLQueryItem(name: "key", value: bearerToken)]
-        }
-        guard let url = components.url else {
-            throw LLMProviderSettingsStoreError.invalidBaseURL
+        var allModels: [GeminiModelsResponse.Model] = []
+        var pageToken: String?
+
+        // Paginate through all models (default pageSize is 50).
+        while true {
+            var components = try buildURLComponents(baseURLString: provider.effectiveBaseURLString, path: "models")
+            var queryItems = components.queryItems ?? []
+            if provider.authMode == .apiKey {
+                queryItems.removeAll { $0.name == "key" }
+                queryItems.append(URLQueryItem(name: "key", value: bearerToken))
+            }
+            queryItems.append(URLQueryItem(name: "pageSize", value: "50"))
+            if let pageToken {
+                queryItems.append(URLQueryItem(name: "pageToken", value: pageToken))
+            }
+            components.queryItems = queryItems
+            guard let url = components.url else {
+                throw LLMProviderSettingsStoreError.invalidBaseURL
+            }
+
+            var request = URLRequest(url: url)
+            request.httpMethod = "GET"
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            if provider.authMode == .oauth {
+                request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")
+            }
+
+            let (data, response) = try await URLSession.shared.data(for: request)
+            try validate(response: response, data: data)
+            let payload = try decoder.decode(GeminiModelsResponse.self, from: data)
+            allModels.append(contentsOf: payload.models)
+
+            if let nextToken = payload.nextPageToken, !nextToken.isEmpty {
+                pageToken = nextToken
+            } else {
+                break
+            }
         }
 
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        if provider.authMode == .oauth {
-            request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")
-        }
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-        try validate(response: response, data: data)
-        let payload = try decoder.decode(GeminiModelsResponse.self, from: data)
-        return payload.models.compactMap { model in
+        return allModels.compactMap { model in
             let generationMethods = model.supportedGenerationMethods ?? []
             guard generationMethods.isEmpty || generationMethods.contains("generateContent") else {
                 return nil

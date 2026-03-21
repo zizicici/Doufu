@@ -37,21 +37,18 @@ final class GeminiProvider: LLMProviderAdapter {
     ) async throws -> String {
         let timeoutSeconds = LLMProviderHelpers.timeoutSeconds(for: initialReasoningEffort, configuration: configuration)
         let apiKey: String? = credential.authMode == .apiKey ? credential.bearerToken : nil
-        guard let url = buildGenerateContentURL(baseURL: credential.baseURL, model: model, apiKey: apiKey) else {
+        guard let url = buildStreamURL(baseURL: credential.baseURL, model: model, apiKey: apiKey) else {
             throw ProjectChatService.ServiceError.networkFailed(String(localized: "llm.error.invalid_gemini_url"))
         }
 
-        var includeThinkingConfig = true
-        let requestedThinkingBudget = executionOptions.geminiThinkingEnabled
-            ? configuration.geminiThinkingBudget(effort: initialReasoningEffort)
-            : 0
+        var includeThinkingConfig = executionOptions.geminiThinkingEnabled
 
         while true {
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
             request.timeoutInterval = timeoutSeconds
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
             if credential.authMode == .oauth {
                 request.setValue("Bearer \(credential.bearerToken)", forHTTPHeaderField: "Authorization")
             }
@@ -73,16 +70,17 @@ final class GeminiProvider: LLMProviderAdapter {
                     responseMimeType: responseFormat == nil ? nil : "application/json",
                     responseJsonSchema: geminiResponseJSONSchema(from: responseFormat),
                     thinkingConfig: includeThinkingConfig
-                        ? .init(thinkingBudget: requestedThinkingBudget) : nil
+                        ? geminiThinkingConfig(model: model, effort: initialReasoningEffort) : nil
                 )
             )
             request.httpBody = try jsonEncoder.encode(requestBody)
 
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (bytes, response) = try await URLSession.shared.bytes(for: request)
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw ProjectChatService.ServiceError.networkFailed(String(localized: "llm.error.invalid_response"))
             }
             guard (200...299).contains(httpResponse.statusCode) else {
+                let data = try await LLMProviderHelpers.consumeStreamBytes(bytes: bytes)
                 if includeThinkingConfig, LLMProviderHelpers.shouldFallbackThinkingConfiguration(responseBodyData: data) {
                     includeThinkingConfig = false
                     continue
@@ -96,18 +94,17 @@ final class GeminiProvider: LLMProviderAdapter {
                 throw ProjectChatService.ServiceError.networkFailed(String(format: String(localized: "llm.error.request_failed_format"), message))
             }
 
-            guard let decoded = try? jsonDecoder.decode(GeminiGenerateContentResponse.self, from: data) else {
-                throw ProjectChatService.ServiceError.invalidResponse
-            }
-            let finalResponseText = extractGeminiText(from: decoded)
-            guard !finalResponseText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            let result = try await consumeStreamingResponse(
+                bytes: bytes, timeoutSeconds: timeoutSeconds,
+                onStreamedText: onStreamedText
+            )
+
+            guard !result.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 throw ProjectChatService.ServiceError.invalidResponse
             }
 
-            if let onStreamedText { onStreamedText(finalResponseText) }
-
-            onUsage?(decoded.usageMetadata?.promptTokenCount, geminiOutputTokenCount(from: decoded.usageMetadata))
-            return finalResponseText
+            onUsage?(result.inputTokens, result.outputTokens)
+            return result.text
         }
     }
 
@@ -128,7 +125,7 @@ final class GeminiProvider: LLMProviderAdapter {
         let timeoutSeconds = LLMProviderHelpers.timeoutSeconds(for: effort, configuration: configuration)
         let apiKey: String? = credential.authMode == .apiKey ? credential.bearerToken : nil
 
-        guard let url = buildGenerateContentURL(baseURL: credential.baseURL, model: model, apiKey: apiKey) else {
+        guard let url = buildStreamURL(baseURL: credential.baseURL, model: model, apiKey: apiKey) else {
             throw ProjectChatService.ServiceError.networkFailed("Invalid Gemini URL")
         }
 
@@ -141,129 +138,202 @@ final class GeminiProvider: LLMProviderAdapter {
             )
         }
 
-        var requestBody = GeminiToolUseRequest(
-            contents: contents,
-            tools: [GeminiToolUseRequest.ToolDeclarations(functionDeclarations: funcDeclarations)],
-            systemInstruction: GeminiToolUseRequest.SystemInstruction(parts: [GeminiTextPart(text: systemInstruction)]),
-            generationConfig: executionOptions.geminiThinkingEnabled
-                ? GeminiToolUseRequest.GenerationConfig(
-                    thinkingConfig: .init(thinkingBudget: configuration.geminiThinkingBudget(effort: effort))
-                )
-                : nil
-        )
+        var includeThinking = executionOptions.geminiThinkingEnabled
 
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.timeoutInterval = timeoutSeconds
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if credential.authMode == .oauth {
-            request.setValue("Bearer \(credential.bearerToken)", forHTTPHeaderField: "Authorization")
-        }
-        request.httpBody = try jsonEncoder.encode(requestBody)
+        while true {
+            let requestBody = GeminiToolUseRequest(
+                contents: contents,
+                tools: [GeminiToolUseRequest.ToolDeclarations(functionDeclarations: funcDeclarations)],
+                systemInstruction: GeminiToolUseRequest.SystemInstruction(parts: [GeminiTextPart(text: systemInstruction)]),
+                generationConfig: includeThinking
+                    ? GeminiToolUseRequest.GenerationConfig(
+                        thinkingConfig: geminiToolUseThinkingConfig(model: model, effort: effort)
+                    )
+                    : nil
+            )
 
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw ProjectChatService.ServiceError.networkFailed("Invalid response")
-        }
-
-        if !(200...299).contains(httpResponse.statusCode) {
-            if executionOptions.geminiThinkingEnabled,
-               LLMProviderHelpers.shouldFallbackThinkingConfiguration(responseBodyData: data) {
-                requestBody = GeminiToolUseRequest(
-                    contents: contents,
-                    tools: [GeminiToolUseRequest.ToolDeclarations(functionDeclarations: funcDeclarations)],
-                    systemInstruction: GeminiToolUseRequest.SystemInstruction(parts: [GeminiTextPart(text: systemInstruction)]),
-                    generationConfig: nil
-                )
-                request.httpBody = try jsonEncoder.encode(requestBody)
-                let (retryData, retryResponse) = try await URLSession.shared.data(for: request)
-                guard let retryHTTP = retryResponse as? HTTPURLResponse,
-                      (200...299).contains(retryHTTP.statusCode) else {
-                    let msg = LLMProviderHelpers.parseErrorMessage(from: retryData) ?? "Request failed"
-                    throw ProjectChatService.ServiceError.networkFailed(msg)
-                }
-                return try await parseToolResponse(
-                    data: retryData, model: model, credential: credential,
-                    projectUsageIdentifier: projectUsageIdentifier,
-                    onStreamedText: onStreamedText, onUsage: onUsage
-                )
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.timeoutInterval = timeoutSeconds
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+            if credential.authMode == .oauth {
+                request.setValue("Bearer \(credential.bearerToken)", forHTTPHeaderField: "Authorization")
             }
-            let message = LLMProviderHelpers.parseErrorMessage(from: data)
-                ?? HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
-            throw ProjectChatService.ServiceError.networkFailed(message)
-        }
+            request.httpBody = try jsonEncoder.encode(requestBody)
 
-        return try await parseToolResponse(
-            data: data, model: model, credential: credential,
-            projectUsageIdentifier: projectUsageIdentifier,
-            onStreamedText: onStreamedText, onUsage: onUsage
-        )
+            let (bytes, response) = try await URLSession.shared.bytes(for: request)
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw ProjectChatService.ServiceError.networkFailed("Invalid response")
+            }
+
+            if !(200...299).contains(httpResponse.statusCode) {
+                let data = try await LLMProviderHelpers.consumeStreamBytes(bytes: bytes)
+                if includeThinking,
+                   LLMProviderHelpers.shouldFallbackThinkingConfiguration(responseBodyData: data) {
+                    includeThinking = false
+                    continue
+                }
+                let message = LLMProviderHelpers.parseErrorMessage(from: data)
+                    ?? HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
+                throw ProjectChatService.ServiceError.networkFailed(message)
+            }
+
+            return try await consumeToolUseStream(
+                bytes: bytes, timeoutSeconds: timeoutSeconds,
+                onStreamedText: onStreamedText, onUsage: onUsage
+            )
+        }
     }
 
-    // MARK: - Parse Tool Response
+    // MARK: - SSE Stream Consumer (non-tool-use)
 
-    private func parseToolResponse(
-        data: Data,
-        model: String,
-        credential: ProjectChatService.ProviderCredential,
-        projectUsageIdentifier: String?,
+    private struct StreamingResult {
+        let text: String
+        let inputTokens: Int?
+        let outputTokens: Int?
+    }
+
+    private func consumeStreamingResponse(
+        bytes: URLSession.AsyncBytes,
+        timeoutSeconds: TimeInterval,
+        onStreamedText: (@MainActor (String) -> Void)?
+    ) async throws -> StreamingResult {
+        try await LLMProviderHelpers.withStreamTimeout(seconds: timeoutSeconds + configuration.streamCompletionGraceSeconds) {
+            var streamedText = ""
+            var inputTokens: Int?
+            var outputTokens: Int?
+
+            for try await rawLine in bytes.lines {
+                let line = rawLine.trimmingCharacters(in: .newlines)
+                guard line.hasPrefix("data:") else { continue }
+                var dataLine = String(line.dropFirst(5))
+                if dataLine.hasPrefix(" ") { dataLine.removeFirst() }
+                let trimmed = dataLine.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { continue }
+
+                guard let eventData = trimmed.data(using: .utf8),
+                      let chunk = try? JSONSerialization.jsonObject(with: eventData) as? [String: Any]
+                else { continue }
+
+                // Extract text from candidates[0].content.parts
+                if let candidates = chunk["candidates"] as? [[String: Any]],
+                   let firstCandidate = candidates.first,
+                   let content = firstCandidate["content"] as? [String: Any],
+                   let parts = content["parts"] as? [[String: Any]] {
+                    for part in parts {
+                        if let text = part["text"] as? String, !text.isEmpty {
+                            streamedText.append(text)
+                            if let onStreamedText { onStreamedText(streamedText) }
+                        }
+                    }
+                }
+
+                // Extract usage metadata from the chunk (typically in the last chunk)
+                if let usage = chunk["usageMetadata"] as? [String: Any] {
+                    if let prompt = usage["promptTokenCount"] as? Int { inputTokens = prompt }
+                    let candidates = usage["candidatesTokenCount"] as? Int ?? 0
+                    let thoughts = usage["thoughtsTokenCount"] as? Int ?? 0
+                    if usage["candidatesTokenCount"] != nil || usage["thoughtsTokenCount"] != nil {
+                        outputTokens = candidates + thoughts
+                    }
+                }
+            }
+
+            return StreamingResult(text: streamedText, inputTokens: inputTokens, outputTokens: outputTokens)
+        }
+    }
+
+    // MARK: - SSE Stream Consumer (tool use)
+
+    private func consumeToolUseStream(
+        bytes: URLSession.AsyncBytes,
+        timeoutSeconds: TimeInterval,
         onStreamedText: (@MainActor (String) -> Void)?,
         onUsage: ((Int?, Int?) -> Void)?
     ) async throws -> AgentLLMResponse {
-        guard let decoded = try? jsonDecoder.decode(GeminiToolUseResponse.self, from: data) else {
-            throw ProjectChatService.ServiceError.invalidResponse
-        }
+        try await LLMProviderHelpers.withStreamTimeout(seconds: timeoutSeconds + configuration.streamCompletionGraceSeconds) {
+            var streamedText = ""
+            var toolCalls: [AgentToolCall] = []
+            var inputTokens: Int?
+            var outputTokens: Int?
+            var finishReason: String?
 
-        let inputTokens = decoded.usageMetadata?.promptTokenCount
-        let candidates = decoded.usageMetadata?.candidatesTokenCount ?? 0
-        let thoughts = decoded.usageMetadata?.thoughtsTokenCount ?? 0
-        let outputTokens = (decoded.usageMetadata?.candidatesTokenCount != nil || decoded.usageMetadata?.thoughtsTokenCount != nil)
-            ? candidates + thoughts : nil
+            for try await rawLine in bytes.lines {
+                let line = rawLine.trimmingCharacters(in: .newlines)
+                guard line.hasPrefix("data:") else { continue }
+                var dataLine = String(line.dropFirst(5))
+                if dataLine.hasPrefix(" ") { dataLine.removeFirst() }
+                let trimmed = dataLine.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { continue }
 
-        onUsage?(inputTokens, outputTokens)
+                guard let eventData = trimmed.data(using: .utf8),
+                      let chunk = try? JSONSerialization.jsonObject(with: eventData) as? [String: Any]
+                else { continue }
 
-        let usage = ResponsesUsage(
-            inputTokens: inputTokens, outputTokens: outputTokens,
-            totalTokens: (inputTokens ?? 0) + (outputTokens ?? 0),
-            inputTokensDetails: nil, outputTokensDetails: nil
-        )
+                if let candidates = chunk["candidates"] as? [[String: Any]],
+                   let firstCandidate = candidates.first {
+                    // Capture finish reason
+                    if let reason = firstCandidate["finishReason"] as? String {
+                        finishReason = reason
+                    }
 
-        guard let firstCandidate = decoded.candidates?.first,
-              let parts = firstCandidate.content?.parts
-        else {
-            throw ProjectChatService.ServiceError.invalidResponse
-        }
-
-        var textContent = ""
-        var toolCalls: [AgentToolCall] = []
-
-        for part in parts {
-            if let text = part.text { textContent += text }
-            if let funcCall = part.functionCall {
-                let name = funcCall.name ?? ""
-                var argumentsJSON = "{}"
-                if let argsObj = funcCall.args?.value,
-                   JSONSerialization.isValidJSONObject(argsObj),
-                   let jsonData = try? JSONSerialization.data(withJSONObject: argsObj) {
-                    argumentsJSON = String(data: jsonData, encoding: .utf8) ?? "{}"
+                    if let content = firstCandidate["content"] as? [String: Any],
+                       let parts = content["parts"] as? [[String: Any]] {
+                        for part in parts {
+                            if let text = part["text"] as? String, !text.isEmpty {
+                                streamedText.append(text)
+                                if let onStreamedText { onStreamedText(streamedText) }
+                            }
+                            if let funcCall = part["functionCall"] as? [String: Any] {
+                                let name = funcCall["name"] as? String ?? ""
+                                // Use Gemini-provided ID when available (Gemini 3+),
+                                // fall back to UUID for older models.
+                                let callID = funcCall["id"] as? String ?? UUID().uuidString
+                                var argumentsJSON = "{}"
+                                if let args = funcCall["args"],
+                                   JSONSerialization.isValidJSONObject(args),
+                                   let jsonData = try? JSONSerialization.data(withJSONObject: args) {
+                                    argumentsJSON = String(data: jsonData, encoding: .utf8) ?? "{}"
+                                }
+                                toolCalls.append(AgentToolCall(id: callID, name: name, argumentsJSON: argumentsJSON))
+                            }
+                        }
+                    }
                 }
-                toolCalls.append(AgentToolCall(id: UUID().uuidString, name: name, argumentsJSON: argumentsJSON))
+
+                if let usage = chunk["usageMetadata"] as? [String: Any] {
+                    if let prompt = usage["promptTokenCount"] as? Int { inputTokens = prompt }
+                    let candidates = usage["candidatesTokenCount"] as? Int ?? 0
+                    let thoughts = usage["thoughtsTokenCount"] as? Int ?? 0
+                    if usage["candidatesTokenCount"] != nil || usage["thoughtsTokenCount"] != nil {
+                        outputTokens = candidates + thoughts
+                    }
+                }
             }
-        }
 
-        if let onStreamedText, !textContent.isEmpty {
-            onStreamedText(textContent)
-        }
+            onUsage?(inputTokens, outputTokens)
 
-        let stopReason: AgentStopReason
-        if !toolCalls.isEmpty {
-            stopReason = .toolUse
-        } else if firstCandidate.finishReason == "MAX_TOKENS" {
-            stopReason = .maxTokens
-        } else {
-            stopReason = .endTurn
+            let usage = ResponsesUsage(
+                inputTokens: inputTokens, outputTokens: outputTokens,
+                totalTokens: (inputTokens ?? 0) + (outputTokens ?? 0),
+                inputTokensDetails: nil, outputTokensDetails: nil
+            )
+
+            let stopReason: AgentStopReason
+            if !toolCalls.isEmpty {
+                stopReason = .toolUse
+            } else if finishReason == "MAX_TOKENS" {
+                stopReason = .maxTokens
+            } else {
+                stopReason = .endTurn
+            }
+
+            return AgentLLMResponse(
+                textContent: streamedText, toolCalls: toolCalls,
+                usage: usage, stopReason: stopReason, thinkingContent: nil
+            )
         }
-        return AgentLLMResponse(textContent: textContent, toolCalls: toolCalls, usage: usage, stopReason: stopReason, thinkingContent: nil)
     }
 
     // MARK: - Build Contents
@@ -281,15 +351,15 @@ final class GeminiProvider: LLMProviderAdapter {
                 if !msg.text.isEmpty { parts.append(.text(msg.text)) }
                 for tc in msg.toolCalls {
                     let argsValue = LLMProviderHelpers.parseJSONToJSONValue(tc.argumentsJSON)
-                    parts.append(.functionCall(name: tc.name, args: argsValue))
+                    parts.append(.functionCall(id: tc.id, name: tc.name, args: argsValue))
                 }
                 if !parts.isEmpty {
                     contents.append(GeminiToolUseRequest.Content(role: "model", parts: parts))
                 }
-            case let .toolResult(_, name, content, _):
+            case let .toolResult(callID, name, content, _):
                 contents.append(GeminiToolUseRequest.Content(
                     role: "user",
-                    parts: [.functionResponse(name: name, response: .object(["result": .string(content)]))]
+                    parts: [.functionResponse(id: callID, name: name, response: .object(["result": .string(content)]))]
                 ))
             }
         }
@@ -298,52 +368,69 @@ final class GeminiProvider: LLMProviderAdapter {
 
     // MARK: - Helpers
 
-    private func buildGenerateContentURL(baseURL: URL, model: String, apiKey: String?) -> URL? {
+    /// Builds a streaming URL: `models/{model}:streamGenerateContent?alt=sse`
+    private func buildStreamURL(baseURL: URL, model: String, apiKey: String?) -> URL? {
         guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else { return nil }
         let normalizedBasePath = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        let modelPath = "models/\(model):generateContent"
+        let modelPath = "models/\(model):streamGenerateContent"
         components.path = normalizedBasePath.isEmpty
             ? "/" + modelPath
             : "/" + normalizedBasePath + "/" + modelPath
+        var queryItems = components.queryItems ?? []
+        queryItems.removeAll { $0.name == "alt" }
+        queryItems.append(URLQueryItem(name: "alt", value: "sse"))
         if let apiKey {
             let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmedKey.isEmpty {
-                var queryItems = components.queryItems ?? []
                 queryItems.removeAll { $0.name == "key" }
                 queryItems.append(URLQueryItem(name: "key", value: trimmedKey))
-                components.queryItems = queryItems
             }
         }
+        components.queryItems = queryItems
         return components.url
     }
 
+    // MARK: - Thinking Config
 
+    /// Returns a thinking config appropriate for the model.
+    /// Gemini 2.5 uses `thinkingBudget` (integer tokens).
+    /// Gemini 3+ uses `thinkingLevel` (LOW/MEDIUM/HIGH).
+    /// The two parameters CANNOT be sent together — we detect the model
+    /// generation and send only the appropriate one.
+    private func geminiThinkingConfig(model: String, effort: ProjectChatService.ReasoningEffort) -> GeminiGenerateContentRequest.GenerationConfig.ThinkingConfig {
+        if usesThinkingLevel(model: model) {
+            return .init(thinkingBudget: nil, thinkingLevel: geminiThinkingLevel(for: effort))
+        }
+        return .init(thinkingBudget: configuration.geminiThinkingBudget(effort: effort), thinkingLevel: nil)
+    }
+
+    private func geminiToolUseThinkingConfig(model: String, effort: ProjectChatService.ReasoningEffort) -> GeminiToolUseRequest.GenerationConfig.ThinkingConfig {
+        if usesThinkingLevel(model: model) {
+            return .init(thinkingBudget: nil, thinkingLevel: geminiThinkingLevel(for: effort))
+        }
+        return .init(thinkingBudget: configuration.geminiThinkingBudget(effort: effort), thinkingLevel: nil)
+    }
+
+    /// Gemini 3+ models use `thinkingLevel`; Gemini 2.5 uses `thinkingBudget`.
+    private func usesThinkingLevel(model: String) -> Bool {
+        // Gemini 3.x models: "gemini-3", "gemini-3.1-pro", etc.
+        return model.lowercased().hasPrefix("gemini-3")
+    }
+
+    private func geminiThinkingLevel(for effort: ProjectChatService.ReasoningEffort) -> String {
+        switch effort {
+        case .low:    return "LOW"
+        case .medium: return "MEDIUM"
+        case .high:   return "HIGH"
+        case .xhigh:  return "HIGH"
+        }
+    }
 
     private func geminiResponseJSONSchema(from format: ResponsesTextFormat?) -> JSONValue? {
         guard let format else { return nil }
         let normalizedType = format.type.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard normalizedType == "json_schema" else { return nil }
         return format.schema
-    }
-
-    private func geminiOutputTokenCount(from usage: GeminiGenerateContentResponse.UsageMetadata?) -> Int? {
-        guard let usage else { return nil }
-        let candidates = usage.candidatesTokenCount ?? 0
-        let thoughts = usage.thoughtsTokenCount ?? 0
-        if usage.candidatesTokenCount == nil, usage.thoughtsTokenCount == nil { return nil }
-        return candidates + thoughts
-    }
-
-    private func extractGeminiText(from response: GeminiGenerateContentResponse) -> String {
-        (response.candidates ?? [])
-            .compactMap { candidate -> String? in
-                let text = (candidate.content?.parts ?? [])
-                    .compactMap { $0.text?.trimmingCharacters(in: .whitespacesAndNewlines) }
-                    .filter { !$0.isEmpty }
-                    .joined(separator: "\n")
-                return text.isEmpty ? nil : text
-            }
-            .joined(separator: "\n")
     }
 
     private func convertSchemaToGeminiFormat(_ schema: JSONValue) -> JSONValue {
@@ -380,8 +467,17 @@ final class GeminiProvider: LLMProviderAdapter {
         }
         struct GenerationConfig: Encodable {
             struct ThinkingConfig: Encodable {
-                let thinkingBudget: Int
-                private enum CodingKeys: String, CodingKey { case thinkingBudget = "thinking_budget" }
+                let thinkingBudget: Int?
+                let thinkingLevel: String?
+                func encode(to encoder: Encoder) throws {
+                    var container = encoder.container(keyedBy: CodingKeys.self)
+                    try container.encodeIfPresent(thinkingBudget, forKey: .thinkingBudget)
+                    try container.encodeIfPresent(thinkingLevel, forKey: .thinkingLevel)
+                }
+                private enum CodingKeys: String, CodingKey {
+                    case thinkingBudget = "thinking_budget"
+                    case thinkingLevel = "thinking_level"
+                }
             }
             let responseMimeType: String?
             let responseJsonSchema: JSONValue?
@@ -400,22 +496,5 @@ final class GeminiProvider: LLMProviderAdapter {
             case contents
             case generationConfig = "generation_config"
         }
-    }
-
-    private struct GeminiGenerateContentResponse: Decodable {
-        struct Candidate: Decodable {
-            struct Content: Decodable {
-                struct Part: Decodable { let text: String? }
-                let parts: [Part]?
-            }
-            let content: Content?
-        }
-        struct UsageMetadata: Decodable {
-            let promptTokenCount: Int?
-            let candidatesTokenCount: Int?
-            let thoughtsTokenCount: Int?
-        }
-        let candidates: [Candidate]?
-        let usageMetadata: UsageMetadata?
     }
 }
