@@ -258,8 +258,16 @@ struct AgentLLMResponse {
     let thinkingContent: String?
 }
 
+struct AssistantMessage {
+    let text: String
+    let toolCalls: [AgentToolCall]
+    /// Provider-specific thinking/reasoning content (e.g. MiMo reasoning_content).
+    /// Stored so it can be sent back in subsequent multi-turn requests.
+    var thinkingContent: String?
+}
+
 enum AgentConversationItem {
     case userMessage(String)
-    case assistantMessage(text: String, toolCalls: [AgentToolCall])
+    case assistantMessage(AssistantMessage)
     case toolResult(callID: String, name: String, content: String, isError: Bool)
 }

@@ -158,11 +158,11 @@ final class OpenRouterProvider: LLMProviderAdapter {
             switch item {
             case let .userMessage(text):
                 messages.append(.user(content: text))
-            case let .assistantMessage(text, toolCalls):
-                let calls = toolCalls.map { tc in
+            case let .assistantMessage(msg):
+                let calls = msg.toolCalls.map { tc in
                     OpenRouterToolCall(id: tc.id, name: tc.name, arguments: tc.argumentsJSON)
                 }
-                messages.append(.assistant(content: text, toolCalls: calls.isEmpty ? nil : calls))
+                messages.append(.assistant(content: msg.text, toolCalls: calls.isEmpty ? nil : calls))
             case let .toolResult(callID, _, content, _):
                 messages.append(.tool(toolCallID: callID, content: content))
             }

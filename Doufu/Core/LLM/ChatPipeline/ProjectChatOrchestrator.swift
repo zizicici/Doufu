@@ -187,7 +187,7 @@ final class ProjectChatOrchestrator {
 
                 // Auto-continue on max_tokens truncation
                 if response.stopReason == .maxTokens {
-                    state.conversation.append(.assistantMessage(text: responseText, toolCalls: []))
+                    state.conversation.append(.assistantMessage(AssistantMessage(text: responseText, toolCalls: [], thinkingContent: response.thinkingContent)))
                     state.conversation.append(.userMessage("Please continue from where you left off."))
                     LLMProviderHelpers.debugLog("[Doufu Agent] response truncated (max_tokens), requesting continuation")
                     continue
@@ -217,7 +217,7 @@ final class ProjectChatOrchestrator {
                 }
             }
 
-            state.conversation.append(.assistantMessage(text: responseText, toolCalls: response.toolCalls))
+            state.conversation.append(.assistantMessage(AssistantMessage(text: responseText, toolCalls: response.toolCalls, thinkingContent: response.thinkingContent)))
 
             try await executeToolCalls(
                 response.toolCalls,
@@ -300,7 +300,7 @@ final class ProjectChatOrchestrator {
             if role == "user" {
                 conversation.append(.userMessage(text))
             } else if role == "assistant" {
-                conversation.append(.assistantMessage(text: text, toolCalls: []))
+                conversation.append(.assistantMessage(AssistantMessage(text: text, toolCalls: [])))
             }
         }
 
@@ -858,8 +858,8 @@ final class ProjectChatOrchestrator {
         switch item {
         case let .userMessage(text):
             return text.count
-        case let .assistantMessage(text, toolCalls):
-            return text.count + toolCalls.reduce(0) { $0 + $1.argumentsJSON.count }
+        case let .assistantMessage(msg):
+            return msg.text.count + msg.toolCalls.reduce(0) { $0 + $1.argumentsJSON.count }
         case let .toolResult(_, _, content, _):
             return content.count
         }

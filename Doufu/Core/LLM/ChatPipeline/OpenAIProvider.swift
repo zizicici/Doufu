@@ -437,14 +437,14 @@ final class OpenAIProvider: LLMProviderAdapter {
                     role: "user",
                     content: [OpenAIToolUseContent(type: "input_text", text: text)]
                 )))
-            case let .assistantMessage(text, toolCalls):
-                if !text.isEmpty {
+            case let .assistantMessage(msg):
+                if !msg.text.isEmpty {
                     result.append(.message(OpenAIToolUseMessage(
                         role: "assistant",
-                        content: [OpenAIToolUseContent(type: "output_text", text: text)]
+                        content: [OpenAIToolUseContent(type: "output_text", text: msg.text)]
                     )))
                 }
-                for tc in toolCalls {
+                for tc in msg.toolCalls {
                     result.append(.functionCall(OpenAIFunctionCallItem(
                         callID: tc.id, name: tc.name, arguments: tc.argumentsJSON
                     )))

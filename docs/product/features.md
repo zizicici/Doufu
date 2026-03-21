@@ -26,10 +26,12 @@
    - 文件内容页支持编辑和保存。
    - 集成 `Runestone`（可用时）并按后缀自动语法高亮。
 5. Provider 管理
-   - 支持 `OpenAI Compatible`、`Anthropic`、`Google Gemini`、`OpenRouter`。
-   - 每个 Provider 支持 `API Key` 与 `OAuth` 模式。
+   - 支持 `OpenAI`、`Anthropic`、`Google Gemini`、`OpenRouter`、`小米 MiMo`。
+   - 认证方式：OpenAI/OpenRouter 支持 API Key + OAuth；Anthropic/Gemini/MiMo 仅 API Key。
    - 支持自定义 Base URL、Model。
    - 模型列表管理：发现/自定义/编辑能力参数（reasoning effort / thinking / structured output）。
+   - 官方模型支持「创建副本」功能：在只读详情页右上角点击 Duplicate，基于官方参数创建可编辑的自定义模型记录。
+   - OpenAI provider 验证：拒绝包含 `chat/completions` 的 Base URL（Responses API 专用）。
    - 表单字段有效时才允许提交。
 6. Agent 聊天改工程
    - 会话支持多线程（thread）持久化与切换。

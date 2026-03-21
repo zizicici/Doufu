@@ -435,10 +435,10 @@ final class AnthropicProvider: LLMProviderAdapter {
             switch item {
             case let .userMessage(text):
                 appendMessage(&messages, role: "user", blocks: [.text(text)])
-            case let .assistantMessage(text, toolCalls):
+            case let .assistantMessage(msg):
                 var blocks: [AnthropicContentBlock] = []
-                if !text.isEmpty { blocks.append(.text(text)) }
-                for tc in toolCalls {
+                if !msg.text.isEmpty { blocks.append(.text(msg.text)) }
+                for tc in msg.toolCalls {
                     let inputValue = LLMProviderHelpers.parseJSONToJSONValue(tc.argumentsJSON)
                     blocks.append(.toolUse(id: tc.id, name: tc.name, input: inputValue))
                 }

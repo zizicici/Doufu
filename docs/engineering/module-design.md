@@ -39,7 +39,7 @@
    - 责任：Provider 列表管理、新增 Provider、认证方式分流（API Key / OAuth）。
 9. `Provider Model Management`
    - 主要文件：`Features/Settings/ProviderModelEditorViewController.swift`、`ProviderModelManagementCoordinator.swift`
-   - 责任：Provider 关联模型的发现、自定义、能力参数编辑。
+   - 责任：Provider 关联模型的发现、自定义、能力参数编辑。支持从官方模型创建自定义副本（Duplicate 按钮）。
 10. `Default Model Selection`
     - 主要文件：`Features/Settings/DefaultModelSelectionViewController.swift`
     - 责任：全局默认模型选择（Provider / Model / reasoning / thinking）。
@@ -78,7 +78,7 @@
    - 责任：项目级 Git 初始化、agent loop 前自动保存、检查点创建、历史恢复、变更查询。
 20. `Provider Storage`
    - 主要文件：`Core/LLM/LLMProviderSettingsStore.swift`
-   - 责任：Provider / Model CRUD 通过 GRDB（`llm_provider` + `llm_provider_model` 表）、Keychain 凭证管理、三层 ModelSelection CRUD。
+   - 责任：Provider / Model CRUD 通过 GRDB（`llm_provider` + `llm_provider_model` 表）、Keychain 凭证管理、三层 ModelSelection CRUD。Kind 枚举 5 种：openAICompatible / anthropic / googleGemini / openRouter / xiaomiMiMo。
 21. `Model Registry`
    - 主要文件：`Core/LLM/LLMModelRegistry.swift`
    - 责任：统一模型能力解析，多级优先级回退（用户自定义 > 内置 > 发现 > 保守默认）。
@@ -93,7 +93,7 @@
    - 责任：OpenAI OAuth（PKCE + localhost 回调，返回 Bearer Token）；OpenRouter OAuth（PKCE，返回 API Key）。
 25. `Agent Chat Pipeline`
    - 主要文件：`Core/LLM/ProjectChatService.swift` + `Core/LLM/ChatPipeline/*`
-   - 责任：对外 `sendAndApply`、agent loop 控制、工具定义与执行、流式请求、上下文压缩、进度事件。
+   - 责任：对外 `sendAndApply`、agent loop 控制、工具定义与执行、流式请求、上下文压缩、进度事件。5 个 Provider 实现：`OpenAIProvider`（Responses API）、`AnthropicProvider`（Messages API）、`GeminiProvider`、`OpenRouterProvider`（Chat Completions）、`MiMoProvider`（Chat Completions + thinking/reasoning_content）。
 26. `Token Usage Analytics`
    - 主要文件：`Core/LLM/LLMTokenUsageStore.swift`、`Features/Settings/TokenUsageViewController.swift`、`Features/ProjectRuntime/ProjectTokenUsageViewController.swift`
    - 责任：token 用量写入 `token_usage` 表，SQL GROUP BY / SUM 查询，驱动全局与项目视角展示。

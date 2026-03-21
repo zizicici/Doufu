@@ -5536,6 +5536,35 @@
         }
       }
     },
+    "llm.error.content_filtered" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Response blocked by content filter."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "响应被内容过滤策略拦截。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "回應被內容過濾策略攔截。"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "回應被內容過濾策略攔截。"
+          }
+        }
+      }
+    },
     "llm.error.invalid_response" : {
       "extractionState" : "manual",
       "localizations" : {

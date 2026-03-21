@@ -34,7 +34,7 @@ final class MiMoProvider: LLMProviderAdapter {
         onStreamedText: (@MainActor (String) -> Void)?,
         onUsage: ((Int?, Int?) -> Void)?
     ) async throws -> String {
-        var messages: [OpenRouterMessage] = []
+        var messages: [MiMoMessage] = []
         if !developerInstruction.isEmpty {
             messages.append(.system(content: developerInstruction))
         }
@@ -43,7 +43,7 @@ final class MiMoProvider: LLMProviderAdapter {
         )
         for msg in conversationMessages {
             if msg.role == "assistant" {
-                messages.append(.assistant(content: msg.text, toolCalls: nil))
+                messages.append(.assistant(content: msg.text, toolCalls: nil, reasoningContent: nil))
             } else {
                 messages.append(.user(content: msg.text))
             }
@@ -55,7 +55,8 @@ final class MiMoProvider: LLMProviderAdapter {
             tools: nil,
             stream: true,
             maxCompletionTokens: credential.profile.maxOutputTokens,
-            thinking: MiMoThinking(enabled: executionOptions.mimoThinkingEnabled)
+            thinking: mimoThinking(for: credential.profile, executionOptions: executionOptions),
+            responseFormat: mimoResponseFormat(from: responseFormat)
         )
 
         let timeoutSeconds = LLMProviderHelpers.timeoutSeconds(for: initialReasoningEffort, configuration: configuration)
@@ -111,7 +112,8 @@ final class MiMoProvider: LLMProviderAdapter {
             tools: toolDefinitions,
             stream: true,
             maxCompletionTokens: credential.profile.maxOutputTokens,
-            thinking: MiMoThinking(enabled: executionOptions.mimoThinkingEnabled)
+            thinking: mimoThinking(for: credential.profile, executionOptions: executionOptions),
+            responseFormat: nil
         )
 
         var request = buildURLRequest(credential: credential, path: "chat/completions", timeoutSeconds: timeoutSeconds)
@@ -145,8 +147,8 @@ final class MiMoProvider: LLMProviderAdapter {
     private func buildToolUseMessages(
         systemInstruction: String,
         from items: [AgentConversationItem]
-    ) -> [OpenRouterMessage] {
-        var messages: [OpenRouterMessage] = []
+    ) -> [MiMoMessage] {
+        var messages: [MiMoMessage] = []
         if !systemInstruction.isEmpty {
             messages.append(.system(content: systemInstruction))
         }
@@ -154,16 +156,39 @@ final class MiMoProvider: LLMProviderAdapter {
             switch item {
             case let .userMessage(text):
                 messages.append(.user(content: text))
-            case let .assistantMessage(text, toolCalls):
-                let calls = toolCalls.map { tc in
+            case let .assistantMessage(msg):
+                let calls = msg.toolCalls.map { tc in
                     OpenRouterToolCall(id: tc.id, name: tc.name, arguments: tc.argumentsJSON)
                 }
-                messages.append(.assistant(content: text, toolCalls: calls.isEmpty ? nil : calls))
+                messages.append(.assistant(
+                    content: msg.text,
+                    toolCalls: calls.isEmpty ? nil : calls,
+                    reasoningContent: msg.thinkingContent
+                ))
             case let .toolResult(callID, _, content, _):
                 messages.append(.tool(toolCallID: callID, content: content))
             }
         }
         return messages
+    }
+
+    // MARK: - Helpers
+
+    /// Returns nil for models that don't support thinking (e.g. mimo-v2-tts).
+    private func mimoThinking(
+        for profile: ResolvedModelProfile,
+        executionOptions: ProjectChatService.ModelExecutionOptions
+    ) -> MiMoThinking? {
+        guard profile.thinkingSupported else { return nil }
+        return MiMoThinking(enabled: executionOptions.mimoThinkingEnabled)
+    }
+
+    /// Converts the generic ResponsesTextFormat to MiMo's response_format.
+    /// MiMo supports "json_object" but not full JSON schema; we map any structured
+    /// output request to json_object mode.
+    private func mimoResponseFormat(from format: ResponsesTextFormat?) -> MiMoResponseFormat? {
+        guard format != nil else { return nil }
+        return MiMoResponseFormat(type: "json_object")
     }
 
     // MARK: - URL Request Builder
@@ -216,11 +241,20 @@ final class MiMoProvider: LLMProviderAdapter {
 
                 // Parse choices
                 if let choices = chunk["choices"] as? [[String: Any]],
-                   let choice = choices.first,
-                   let delta = choice["delta"] as? [String: Any],
-                   let content = delta["content"] as? String, !content.isEmpty {
-                    streamedText.append(content)
-                    if let onStreamedText { onStreamedText(streamedText) }
+                   let choice = choices.first {
+                    // Check content_filter
+                    if let reason = choice["finish_reason"] as? String, reason == "content_filter" {
+                        throw ProjectChatService.ServiceError.networkFailed(
+                            String(localized: "llm.error.content_filtered")
+                        )
+                    }
+                    if let delta = choice["delta"] as? [String: Any],
+                       let content = delta["content"] as? String, !content.isEmpty {
+                        streamedText.append(content)
+                        if let onStreamedText { onStreamedText(streamedText) }
+                    }
+                    // reasoning_content is intentionally not streamed to UI in non-tool-use mode,
+                    // but we still consume it so the stream doesn't stall.
                 }
 
                 // Parse usage
@@ -345,6 +379,8 @@ final class MiMoProvider: LLMProviderAdapter {
                 stopReason = .toolUse
             case "length":
                 stopReason = .maxTokens
+            case "content_filter":
+                stopReason = .endTurn
             default:
                 stopReason = finishedToolCalls.isEmpty ? .endTurn : .toolUse
             }

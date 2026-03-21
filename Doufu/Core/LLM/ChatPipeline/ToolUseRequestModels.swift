@@ -196,16 +196,18 @@ struct OpenRouterFunctionDefinition: Encodable {
 
 struct MiMoChatRequest: Encodable {
     let model: String
-    let messages: [OpenRouterMessage]
+    let messages: [MiMoMessage]
     let tools: [OpenRouterToolDefinition]?
     let stream: Bool
     let maxCompletionTokens: Int?
     let thinking: MiMoThinking?
+    let responseFormat: MiMoResponseFormat?
 
     private enum CodingKeys: String, CodingKey {
         case model, messages, tools, stream
         case maxCompletionTokens = "max_completion_tokens"
         case thinking
+        case responseFormat = "response_format"
     }
 
     func encode(to encoder: Encoder) throws {
@@ -218,6 +220,7 @@ struct MiMoChatRequest: Encodable {
         try container.encode(stream, forKey: .stream)
         try container.encodeIfPresent(maxCompletionTokens, forKey: .maxCompletionTokens)
         try container.encodeIfPresent(thinking, forKey: .thinking)
+        try container.encodeIfPresent(responseFormat, forKey: .responseFormat)
     }
 }
 
@@ -226,6 +229,53 @@ struct MiMoThinking: Encodable {
 
     init(enabled: Bool) {
         self.type = enabled ? "enabled" : "disabled"
+    }
+}
+
+/// MiMo-specific response format (json_object support).
+struct MiMoResponseFormat: Encodable {
+    let type: String
+}
+
+/// MiMo message type that extends OpenRouterMessage with `reasoning_content`.
+enum MiMoMessage: Encodable {
+    case system(content: String)
+    case user(content: String)
+    case assistant(content: String, toolCalls: [OpenRouterToolCall]?, reasoningContent: String?)
+    case tool(toolCallID: String, content: String)
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case let .system(content):
+            try container.encode("system", forKey: .role)
+            try container.encode(content, forKey: .content)
+        case let .user(content):
+            try container.encode("user", forKey: .role)
+            try container.encode(content, forKey: .content)
+        case let .assistant(content, toolCalls, reasoningContent):
+            try container.encode("assistant", forKey: .role)
+            if let toolCalls, !toolCalls.isEmpty {
+                if !content.isEmpty {
+                    try container.encode(content, forKey: .content)
+                }
+                try container.encode(toolCalls, forKey: .toolCalls)
+            } else {
+                try container.encode(content, forKey: .content)
+            }
+            try container.encodeIfPresent(reasoningContent, forKey: .reasoningContent)
+        case let .tool(toolCallID, content):
+            try container.encode("tool", forKey: .role)
+            try container.encode(toolCallID, forKey: .toolCallID)
+            try container.encode(content, forKey: .content)
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case role, content
+        case toolCalls = "tool_calls"
+        case toolCallID = "tool_call_id"
+        case reasoningContent = "reasoning_content"
     }
 }
 

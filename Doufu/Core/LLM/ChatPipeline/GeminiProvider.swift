@@ -276,10 +276,10 @@ final class GeminiProvider: LLMProviderAdapter {
                 contents.append(GeminiToolUseRequest.Content(
                     role: "user", parts: [.text(text)]
                 ))
-            case let .assistantMessage(text, toolCalls):
+            case let .assistantMessage(msg):
                 var parts: [GeminiPart] = []
-                if !text.isEmpty { parts.append(.text(text)) }
-                for tc in toolCalls {
+                if !msg.text.isEmpty { parts.append(.text(msg.text)) }
+                for tc in msg.toolCalls {
                     let argsValue = LLMProviderHelpers.parseJSONToJSONValue(tc.argumentsJSON)
                     parts.append(.functionCall(name: tc.name, args: argsValue))
                 }

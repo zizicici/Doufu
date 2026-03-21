@@ -68,7 +68,7 @@
      - `ToolUseRequestModels`：工具调用请求/响应模型
      - `LLMProviderProtocol`：Provider 请求适配协议
      - `ChatPipelineModels`：请求/响应共享模型（`ResponsesRequest`、`JSONValue` 等）
-     - `OpenAIProvider` / `AnthropicProvider` / `GeminiProvider` / `OpenRouterProvider`：各 Provider 实现
+     - `OpenAIProvider` / `AnthropicProvider` / `GeminiProvider` / `OpenRouterProvider` / `MiMoProvider`：各 Provider 实现
      - `WebToolProvider`：Web 搜索与网页抓取
      - `CodeValidator`：隐藏 WKWebView 代码验证
      - `ProjectPathResolver`：项目路径安全解析
@@ -279,21 +279,29 @@
 
 ## 多 Provider 请求适配
 
-1. OpenAI Compatible
-   - 走 `/responses`（流式 SSE）。
+1. OpenAI
+   - 走 `/responses`（Responses API，流式 SSE）。
+   - 支持 reasoning effort（low/medium/high/xhigh）。
 2. Anthropic
-   - 走 `/messages`。
+   - 走 `/messages`（Messages API）。
    - 支持 thinking 开关与 budget；若后端拒绝则自动降级。
 3. Google Gemini
    - 走 `/models/{model}:generateContent`。
    - 支持 thinking budget；若后端拒绝则自动降级。
 4. OpenRouter
-   - 走 `/chat/completions`。
+   - 走 `/chat/completions`（Chat Completions API）。
    - 支持 reasoning effort；映射消息格式到 OpenRouter 格式。
-5. 聊天页按 Provider/Model 维度选择模型与参数：
+5. Xiaomi MiMo
+   - 走 `/chat/completions`（Chat Completions API）。
+   - 独立 `MiMoProvider`，使用 `MiMoMessage`（含 `reasoning_content`）和 `MiMoChatRequest`（含 `max_completion_tokens`、`thinking`、`response_format`）。
+   - 支持 thinking 开关（`{"type":"enabled/disabled"}`）；`mimo-v2-tts` 不支持 thinking 时自动跳过。
+   - 多轮工具调用保留 `reasoning_content`：orchestrator 存入 `AssistantMessage.thinkingContent`，MiMoProvider 发回后续请求。
+   - 处理 `content_filter` finish reason。
+6. 聊天页按 Provider/Model 维度选择模型与参数：
    - `App / Project / Thread` 三层共享同一份 `ModelSelection(model, reasoning, thinking)` 结构（provider 由 model 隐含）
-   - OpenAI Compatible：`reasoning effort`
-   - Anthropic/Gemini：`thinking` 开关
+   - OpenAI / OpenRouter：`reasoning effort`
+   - Anthropic / Gemini / MiMo：`thinking` 开关
+7. `AgentConversationItem.assistantMessage` 使用 `AssistantMessage` struct 封装（text, toolCalls, thinkingContent?），provider 以 `case let .assistantMessage(msg):` 匹配，新增字段不影响其他 provider。
 
 ## OAuth 说明
 
