@@ -48,8 +48,10 @@ final class AnthropicProvider: LLMProviderAdapter {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
             request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-            // TODO: Update to newer anthropic-version when prompt caching graduates from beta.
-            request.setValue("prompt-caching-2024-07-31", forHTTPHeaderField: "anthropic-beta")
+            let betaFeatures = includeThinking
+                ? "prompt-caching-2024-07-31,interleaved-thinking-2025-05-14"
+                : "prompt-caching-2024-07-31"
+            request.setValue(betaFeatures, forHTTPHeaderField: "anthropic-beta")
             applyAuthorizationHeaders(to: &request, credential: credential)
 
             let messages = LLMProviderHelpers.normalizedConversationMessages(
@@ -248,7 +250,10 @@ final class AnthropicProvider: LLMProviderAdapter {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
             request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-            request.setValue("prompt-caching-2024-07-31", forHTTPHeaderField: "anthropic-beta")
+            let betaFeatures = includeThinking
+                ? "prompt-caching-2024-07-31,interleaved-thinking-2025-05-14"
+                : "prompt-caching-2024-07-31"
+            request.setValue(betaFeatures, forHTTPHeaderField: "anthropic-beta")
             applyAuthorizationHeaders(to: &request, credential: credential)
             request.httpBody = try jsonEncoder.encode(requestBody)
 

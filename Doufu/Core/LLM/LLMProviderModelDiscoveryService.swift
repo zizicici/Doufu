@@ -33,15 +33,46 @@ final class LLMProviderModelDiscoveryService {
             let displayName: String?
             /// Maximum output tokens the model supports (returned by /v1/models).
             let maxTokens: Int?
+            /// Maximum input (context window) tokens.
+            let maxInputTokens: Int?
+            /// Rich capability flags returned by the API.
+            let capabilities: Capabilities?
+
+            struct Capabilities: Decodable {
+                let thinking: Thinking?
+                let structuredOutputs: StructuredOutputs?
+
+                struct Thinking: Decodable {
+                    let supported: Bool?
+                }
+                struct StructuredOutputs: Decodable {
+                    let supported: Bool?
+                }
+
+                private enum CodingKeys: String, CodingKey {
+                    case thinking
+                    case structuredOutputs = "structured_outputs"
+                }
+            }
 
             private enum CodingKeys: String, CodingKey {
                 case id
                 case displayName = "display_name"
                 case maxTokens = "max_tokens"
+                case maxInputTokens = "max_input_tokens"
+                case capabilities
             }
         }
 
         let data: [Model]
+        let hasMore: Bool?
+        let lastId: String?
+
+        private enum CodingKeys: String, CodingKey {
+            case data
+            case hasMore = "has_more"
+            case lastId = "last_id"
+        }
     }
 
     private struct GeminiModelsResponse: Decodable {
@@ -181,21 +212,60 @@ final class LLMProviderModelDiscoveryService {
         for provider: LLMProviderRecord,
         bearerToken: String
     ) async throws -> [LLMProviderModelRecord] {
-        let url = try buildURL(baseURLString: provider.effectiveBaseURLString, path: "models")
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-        applyAuthorizationHeaders(to: &request, provider: provider, bearerToken: bearerToken)
+        var allModels: [AnthropicModelsResponse.Model] = []
+        var afterID: String?
 
-        let (data, response) = try await URLSession.shared.data(for: request)
-        try validate(response: response, data: data)
-        let payload = try decoder.decode(AnthropicModelsResponse.self, from: data)
-        return payload.data.map { model in
+        // Paginate through all models (default limit is 20).
+        while true {
+            var components = try buildURLComponents(baseURLString: provider.effectiveBaseURLString, path: "models")
+            var queryItems = components.queryItems ?? []
+            queryItems.append(URLQueryItem(name: "limit", value: "1000"))
+            if let afterID {
+                queryItems.append(URLQueryItem(name: "after_id", value: afterID))
+            }
+            components.queryItems = queryItems
+            guard let url = components.url else {
+                throw LLMProviderSettingsStoreError.invalidBaseURL
+            }
+
+            var request = URLRequest(url: url)
+            request.httpMethod = "GET"
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+            applyAuthorizationHeaders(to: &request, provider: provider, bearerToken: bearerToken)
+
+            let (data, response) = try await URLSession.shared.data(for: request)
+            try validate(response: response, data: data)
+            let payload = try decoder.decode(AnthropicModelsResponse.self, from: data)
+            allModels.append(contentsOf: payload.data)
+
+            if payload.hasMore == true, let lastId = payload.lastId, !lastId.isEmpty {
+                afterID = lastId
+            } else {
+                break
+            }
+        }
+
+        return allModels.map { model in
             var capabilities = LLMProviderModelCapabilities.defaults(for: .anthropic, modelID: model.id)
             // Use API-reported max_tokens when available — more reliable than static registry.
             if let apiMaxTokens = model.maxTokens, apiMaxTokens > 0 {
                 capabilities.maxOutputTokensOverride = apiMaxTokens
+            }
+            // Use API-reported context window when available.
+            if let apiMaxInput = model.maxInputTokens, apiMaxInput > 0 {
+                capabilities.contextWindowTokensOverride = apiMaxInput
+            }
+            // Use API-reported capability flags when available, overriding registry defaults.
+            if let apiCaps = model.capabilities {
+                if let thinking = apiCaps.thinking?.supported {
+                    capabilities.thinkingSupported = thinking
+                    // If API says no thinking, also disable the "can disable" flag.
+                    if !thinking { capabilities.thinkingCanDisable = false }
+                }
+                if let structured = apiCaps.structuredOutputs?.supported {
+                    capabilities.structuredOutputSupported = structured
+                }
             }
             return LLMProviderModelRecord(
                 id: officialRecordID(for: model.id),
