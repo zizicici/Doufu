@@ -48,6 +48,7 @@ final class OpenAIProvider: LLMProviderAdapter {
         )
         var didFallbackReasoning = false
         var didFallbackResponseFormat = false
+        var didFallbackMaxOutputTokens = false
 
         while true {
             var request = URLRequest(url: credential.baseURL.appendingPathComponent("responses"))
@@ -97,6 +98,16 @@ final class OpenAIProvider: LLMProviderAdapter {
                     continue
                 }
 
+                if shouldFallbackMaxOutputTokens(
+                    currentValue: activeRequestBody.maxOutputTokens,
+                    responseBodyData: data,
+                    alreadyFallback: didFallbackMaxOutputTokens
+                ) {
+                    didFallbackMaxOutputTokens = true
+                    activeRequestBody.maxOutputTokens = nil
+                    continue
+                }
+
                 LLMProviderHelpers.logFailedResponse(
                     request: request, httpResponse: httpResponse,
                     responseBodyData: data, requestLabel: requestLabel
@@ -136,6 +147,16 @@ final class OpenAIProvider: LLMProviderAdapter {
                     continue
                 }
 
+                if shouldFallbackMaxOutputTokens(
+                    currentValue: activeRequestBody.maxOutputTokens,
+                    errorMessage: errorMessage,
+                    alreadyFallback: didFallbackMaxOutputTokens
+                ) {
+                    didFallbackMaxOutputTokens = true
+                    activeRequestBody.maxOutputTokens = nil
+                    continue
+                }
+
                 throw serviceError
             }
         }
@@ -170,7 +191,7 @@ final class OpenAIProvider: LLMProviderAdapter {
         }
 
         let sendReasoning = !credential.profile.reasoningEfforts.isEmpty
-        let requestBody = OpenAIToolUseRequest(
+        var activeRequestBody = OpenAIToolUseRequest(
             model: model,
             instructions: systemInstruction,
             input: inputItems,
@@ -180,43 +201,57 @@ final class OpenAIProvider: LLMProviderAdapter {
             maxOutputTokens: credential.profile.maxOutputTokens,
             reasoning: sendReasoning ? ResponsesReasoning(effort: effort) : nil
         )
+        var didFallbackMaxOutputTokens = false
 
-        var request = URLRequest(url: credential.baseURL.appendingPathComponent("responses"))
-        request.httpMethod = "POST"
-        request.timeoutInterval = timeoutSeconds
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-        request.setValue("Bearer \(credential.bearerToken)", forHTTPHeaderField: "Authorization")
-        if isChatGPT {
-            request.setValue("codex_cli_rs", forHTTPHeaderField: "originator")
-            if let accountID = credential.chatGPTAccountID?.trimmingCharacters(in: .whitespacesAndNewlines), !accountID.isEmpty {
-                request.setValue(accountID, forHTTPHeaderField: "chatgpt-account-id")
+        while true {
+            var request = URLRequest(url: credential.baseURL.appendingPathComponent("responses"))
+            request.httpMethod = "POST"
+            request.timeoutInterval = timeoutSeconds
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+            request.setValue("Bearer \(credential.bearerToken)", forHTTPHeaderField: "Authorization")
+            if isChatGPT {
+                request.setValue("codex_cli_rs", forHTTPHeaderField: "originator")
+                if let accountID = credential.chatGPTAccountID?.trimmingCharacters(in: .whitespacesAndNewlines), !accountID.isEmpty {
+                    request.setValue(accountID, forHTTPHeaderField: "chatgpt-account-id")
+                }
             }
-        }
-        request.httpBody = try jsonEncoder.encode(requestBody)
+            request.httpBody = try jsonEncoder.encode(activeRequestBody)
 
-        let (bytes, response) = try await URLSession.shared.bytes(for: request)
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw ProjectChatService.ServiceError.networkFailed(String(localized: "llm.error.invalid_response"))
-        }
-        guard (200...299).contains(httpResponse.statusCode) else {
-            let data = try await LLMProviderHelpers.consumeStreamBytes(bytes: bytes)
-            LLMProviderHelpers.logFailedResponse(
-                request: request, httpResponse: httpResponse,
-                responseBodyData: data, requestLabel: "OpenAI ToolUse"
+            let (bytes, response) = try await URLSession.shared.bytes(for: request)
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw ProjectChatService.ServiceError.networkFailed(String(localized: "llm.error.invalid_response"))
+            }
+            guard (200...299).contains(httpResponse.statusCode) else {
+                let data = try await LLMProviderHelpers.consumeStreamBytes(bytes: bytes)
+
+                if shouldFallbackMaxOutputTokens(
+                    currentValue: activeRequestBody.maxOutputTokens,
+                    responseBodyData: data,
+                    alreadyFallback: didFallbackMaxOutputTokens
+                ) {
+                    didFallbackMaxOutputTokens = true
+                    activeRequestBody.maxOutputTokens = nil
+                    continue
+                }
+
+                LLMProviderHelpers.logFailedResponse(
+                    request: request, httpResponse: httpResponse,
+                    responseBodyData: data, requestLabel: "OpenAI ToolUse"
+                )
+                let message = LLMProviderHelpers.parseErrorMessage(from: data)
+                    ?? HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
+                throw ProjectChatService.ServiceError.networkFailed(String(format: String(localized: "llm.error.request_failed_format"), message))
+            }
+
+            let result = try await consumeToolUseStream(
+                bytes: bytes, model: model, credential: credential,
+                projectUsageIdentifier: projectUsageIdentifier,
+                timeoutSeconds: timeoutSeconds,
+                onStreamedText: onStreamedText, onUsage: onUsage
             )
-            let message = LLMProviderHelpers.parseErrorMessage(from: data)
-                ?? HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
-            throw ProjectChatService.ServiceError.networkFailed(String(format: String(localized: "llm.error.request_failed_format"), message))
+            return result
         }
-
-        let result = try await consumeToolUseStream(
-            bytes: bytes, model: model, credential: credential,
-            projectUsageIdentifier: projectUsageIdentifier,
-            timeoutSeconds: timeoutSeconds,
-            onStreamedText: onStreamedText, onUsage: onUsage
-        )
-        return result
     }
 
     // MARK: - Tool Use SSE Stream Consumer
@@ -462,9 +497,17 @@ final class OpenAIProvider: LLMProviderAdapter {
                 )))
             case let .assistantMessage(msg):
                 // Replay reasoning items from the previous response for continuity.
+                // Strip `id` fields to avoid server-side lookup failures (the API
+                // returns "Item with id 'rs_...' not found" when the original
+                // response is no longer stored).
                 if case let .openAIReasoning(items) = msg.replayState {
                     for item in items {
-                        result.append(.reasoning(item))
+                        if case let .object(dict) = item {
+                            let stripped = dict.filter { $0.key != "id" }
+                            result.append(.reasoning(.object(stripped)))
+                        } else {
+                            result.append(.reasoning(item))
+                        }
                     }
                 }
                 if !msg.text.isEmpty {
@@ -813,6 +856,26 @@ final class OpenAIProvider: LLMProviderAdapter {
         if message.contains("json_schema") { return true }
         if message.contains("unsupported") && message.contains("format") { return true }
         if message.contains("schema") && message.contains("invalid") { return true }
+        return false
+    }
+
+    private func shouldFallbackMaxOutputTokens(
+        currentValue: Int?,
+        responseBodyData: Data,
+        alreadyFallback: Bool
+    ) -> Bool {
+        let message = LLMProviderHelpers.parseErrorMessage(from: responseBodyData) ?? ""
+        return shouldFallbackMaxOutputTokens(currentValue: currentValue, errorMessage: message, alreadyFallback: alreadyFallback)
+    }
+
+    private func shouldFallbackMaxOutputTokens(
+        currentValue: Int?,
+        errorMessage: String,
+        alreadyFallback: Bool
+    ) -> Bool {
+        guard !alreadyFallback, currentValue != nil else { return false }
+        let message = errorMessage.lowercased()
+        if message.contains("max_output_tokens") { return true }
         return false
     }
 }
