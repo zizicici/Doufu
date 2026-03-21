@@ -69,6 +69,7 @@ struct LLMProviderRecord: Codable, Equatable, Hashable {
         case anthropic
         case googleGemini = "google_gemini"
         case openRouter = "open_router"
+        case xiaomiMiMo = "xiaomi_mimo"
 
         var displayName: String {
             switch self {
@@ -80,6 +81,8 @@ struct LLMProviderRecord: Codable, Equatable, Hashable {
                 return String(localized: "providers.kind.google_gemini.title")
             case .openRouter:
                 return String(localized: "providers.kind.openrouter.title")
+            case .xiaomiMiMo:
+                return String(localized: "providers.kind.xiaomi_mimo.title")
             }
         }
 
@@ -93,6 +96,8 @@ struct LLMProviderRecord: Codable, Equatable, Hashable {
                 return String(localized: "providers.kind.google_gemini.subtitle")
             case .openRouter:
                 return String(localized: "providers.kind.openrouter.subtitle")
+            case .xiaomiMiMo:
+                return String(localized: "providers.kind.xiaomi_mimo.subtitle")
             }
         }
 
@@ -106,12 +111,14 @@ struct LLMProviderRecord: Codable, Equatable, Hashable {
                 return "https://generativelanguage.googleapis.com/v1beta"
             case .openRouter:
                 return "https://openrouter.ai/api"
+            case .xiaomiMiMo:
+                return "https://api.xiaomimimo.com"
             }
         }
 
         var defaultAutoAppendV1: Bool {
             switch self {
-            case .openAICompatible, .openRouter:
+            case .openAICompatible, .openRouter, .xiaomiMiMo:
                 return true
             case .anthropic, .googleGemini:
                 return false
@@ -128,6 +135,8 @@ struct LLMProviderRecord: Codable, Equatable, Hashable {
                 return ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"]
             case .openRouter:
                 return ["anthropic/claude-sonnet-4", "deepseek/deepseek-r1:free", "google/gemini-2.5-pro-preview", "openai/gpt-4o"]
+            case .xiaomiMiMo:
+                return ["mimo-v2-flash", "mimo-v2-pro", "mimo-v2-omni"]
             }
         }
 

@@ -319,6 +319,7 @@ extension DBProvider {
     static let kindAnthropic = 1
     static let kindGoogleGemini = 2
     static let kindOpenRouter = 3
+    static let kindXiaomiMiMo = 4
 
     static let authModeAPIKey = 0
     static let authModeOAuth = 1
@@ -329,6 +330,7 @@ extension DBProvider {
         case .anthropic: return kindAnthropic
         case .googleGemini: return kindGoogleGemini
         case .openRouter: return kindOpenRouter
+        case .xiaomiMiMo: return kindXiaomiMiMo
         }
     }
 
@@ -337,6 +339,7 @@ extension DBProvider {
         case kindAnthropic: return .anthropic
         case kindGoogleGemini: return .googleGemini
         case kindOpenRouter: return .openRouter
+        case kindXiaomiMiMo: return .xiaomiMiMo
         default: return .openAICompatible
         }
     }

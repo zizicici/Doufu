@@ -396,6 +396,14 @@ final class ProviderAPIKeyFormViewController: UITableViewController {
     private func submitProvider() {
         view.endEditing(true)
 
+        if providerKind == .openAICompatible {
+            let trimmedURL = customBaseURLText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if trimmedURL.contains("chat/completions") {
+                showError(message: String(localized: "providers.openai.error.chat_completions_url"))
+                return
+            }
+        }
+
         do {
             if let editingProvider {
                 if editingProvider.kind == .anthropic, editingProvider.authMode == .oauth {

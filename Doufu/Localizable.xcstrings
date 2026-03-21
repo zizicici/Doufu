@@ -10835,6 +10835,35 @@
         }
       }
     },
+    "providers.openai.error.chat_completions_url" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This provider uses the OpenAI Responses API. Chat Completions API endpoints are not supported. Please use the correct base URL (e.g. https://api.openai.com)."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此服务商使用 OpenAI Responses API，不支持 Chat Completions API 端点。请使用正确的 Base URL（如 https://api.openai.com）。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此服務商使用 OpenAI Responses API，不支援 Chat Completions API 端點。請使用正確的 Base URL（如 https://api.openai.com）。"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此服務商使用 OpenAI Responses API，不支援 Chat Completions API 端點。請使用正確的 Base URL（如 https://api.openai.com）。"
+          }
+        }
+      }
+    },
     "providers.form.alert.add_failed.title" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -11160,25 +11189,25 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Anthropic official or compatible API services"
+            "value" : "Anthropic Messages API"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Anthropic 官方或兼容 Anthropic API 的服务"
+            "value" : "Anthropic Messages API"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Anthropic 官方或兼容 Anthropic API 的服務"
+            "value" : "Anthropic Messages API"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Anthropic 官方或兼容 Anthropic API 的服務"
+            "value" : "Anthropic Messages API"
           }
         }
       }
@@ -11189,25 +11218,25 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Anthropic / Compatible API"
+            "value" : "Anthropic"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Anthropic / 兼容 API"
+            "value" : "Anthropic"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Anthropic / 兼容 API"
+            "value" : "Anthropic"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Anthropic / 兼容 API"
+            "value" : "Anthropic"
           }
         }
       }
@@ -11276,25 +11305,25 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "OpenAI official or OpenAI-compatible API services"
+            "value" : "OpenAI Responses API"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "OpenAI 官方或兼容 OpenAI API 的服务"
+            "value" : "OpenAI Responses API"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "OpenAI 官方或兼容 OpenAI API 的服務"
+            "value" : "OpenAI Responses API"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "OpenAI 官方或兼容 OpenAI API 的服務"
+            "value" : "OpenAI Responses API"
           }
         }
       }
@@ -11305,25 +11334,25 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "OpenAI / Compatible API"
+            "value" : "OpenAI"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "OpenAI / 兼容 API"
+            "value" : "OpenAI"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "OpenAI / 兼容 API"
+            "value" : "OpenAI"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "OpenAI / 兼容 API"
+            "value" : "OpenAI"
           }
         }
       }
@@ -11382,6 +11411,64 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "OpenRouter"
+          }
+        }
+      }
+    },
+    "providers.kind.xiaomi_mimo.subtitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Xiaomi MiMo Chat Completions API"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "小米 MiMo Chat Completions API"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "小米 MiMo Chat Completions API"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "小米 MiMo Chat Completions API"
+          }
+        }
+      }
+    },
+    "providers.kind.xiaomi_mimo.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Xiaomi MiMo"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "小米 MiMo"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "小米 MiMo"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "小米 MiMo"
           }
         }
       }

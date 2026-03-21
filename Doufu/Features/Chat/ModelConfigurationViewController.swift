@@ -422,7 +422,7 @@ final class ModelConfigurationViewController: UITableViewController {
                         toSection: .parameter
                     )
                 }
-            case .anthropic, .googleGemini:
+            case .anthropic, .googleGemini, .xiaomiMiMo:
                 if resolveModelProfile(for: selectedProvider, modelID: selectedModel.id).thinkingSupported {
                     snapshot.appendItems([.thinkingToggle(inherited: isFollowingParent)], toSection: .parameter)
                 }
@@ -477,7 +477,7 @@ final class ModelConfigurationViewController: UITableViewController {
             switch selectedProvider.kind {
             case .openAICompatible, .openRouter:
                 return String(localized: "chat.menu.reasoning")
-            case .anthropic, .googleGemini:
+            case .anthropic, .googleGemini, .xiaomiMiMo:
                 return String(localized: "chat.menu.thinking")
             }
         case .manage:

@@ -192,6 +192,43 @@ struct OpenRouterFunctionDefinition: Encodable {
     let parameters: JSONValue
 }
 
+// MARK: - Xiaomi MiMo Chat Completions API
+
+struct MiMoChatRequest: Encodable {
+    let model: String
+    let messages: [OpenRouterMessage]
+    let tools: [OpenRouterToolDefinition]?
+    let stream: Bool
+    let maxCompletionTokens: Int?
+    let thinking: MiMoThinking?
+
+    private enum CodingKeys: String, CodingKey {
+        case model, messages, tools, stream
+        case maxCompletionTokens = "max_completion_tokens"
+        case thinking
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(model, forKey: .model)
+        try container.encode(messages, forKey: .messages)
+        if let tools, !tools.isEmpty {
+            try container.encode(tools, forKey: .tools)
+        }
+        try container.encode(stream, forKey: .stream)
+        try container.encodeIfPresent(maxCompletionTokens, forKey: .maxCompletionTokens)
+        try container.encodeIfPresent(thinking, forKey: .thinking)
+    }
+}
+
+struct MiMoThinking: Encodable {
+    let type: String
+
+    init(enabled: Bool) {
+        self.type = enabled ? "enabled" : "disabled"
+    }
+}
+
 // MARK: - Anthropic Prompt Caching
 
 struct AnthropicCacheControl: Encodable {

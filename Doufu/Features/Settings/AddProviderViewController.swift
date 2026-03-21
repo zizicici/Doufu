@@ -12,7 +12,8 @@ final class AddProviderViewController: UITableViewController {
         .openAICompatible,
         .anthropic,
         .googleGemini,
-        .openRouter
+        .openRouter,
+        .xiaomiMiMo
     ]
 
     init() {
@@ -81,7 +82,7 @@ final class AddProviderViewController: UITableViewController {
             // OpenRouter supports API Key and OAuth PKCE — reuse the auth
             // method selection page.
             controller = ProviderAuthMethodViewController(providerKind: .openRouter)
-        case .anthropic, .googleGemini:
+        case .anthropic, .googleGemini, .xiaomiMiMo:
             // Only API Key is available — skip the auth method selection
             // page and go straight to the form.
             controller = ProviderAPIKeyFormViewController(providerKind: kind)

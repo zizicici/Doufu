@@ -160,7 +160,8 @@ nonisolated final class LLMCodeScanner {
             executionOptions: ProjectChatService.ModelExecutionOptions(
                 reasoningEffort: .low,
                 anthropicThinkingEnabled: false,
-                geminiThinkingEnabled: false
+                geminiThinkingEnabled: false,
+                mimoThinkingEnabled: false
             ),
             responseFormat: nil,
             onStreamedText: onProgress,

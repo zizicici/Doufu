@@ -156,7 +156,7 @@ struct ModelSelectionResolver {
                    reasoningEffort != profile.defaultEffort {
                     normalizedReasoningEffort = reasoningEffort
                 }
-            case .anthropic, .googleGemini:
+            case .anthropic, .googleGemini, .xiaomiMiMo:
                 let capabilities = resolveModelProfile(
                     providerID: trimmedProviderID,
                     providerKind: provider.kind,

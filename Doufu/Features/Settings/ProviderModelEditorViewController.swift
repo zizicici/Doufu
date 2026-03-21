@@ -116,7 +116,7 @@ final class ProviderModelEditorViewController: UITableViewController {
             switch provider.providerKind {
             case .openAICompatible, .openRouter:
                 return ProjectChatService.ReasoningEffort.allCases.count + 1
-            case .anthropic, .googleGemini:
+            case .anthropic, .googleGemini, .xiaomiMiMo:
                 return 3
             }
         case .tokenLimits:
@@ -228,7 +228,7 @@ final class ProviderModelEditorViewController: UITableViewController {
                         self?.structuredOutputSupported = isOn
                     }
                 }
-            case .anthropic, .googleGemini:
+            case .anthropic, .googleGemini, .xiaomiMiMo:
                 switch indexPath.row {
                 case 0:
                     cell.configure(
@@ -374,7 +374,7 @@ final class ProviderModelEditorViewController: UITableViewController {
                 maxOutputTokensOverride: maxOutputOverride,
                 contextWindowTokensOverride: contextWindowOverride
             )
-        case .anthropic, .googleGemini:
+        case .anthropic, .googleGemini, .xiaomiMiMo:
             return LLMProviderModelCapabilities(
                 reasoningEfforts: [],
                 thinkingSupported: thinkingSupported,

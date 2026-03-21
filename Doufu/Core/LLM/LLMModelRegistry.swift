@@ -113,6 +113,7 @@ struct LLMModelRegistry {
         case .anthropic:        registry = anthropicRegistry
         case .googleGemini:     registry = geminiRegistry
         case .openRouter:       registry = openRouterRegistry
+        case .xiaomiMiMo:       registry = mimoRegistry
         }
 
         // Exact match first.
@@ -162,6 +163,15 @@ struct LLMModelRegistry {
                 structuredOutputSupported: false,
                 maxOutputTokens: 16_384,
                 contextWindowTokens: 128_000
+            )
+        case .xiaomiMiMo:
+            return ModelEntry(
+                reasoningEfforts: [],
+                thinkingSupported: true,
+                thinkingCanDisable: true,
+                structuredOutputSupported: true,
+                maxOutputTokens: 65_536,
+                contextWindowTokens: 256_000
             )
         case .anthropic:
             // Conservative for third-party Anthropic-compatible endpoints.
@@ -329,6 +339,35 @@ struct LLMModelRegistry {
             thinkingSupported: false, thinkingCanDisable: false,
             structuredOutputSupported: false,
             maxOutputTokens: 8_192, contextWindowTokens: 64_000
+        ),
+    ]
+
+    // MARK: - Xiaomi MiMo Registry
+
+    private static let mimoRegistry: [String: ModelEntry] = [
+        "mimo-v2-flash": ModelEntry(
+            reasoningEfforts: [],
+            thinkingSupported: true, thinkingCanDisable: true,
+            structuredOutputSupported: true,
+            maxOutputTokens: 65_536, contextWindowTokens: 256_000
+        ),
+        "mimo-v2-pro": ModelEntry(
+            reasoningEfforts: [],
+            thinkingSupported: true, thinkingCanDisable: true,
+            structuredOutputSupported: true,
+            maxOutputTokens: 131_072, contextWindowTokens: 1_048_576
+        ),
+        "mimo-v2-omni": ModelEntry(
+            reasoningEfforts: [],
+            thinkingSupported: true, thinkingCanDisable: true,
+            structuredOutputSupported: true,
+            maxOutputTokens: 32_768, contextWindowTokens: 256_000
+        ),
+        "mimo-v2-tts": ModelEntry(
+            reasoningEfforts: [],
+            thinkingSupported: false, thinkingCanDisable: false,
+            structuredOutputSupported: false,
+            maxOutputTokens: 8_192, contextWindowTokens: 256_000
         ),
     ]
 

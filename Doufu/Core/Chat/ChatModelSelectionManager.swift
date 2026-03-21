@@ -230,19 +230,29 @@ final class ChatModelSelectionManager {
             return ProjectChatService.ModelExecutionOptions(
                 reasoningEffort: reasoningEffort,
                 anthropicThinkingEnabled: true,
-                geminiThinkingEnabled: true
+                geminiThinkingEnabled: true,
+                mimoThinkingEnabled: true
             )
         case .anthropic:
             return ProjectChatService.ModelExecutionOptions(
                 reasoningEffort: reasoningEffort,
                 anthropicThinkingEnabled: thinkingEnabled,
-                geminiThinkingEnabled: true
+                geminiThinkingEnabled: true,
+                mimoThinkingEnabled: true
             )
         case .googleGemini:
             return ProjectChatService.ModelExecutionOptions(
                 reasoningEffort: reasoningEffort,
                 anthropicThinkingEnabled: true,
-                geminiThinkingEnabled: thinkingEnabled
+                geminiThinkingEnabled: thinkingEnabled,
+                mimoThinkingEnabled: true
+            )
+        case .xiaomiMiMo:
+            return ProjectChatService.ModelExecutionOptions(
+                reasoningEffort: reasoningEffort,
+                anthropicThinkingEnabled: true,
+                geminiThinkingEnabled: true,
+                mimoThinkingEnabled: thinkingEnabled
             )
         }
     }
@@ -349,7 +359,7 @@ final class ChatModelSelectionManager {
                     ? String(localized: "chat.thinking.enabled")
                     : String(localized: "chat.thinking.disabled")
                 return providerTitle + " · " + modelTitle + " · " + anthropicStatus
-            case .googleGemini:
+            case .googleGemini, .xiaomiMiMo:
                 guard capabilities.thinkingSupported else {
                     return providerTitle + " · " + modelTitle
                 }

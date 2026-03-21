@@ -420,9 +420,9 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
             safariController.delegate = self
             loginSafariViewController = safariController
             present(safariController, animated: true)
-        case .googleGemini:
-            // Gemini only supports API Key auth; this VC should not be
-            // reachable for Gemini providers.
+        case .googleGemini, .xiaomiMiMo:
+            // Gemini/MiMo only supports API Key auth; this VC should not be
+            // reachable for these providers.
             break
         }
     }
@@ -637,7 +637,7 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
             return String(localized: "providers.oauth_form.button.sign_in")
         case .anthropic:
             return "Sign in with Anthropic"
-        case .googleGemini:
+        case .googleGemini, .xiaomiMiMo:
             return ""
         }
     }
@@ -648,7 +648,7 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
             return String(localized: "providers.oauth_form.footer.oauth")
         case .anthropic:
             return "Login opens Anthropic account page. Paste OAuth bearer token below."
-        case .googleGemini:
+        case .googleGemini, .xiaomiMiMo:
             return ""
         }
     }
@@ -659,7 +659,7 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
             return URL(string: "https://auth.openai.com/log-in")
         case .anthropic:
             return URL(string: "https://console.anthropic.com/login")
-        case .googleGemini:
+        case .googleGemini, .xiaomiMiMo:
             return nil
         }
     }
