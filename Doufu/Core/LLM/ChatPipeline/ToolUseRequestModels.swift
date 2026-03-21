@@ -29,12 +29,15 @@ enum OpenAIToolUseInputItem: Encodable {
     case message(OpenAIToolUseMessage)
     case functionCall(OpenAIFunctionCallItem)
     case functionCallOutput(OpenAIFunctionCallOutputItem)
+    /// Raw reasoning output item from a previous response, replayed as-is.
+    case reasoning(JSONValue)
 
     func encode(to encoder: Encoder) throws {
         switch self {
         case let .message(value): try value.encode(to: encoder)
         case let .functionCall(value): try value.encode(to: encoder)
         case let .functionCallOutput(value): try value.encode(to: encoder)
+        case let .reasoning(value): try value.encode(to: encoder)
         }
     }
 }
@@ -347,6 +350,8 @@ struct AnthropicToolUseMessage: Encodable {
 
 enum AnthropicContentBlock: Encodable {
     case text(String)
+    case thinking(thinking: String, signature: String)
+    case redactedThinking(data: String)
     case toolUse(id: String, name: String, input: JSONValue)
     case toolResult(toolUseID: String, content: String, isError: Bool)
 
@@ -356,6 +361,13 @@ enum AnthropicContentBlock: Encodable {
         case let .text(text):
             try container.encode("text", forKey: .type)
             try container.encode(text, forKey: .text)
+        case let .thinking(thinking, signature):
+            try container.encode("thinking", forKey: .type)
+            try container.encode(thinking, forKey: .thinking)
+            try container.encode(signature, forKey: .signature)
+        case let .redactedThinking(data):
+            try container.encode("redacted_thinking", forKey: .type)
+            try container.encode(data, forKey: .data)
         case let .toolUse(id, name, input):
             try container.encode("tool_use", forKey: .type)
             try container.encode(id, forKey: .id)
@@ -372,7 +384,7 @@ enum AnthropicContentBlock: Encodable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case type, text, id, name, input
+        case type, text, id, name, input, thinking, signature, data
         case toolUseID = "tool_use_id"
         case content
         case isError = "is_error"

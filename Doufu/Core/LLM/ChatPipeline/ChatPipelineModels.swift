@@ -255,13 +255,33 @@ enum AgentStopReason {
     case maxTokens
 }
 
+/// An Anthropic thinking block that must be passed back unchanged in multi-turn tool use.
+/// Claude 4+ produces `.thinking`; Claude 3.7 Sonnet may also produce `.redacted`.
+enum AnthropicThinkingBlock {
+    /// Normal thinking with text and cryptographic signature.
+    case thinking(text: String, signature: String)
+    /// Redacted thinking (safety-flagged) — encrypted opaque data, must be passed back as-is.
+    case redacted(data: String)
+}
+
+/// Opaque provider-specific state that must be replayed across tool-use rounds.
+/// Each provider populates the variant it needs; other providers leave it nil.
+enum ProviderReplayState {
+    /// Anthropic: complete thinking blocks (text + signature) required for multi-turn tool use.
+    case anthropicThinking([AnthropicThinkingBlock])
+    /// OpenAI: reasoning output items that should be included in subsequent input arrays.
+    case openAIReasoning([JSONValue])
+}
+
 struct AgentLLMResponse {
     let textContent: String
     let toolCalls: [AgentToolCall]
     let usage: ResponsesUsage?
     let stopReason: AgentStopReason
-    /// Extended thinking content from models that support it (e.g. Claude with thinking enabled).
+    /// Extended thinking/reasoning content for UI display (e.g. Claude thinking, MiMo reasoning).
     let thinkingContent: String?
+    /// Provider-specific state to replay across tool-use rounds.
+    let replayState: ProviderReplayState?
 }
 
 struct AssistantMessage {
@@ -270,6 +290,8 @@ struct AssistantMessage {
     /// Provider-specific thinking/reasoning content (e.g. MiMo reasoning_content).
     /// Stored so it can be sent back in subsequent multi-turn requests.
     var thinkingContent: String?
+    /// Provider-specific state to replay across tool-use rounds.
+    var replayState: ProviderReplayState?
 }
 
 enum AgentConversationItem {

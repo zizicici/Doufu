@@ -304,8 +304,9 @@ final class AnthropicProvider: LLMProviderAdapter {
             // Track in-progress content blocks by index
             // For tool_use blocks: (id, name, accumulatedInputJSON)
             var pendingToolBlocks: [Int: (id: String, name: String, inputJSON: String)] = [:]
-            // Track which block indices are thinking blocks
-            var thinkingBlockIndices: Set<Int> = []
+            // Track in-progress thinking blocks by index (text + signature)
+            var pendingThinkingBlocks: [Int: (thinking: String, signature: String)] = [:]
+            var completedThinkingBlocks: [AnthropicThinkingBlock] = []
 
             for try await rawLine in bytes.lines {
                 let line = rawLine.trimmingCharacters(in: .newlines)
@@ -340,7 +341,11 @@ final class AnthropicProvider: LLMProviderAdapter {
                         let name = contentBlock["name"] as? String ?? ""
                         pendingToolBlocks[index] = (id: id, name: name, inputJSON: "")
                     } else if blockType == "thinking" {
-                        thinkingBlockIndices.insert(index)
+                        pendingThinkingBlocks[index] = (thinking: "", signature: "")
+                    } else if blockType == "redacted_thinking" {
+                        // Redacted thinking is delivered complete in content_block_start.
+                        let data = contentBlock["data"] as? String ?? ""
+                        completedThinkingBlocks.append(.redacted(data: data))
                     }
 
                 case "content_block_delta":
@@ -350,8 +355,18 @@ final class AnthropicProvider: LLMProviderAdapter {
                     else { continue }
 
                     if deltaType == "thinking_delta", let text = delta["thinking"] as? String, !text.isEmpty {
-                        // Accumulate thinking content
+                        // Accumulate thinking content (global for UI + per-block for replay)
                         thinkingText.append(text)
+                        if var pending = pendingThinkingBlocks[index] {
+                            pending.thinking += text
+                            pendingThinkingBlocks[index] = pending
+                        }
+                    } else if deltaType == "signature_delta", let sig = delta["signature"] as? String, !sig.isEmpty {
+                        // Accumulate signature for the thinking block
+                        if var pending = pendingThinkingBlocks[index] {
+                            pending.signature += sig
+                            pendingThinkingBlocks[index] = pending
+                        }
                     } else if deltaType == "text_delta", let text = delta["text"] as? String, !text.isEmpty {
                         streamedText.append(text)
                         if let onStreamedText { onStreamedText(streamedText) }
@@ -364,7 +379,11 @@ final class AnthropicProvider: LLMProviderAdapter {
 
                 case "content_block_stop":
                     guard let index = eventObject["index"] as? Int else { continue }
-                    thinkingBlockIndices.remove(index)
+                    if let pending = pendingThinkingBlocks.removeValue(forKey: index) {
+                        completedThinkingBlocks.append(.thinking(
+                            text: pending.thinking, signature: pending.signature
+                        ))
+                    }
                     if let pending = pendingToolBlocks.removeValue(forKey: index) {
                         let argumentsJSON = pending.inputJSON.isEmpty ? "{}" : pending.inputJSON
                         toolCalls.append(AgentToolCall(id: pending.id, name: pending.name, argumentsJSON: argumentsJSON))
@@ -422,7 +441,8 @@ final class AnthropicProvider: LLMProviderAdapter {
             return AgentLLMResponse(
                 textContent: streamedText, toolCalls: toolCalls,
                 usage: usage, stopReason: stopReason,
-                thinkingContent: finalThinking.isEmpty ? nil : finalThinking
+                thinkingContent: finalThinking.isEmpty ? nil : finalThinking,
+                replayState: completedThinkingBlocks.isEmpty ? nil : .anthropicThinking(completedThinkingBlocks)
             )
         }
     }
@@ -439,6 +459,17 @@ final class AnthropicProvider: LLMProviderAdapter {
                 appendMessage(&messages, role: "user", blocks: [.text(text)])
             case let .assistantMessage(msg):
                 var blocks: [AnthropicContentBlock] = []
+                // Thinking blocks must come first and be passed back unchanged.
+                if case let .anthropicThinking(thinkingBlocks) = msg.replayState {
+                    for block in thinkingBlocks {
+                        switch block {
+                        case let .thinking(text, signature):
+                            blocks.append(.thinking(thinking: text, signature: signature))
+                        case let .redacted(data):
+                            blocks.append(.redactedThinking(data: data))
+                        }
+                    }
+                }
                 if !msg.text.isEmpty { blocks.append(.text(msg.text)) }
                 for tc in msg.toolCalls {
                     let inputValue = LLMProviderHelpers.parseJSONToJSONValue(tc.argumentsJSON)

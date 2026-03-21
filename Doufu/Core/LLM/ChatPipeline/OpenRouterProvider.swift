@@ -363,7 +363,8 @@ final class OpenRouterProvider: LLMProviderAdapter {
                 toolCalls: finishedToolCalls,
                 usage: responseUsage,
                 stopReason: stopReason,
-                thinkingContent: nil
+                thinkingContent: nil,
+                replayState: nil
             )
         }
     }

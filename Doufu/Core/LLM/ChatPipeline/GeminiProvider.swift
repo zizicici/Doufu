@@ -331,7 +331,8 @@ final class GeminiProvider: LLMProviderAdapter {
 
             return AgentLLMResponse(
                 textContent: streamedText, toolCalls: toolCalls,
-                usage: usage, stopReason: stopReason, thinkingContent: nil
+                usage: usage, stopReason: stopReason, thinkingContent: nil,
+                replayState: nil
             )
         }
     }

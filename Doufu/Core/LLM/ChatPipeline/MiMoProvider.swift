@@ -400,7 +400,8 @@ final class MiMoProvider: LLMProviderAdapter {
                 toolCalls: finishedToolCalls,
                 usage: responseUsage,
                 stopReason: stopReason,
-                thinkingContent: thinkingContent.isEmpty ? nil : thinkingContent
+                thinkingContent: thinkingContent.isEmpty ? nil : thinkingContent,
+                replayState: nil
             )
         }
     }

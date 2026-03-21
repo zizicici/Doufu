@@ -187,7 +187,7 @@ final class ProjectChatOrchestrator {
 
                 // Auto-continue on max_tokens truncation
                 if response.stopReason == .maxTokens {
-                    state.conversation.append(.assistantMessage(AssistantMessage(text: responseText, toolCalls: [], thinkingContent: response.thinkingContent)))
+                    state.conversation.append(.assistantMessage(AssistantMessage(text: responseText, toolCalls: [], thinkingContent: response.thinkingContent, replayState: response.replayState)))
                     state.conversation.append(.userMessage("Please continue from where you left off."))
                     LLMProviderHelpers.debugLog("[Doufu Agent] response truncated (max_tokens), requesting continuation")
                     continue
@@ -217,7 +217,7 @@ final class ProjectChatOrchestrator {
                 }
             }
 
-            state.conversation.append(.assistantMessage(AssistantMessage(text: responseText, toolCalls: response.toolCalls, thinkingContent: response.thinkingContent)))
+            state.conversation.append(.assistantMessage(AssistantMessage(text: responseText, toolCalls: response.toolCalls, thinkingContent: response.thinkingContent, replayState: response.replayState)))
 
             try await executeToolCalls(
                 response.toolCalls,

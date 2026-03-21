@@ -235,6 +235,7 @@ final class OpenAIProvider: LLMProviderAdapter {
             var toolCalls: [AgentToolCall] = []
             var usage: ResponsesUsage?
             var isIncomplete = false
+            var reasoningItems: [JSONValue] = []
             // Track in-progress function calls by output_index
             var pendingFuncCalls: [Int: (callID: String, name: String, arguments: String)] = [:]
             var pendingDataLines: [String] = []
@@ -246,7 +247,7 @@ final class OpenAIProvider: LLMProviderAdapter {
                         from: pendingDataLines,
                         streamedText: &streamedText, toolCalls: &toolCalls,
                         pendingFuncCalls: &pendingFuncCalls, usage: &usage,
-                        isIncomplete: &isIncomplete,
+                        isIncomplete: &isIncomplete, reasoningItems: &reasoningItems,
                         onStreamedText: onStreamedText
                     )
                     pendingDataLines.removeAll(keepingCapacity: true)
@@ -263,7 +264,7 @@ final class OpenAIProvider: LLMProviderAdapter {
                 from: pendingDataLines,
                 streamedText: &streamedText, toolCalls: &toolCalls,
                 pendingFuncCalls: &pendingFuncCalls, usage: &usage,
-                isIncomplete: &isIncomplete,
+                isIncomplete: &isIncomplete, reasoningItems: &reasoningItems,
                 onStreamedText: onStreamedText
             )
 
@@ -286,7 +287,8 @@ final class OpenAIProvider: LLMProviderAdapter {
             return AgentLLMResponse(
                 textContent: streamedText, toolCalls: toolCalls,
                 usage: usage, stopReason: stopReason,
-                thinkingContent: nil
+                thinkingContent: nil,
+                replayState: reasoningItems.isEmpty ? nil : .openAIReasoning(reasoningItems)
             )
         }
     }
@@ -298,6 +300,7 @@ final class OpenAIProvider: LLMProviderAdapter {
         pendingFuncCalls: inout [Int: (callID: String, name: String, arguments: String)],
         usage: inout ResponsesUsage?,
         isIncomplete: inout Bool,
+        reasoningItems: inout [JSONValue],
         onStreamedText: (@MainActor (String) -> Void)?
     ) async throws {
         guard !dataLines.isEmpty else { return }
@@ -311,7 +314,7 @@ final class OpenAIProvider: LLMProviderAdapter {
                 obj, eventType: eventType,
                 streamedText: &streamedText, toolCalls: &toolCalls,
                 pendingFuncCalls: &pendingFuncCalls, usage: &usage,
-                isIncomplete: &isIncomplete,
+                isIncomplete: &isIncomplete, reasoningItems: &reasoningItems,
                 onStreamedText: onStreamedText
             )
             return
@@ -326,7 +329,7 @@ final class OpenAIProvider: LLMProviderAdapter {
                 obj, eventType: eventType,
                 streamedText: &streamedText, toolCalls: &toolCalls,
                 pendingFuncCalls: &pendingFuncCalls, usage: &usage,
-                isIncomplete: &isIncomplete,
+                isIncomplete: &isIncomplete, reasoningItems: &reasoningItems,
                 onStreamedText: onStreamedText
             )
         }
@@ -340,6 +343,7 @@ final class OpenAIProvider: LLMProviderAdapter {
         pendingFuncCalls: inout [Int: (callID: String, name: String, arguments: String)],
         usage: inout ResponsesUsage?,
         isIncomplete: inout Bool,
+        reasoningItems: inout [JSONValue],
         onStreamedText: (@MainActor (String) -> Void)?
     ) async throws {
         switch eventType {
@@ -358,34 +362,39 @@ final class OpenAIProvider: LLMProviderAdapter {
                 pendingFuncCalls[outputIndex] = pending
             }
 
-        // Function call item added — capture name and call_id
+        // Output item added — capture function calls and reasoning items
         case "response.output_item.added":
             guard let item = eventObject["item"] as? [String: Any],
-                  (item["type"] as? String) == "function_call"
+                  let itemType = item["type"] as? String
             else { return }
-            let outputIndex = eventObject["output_index"] as? Int ?? 0
-            let callID = (item["call_id"] as? String) ?? UUID().uuidString
-            let name = item["name"] as? String ?? ""
-            pendingFuncCalls[outputIndex] = (callID: callID, name: name, arguments: "")
-
-        // Function call completed
-        case "response.output_item.done":
-            guard let item = eventObject["item"] as? [String: Any],
-                  (item["type"] as? String) == "function_call"
-            else { return }
-            let outputIndex = eventObject["output_index"] as? Int ?? 0
-            if let pending = pendingFuncCalls.removeValue(forKey: outputIndex) {
-                // Use the streamed arguments if available, otherwise fall back to the done payload
-                let arguments = pending.arguments.isEmpty
-                    ? (item["arguments"] as? String ?? "{}")
-                    : pending.arguments
-                toolCalls.append(AgentToolCall(id: pending.callID, name: pending.name, argumentsJSON: arguments))
-            } else {
-                // We didn't track it incrementally; parse from the done event
+            if itemType == "function_call" {
+                let outputIndex = eventObject["output_index"] as? Int ?? 0
                 let callID = (item["call_id"] as? String) ?? UUID().uuidString
                 let name = item["name"] as? String ?? ""
-                let arguments = item["arguments"] as? String ?? "{}"
-                toolCalls.append(AgentToolCall(id: callID, name: name, argumentsJSON: arguments))
+                pendingFuncCalls[outputIndex] = (callID: callID, name: name, arguments: "")
+            }
+
+        // Output item completed — finalize function calls and capture reasoning items
+        case "response.output_item.done":
+            guard let item = eventObject["item"] as? [String: Any],
+                  let itemType = item["type"] as? String
+            else { return }
+            if itemType == "function_call" {
+                let outputIndex = eventObject["output_index"] as? Int ?? 0
+                if let pending = pendingFuncCalls.removeValue(forKey: outputIndex) {
+                    let arguments = pending.arguments.isEmpty
+                        ? (item["arguments"] as? String ?? "{}")
+                        : pending.arguments
+                    toolCalls.append(AgentToolCall(id: pending.callID, name: pending.name, argumentsJSON: arguments))
+                } else {
+                    let callID = (item["call_id"] as? String) ?? UUID().uuidString
+                    let name = item["name"] as? String ?? ""
+                    let arguments = item["arguments"] as? String ?? "{}"
+                    toolCalls.append(AgentToolCall(id: callID, name: name, argumentsJSON: arguments))
+                }
+            } else if itemType == "reasoning" {
+                // Capture the finalized reasoning item for multi-turn replay.
+                reasoningItems.append(LLMProviderHelpers.jsonObjectToJSONValue(item))
             }
 
         // Response completed — extract usage and any final data
@@ -402,12 +411,20 @@ final class OpenAIProvider: LLMProviderAdapter {
                 if let onStreamedText { onStreamedText(text) }
             }
             // Extract any function calls from the completed response if we missed them
-            if toolCalls.isEmpty, let outputItems = responseObject["output"] as? [[String: Any]] {
-                for item in outputItems where (item["type"] as? String) == "function_call" {
-                    let callID = (item["call_id"] as? String) ?? UUID().uuidString
-                    let name = item["name"] as? String ?? ""
-                    let arguments = item["arguments"] as? String ?? "{}"
-                    toolCalls.append(AgentToolCall(id: callID, name: name, argumentsJSON: arguments))
+            if let outputItems = responseObject["output"] as? [[String: Any]] {
+                if toolCalls.isEmpty {
+                    for item in outputItems where (item["type"] as? String) == "function_call" {
+                        let callID = (item["call_id"] as? String) ?? UUID().uuidString
+                        let name = item["name"] as? String ?? ""
+                        let arguments = item["arguments"] as? String ?? "{}"
+                        toolCalls.append(AgentToolCall(id: callID, name: name, argumentsJSON: arguments))
+                    }
+                }
+                // Extract reasoning items as fallback if we missed them during streaming
+                if reasoningItems.isEmpty {
+                    for item in outputItems where (item["type"] as? String) == "reasoning" {
+                        reasoningItems.append(LLMProviderHelpers.jsonObjectToJSONValue(item))
+                    }
                 }
             }
 
@@ -444,6 +461,12 @@ final class OpenAIProvider: LLMProviderAdapter {
                     content: [OpenAIToolUseContent(type: "input_text", text: text)]
                 )))
             case let .assistantMessage(msg):
+                // Replay reasoning items from the previous response for continuity.
+                if case let .openAIReasoning(items) = msg.replayState {
+                    for item in items {
+                        result.append(.reasoning(item))
+                    }
+                }
                 if !msg.text.isEmpty {
                     result.append(.message(OpenAIToolUseMessage(
                         role: "assistant",
