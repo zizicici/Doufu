@@ -42,6 +42,7 @@ final class OpenAIProvider: LLMProviderAdapter {
             input: inputItems,
             stream: true,
             store: isChatGPTCodexBackend(url: credential.baseURL) ? false : nil,
+            maxOutputTokens: credential.profile.maxOutputTokens,
             reasoning: sendReasoning ? ResponsesReasoning(effort: initialReasoningEffort) : nil,
             text: responseFormat.map { ResponsesTextConfiguration(format: $0) }
         )
@@ -54,16 +55,18 @@ final class OpenAIProvider: LLMProviderAdapter {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
             request.setValue("Bearer \(credential.bearerToken)", forHTTPHeaderField: "Authorization")
-            request.setValue("responses=experimental", forHTTPHeaderField: "OpenAI-Beta")
-            request.setValue("codex_cli_rs", forHTTPHeaderField: "originator")
+            let isChatGPT = isChatGPTCodexBackend(url: credential.baseURL)
+            if isChatGPT {
+                request.setValue("codex_cli_rs", forHTTPHeaderField: "originator")
+                if let accountID = credential.chatGPTAccountID?.trimmingCharacters(in: .whitespacesAndNewlines), !accountID.isEmpty {
+                    request.setValue(accountID, forHTTPHeaderField: "chatgpt-account-id")
+                }
+            }
             let timeoutSeconds = LLMProviderHelpers.timeoutSeconds(
                 for: activeRequestBody.reasoning?.effort ?? .high,
                 configuration: configuration
             )
             request.timeoutInterval = timeoutSeconds
-            if let accountID = credential.chatGPTAccountID?.trimmingCharacters(in: .whitespacesAndNewlines), !accountID.isEmpty {
-                request.setValue(accountID, forHTTPHeaderField: "chatgpt-account-id")
-            }
             request.httpBody = try jsonEncoder.encode(activeRequestBody)
 
             let (bytes, response) = try await URLSession.shared.bytes(for: request)
@@ -174,6 +177,7 @@ final class OpenAIProvider: LLMProviderAdapter {
             tools: toolDefinitions,
             stream: true,
             store: isChatGPT ? false : nil,
+            maxOutputTokens: credential.profile.maxOutputTokens,
             reasoning: sendReasoning ? ResponsesReasoning(effort: effort) : nil
         )
 
@@ -183,9 +187,11 @@ final class OpenAIProvider: LLMProviderAdapter {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         request.setValue("Bearer \(credential.bearerToken)", forHTTPHeaderField: "Authorization")
-        request.setValue("responses=experimental", forHTTPHeaderField: "OpenAI-Beta")
-        if let accountID = credential.chatGPTAccountID?.trimmingCharacters(in: .whitespacesAndNewlines), !accountID.isEmpty {
-            request.setValue(accountID, forHTTPHeaderField: "chatgpt-account-id")
+        if isChatGPT {
+            request.setValue("codex_cli_rs", forHTTPHeaderField: "originator")
+            if let accountID = credential.chatGPTAccountID?.trimmingCharacters(in: .whitespacesAndNewlines), !accountID.isEmpty {
+                request.setValue(accountID, forHTTPHeaderField: "chatgpt-account-id")
+            }
         }
         request.httpBody = try jsonEncoder.encode(requestBody)
 

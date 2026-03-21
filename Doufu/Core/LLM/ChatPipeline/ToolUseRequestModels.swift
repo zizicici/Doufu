@@ -16,7 +16,13 @@ struct OpenAIToolUseRequest: Encodable {
     let tools: [OpenAIToolDefinition]
     let stream: Bool
     let store: Bool?
+    let maxOutputTokens: Int?
     let reasoning: ResponsesReasoning?
+
+    private enum CodingKeys: String, CodingKey {
+        case model, instructions, input, tools, stream, store, reasoning
+        case maxOutputTokens = "max_output_tokens"
+    }
 }
 
 enum OpenAIToolUseInputItem: Encodable {

@@ -13,8 +13,14 @@ struct ResponsesRequest: Encodable {
     let input: [ResponseInputMessage]
     let stream: Bool?
     let store: Bool?
+    let maxOutputTokens: Int?
     var reasoning: ResponsesReasoning?
     var text: ResponsesTextConfiguration?
+
+    private enum CodingKeys: String, CodingKey {
+        case model, instructions, input, stream, store, reasoning, text
+        case maxOutputTokens = "max_output_tokens"
+    }
 }
 
 struct ResponsesTextConfiguration: Encodable {
