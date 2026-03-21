@@ -19,7 +19,7 @@ final class ModelConfigurationViewController: UITableViewController {
     private var providers: [LLMProviderRecord] = []
     private var availableProviderIDs: Set<String> = []
     private var state: SelectionState
-    private let projectUsageIdentifier: String
+    private let projectUsageIdentifier: String?
     private let usageStore = LLMTokenUsageStore.shared
     private let providerStore = LLMProviderSettingsStore.shared
     private let modelDiscoveryService = LLMProviderModelDiscoveryService()
@@ -46,7 +46,7 @@ final class ModelConfigurationViewController: UITableViewController {
     init(
         initialState: SelectionState,
         showsResetToDefaults: Bool,
-        projectUsageIdentifier: String,
+        projectUsageIdentifier: String?,
         inheritedState: SelectionState? = nil,
         inheritedStateProvider: (() -> SelectionState?)? = nil,
         inheritTitle: String? = nil

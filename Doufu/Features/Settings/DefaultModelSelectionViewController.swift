@@ -22,7 +22,7 @@ final class DefaultModelSelectionViewController: UIViewController {
         let controller = ModelConfigurationViewController(
             initialState: initialState,
             showsResetToDefaults: modelSelectionStore.loadAppDefaultSelection() != nil,
-            projectUsageIdentifier: "app-default"
+            projectUsageIdentifier: nil
         )
         controller.onSelectionStateChanged = { [weak self] state in
             guard let self else { return SelectionApplyOutcome(hasExplicitSelection: false) }
