@@ -323,7 +323,7 @@ final class LLMProviderSettingsStore {
 
     func loadProviders() -> [LLMProviderRecord] {
         guard let result = try? dbPool.read({ db -> [LLMProviderRecord] in
-            let dbProviders = try DBProvider.order(Column("id").asc).fetchAll(db)
+            let dbProviders = try DBProvider.order(Column("created_at").asc).fetchAll(db)
             return try dbProviders.map { dbProvider in
                 let dbModels = try DBProviderModel
                     .filter(Column("provider_id") == dbProvider.id)
