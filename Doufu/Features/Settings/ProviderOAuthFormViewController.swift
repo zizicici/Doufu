@@ -9,21 +9,8 @@ import AuthenticationServices
 import SafariServices
 import UIKit
 
-final class ProviderOAuthFormViewController: UITableViewController, SFSafariViewControllerDelegate, ASWebAuthenticationPresentationContextProviding {
-
-    private enum Section: Int, CaseIterable {
-        case label
-        case oauth
-        case manual
-        case manageModels
-        case storedModels
-        case addProvider
-    }
-
-    private enum ManualRow: Int, CaseIterable {
-        case httpsURL
-        case bearerToken
-    }
+final class ProviderOAuthFormViewController: UIViewController, UITableViewDelegate, SFSafariViewControllerDelegate, ASWebAuthenticationPresentationContextProviding {
+    private let tableView = UITableView(frame: .zero, style: .insetGrouped)
 
     private let store = LLMProviderSettingsStore.shared
     private let modelManagement = ProviderModelManagementCoordinator()
@@ -37,6 +24,8 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
     private var manualBearerTokenText = ""
     private var oauthSuggestedAutoAppendV1 = true
     private var oauthDerivedChatGPTAccountID: String?
+
+    private var diffableDataSource: OAuthFormDataSource!
 
     private var isEditingProvider: Bool {
         editingProvider != nil
@@ -66,7 +55,7 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
         editingProvider = nil
         self.providerKind = providerKind
         oauthSuggestedAutoAppendV1 = providerKind.defaultAutoAppendV1
-        super.init(style: .insetGrouped)
+        super.init(nibName: nil, bundle: nil)
     }
 
     init(provider: LLMProviderRecord) {
@@ -76,7 +65,7 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
         manualBaseURLText = provider.baseURLString
         oauthSuggestedAutoAppendV1 = provider.autoAppendV1
         oauthDerivedChatGPTAccountID = provider.chatGPTAccountID
-        super.init(style: .insetGrouped)
+        super.init(nibName: nil, bundle: nil)
     }
 
     @available(*, unavailable)
@@ -86,7 +75,17 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        view.backgroundColor = .doufuBackground
         tableView.backgroundColor = .doufuBackground
+        tableView.delegate = self
+        tableView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(tableView)
+        NSLayoutConstraint.activate([
+            tableView.topAnchor.constraint(equalTo: view.topAnchor),
+            tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            tableView.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor)
+        ])
         title = providerKind.displayName + " · " + String(localized: "providers.auth_method.oauth.title")
         if let editingProvider {
             manualBearerTokenText = (try? store.loadOAuthBearerToken(for: editingProvider.id)) ?? ""
@@ -96,13 +95,14 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
         tableView.register(SettingsSecureInputCell.self, forCellReuseIdentifier: SettingsSecureInputCell.reuseIdentifier)
         tableView.register(SettingsCenteredButtonCell.self, forCellReuseIdentifier: SettingsCenteredButtonCell.reuseIdentifier)
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "ProviderCell")
+
+        configureDiffableDataSource()
+        applySnapshot()
     }
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        if isEditingProvider {
-            tableView.reloadData()
-        }
+        applySnapshot()
     }
 
     override func viewDidDisappear(_ animated: Bool) {
@@ -110,76 +110,28 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
         modelManagement.cancelRefreshIfNeeded(whenViewRemoved: view.window == nil)
     }
 
-    override func numberOfSections(in tableView: UITableView) -> Int {
-        Section.allCases.count
-    }
+    // MARK: - Diffable DataSource
 
-    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        guard let section = Section(rawValue: section) else {
-            return 0
+    private func configureDiffableDataSource() {
+        diffableDataSource = OAuthFormDataSource(
+            tableView: tableView
+        ) { [weak self] tableView, indexPath, itemID in
+            guard let self else { return UITableViewCell() }
+            return self.cell(for: tableView, indexPath: indexPath, itemID: itemID)
         }
-
-        switch section {
-        case .label, .oauth, .addProvider:
-            return 1
-        case .manual:
-            return ManualRow.allCases.count
-        case .storedModels:
-            guard isEditingProvider else {
-                return 0
-            }
-            return max(storedModels().count, 1)
-        case .manageModels:
-            return isEditingProvider ? ProviderModelManageRow.allCases.count : 0
+        diffableDataSource.defaultRowAnimation = .none
+        diffableDataSource.footerProvider = { [weak self] sectionID in
+            self?.footer(for: sectionID)
         }
     }
 
-    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
-        guard let section = Section(rawValue: section) else {
-            return nil
-        }
-
-        switch section {
-        case .label:
-            return String(localized: "providers.form.section.label")
-        case .oauth:
-            return String(localized: "providers.form.section.oauth")
-        case .manual:
-            return String(localized: "providers.oauth_form.section.manual")
-        case .storedModels:
-            return isEditingProvider ? String(localized: "provider_model.section.stored_models") : nil
-        case .manageModels:
-            return isEditingProvider ? String(localized: "provider_model.section.manage_models") : nil
-        case .addProvider:
-            return nil
-        }
-    }
-
-    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
-        guard let section = Section(rawValue: section) else {
-            return nil
-        }
-
-        switch section {
-        case .oauth:
-            return oauthFooterText()
-        case .manual:
-            return String(localized: "providers.form.footer.default_base_url \(providerKind.defaultBaseURLString)")
-        default:
-            return nil
-        }
-    }
-
-    override func tableView(
-        _ tableView: UITableView,
-        cellForRowAt indexPath: IndexPath
+    private func cell(
+        for tableView: UITableView,
+        indexPath: IndexPath,
+        itemID: OAuthFormItemID
     ) -> UITableViewCell {
-        guard let section = Section(rawValue: indexPath.section) else {
-            return UITableViewCell()
-        }
-
-        switch section {
-        case .label:
+        switch itemID {
+        case .labelInput:
             guard
                 let cell = tableView.dequeueReusableCell(
                     withIdentifier: SettingsTextInputCell.reuseIdentifier,
@@ -195,11 +147,11 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
                 autocapitalizationType: .words
             ) { [weak self] text in
                 self?.labelText = text
-                self?.refreshAddProviderCell()
+                self?.refreshSubmitButton()
             }
             return cell
 
-        case .oauth:
+        case .oauthSignIn:
             guard
                 let cell = tableView.dequeueReusableCell(
                     withIdentifier: SettingsCenteredButtonCell.reuseIdentifier,
@@ -214,69 +166,52 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
             )
             return cell
 
-        case .manual:
-            guard let row = ManualRow(rawValue: indexPath.row) else {
+        case .manualBaseURL:
+            guard
+                let cell = tableView.dequeueReusableCell(
+                    withIdentifier: SettingsTextInputCell.reuseIdentifier,
+                    for: indexPath
+                ) as? SettingsTextInputCell
+            else {
                 return UITableViewCell()
             }
-
-            switch row {
-            case .httpsURL:
-                guard
-                    let cell = tableView.dequeueReusableCell(
-                        withIdentifier: SettingsTextInputCell.reuseIdentifier,
-                        for: indexPath
-                    ) as? SettingsTextInputCell
-                else {
-                    return UITableViewCell()
-                }
-                cell.configure(
-                    title: nil,
-                    text: manualBaseURLText,
-                    placeholder: providerKind.defaultBaseURLString,
-                    keyboardType: .URL,
-                    autocapitalizationType: .none
-                ) { [weak self] text in
-                    self?.manualBaseURLText = text
-                    self?.refreshAddProviderCell()
-                }
-                return cell
-
-            case .bearerToken:
-                guard
-                    let cell = tableView.dequeueReusableCell(
-                        withIdentifier: SettingsSecureInputCell.reuseIdentifier,
-                        for: indexPath
-                    ) as? SettingsSecureInputCell
-                else {
-                    return UITableViewCell()
-                }
-                cell.configure(
-                    text: manualBearerTokenText,
-                    placeholder: String(localized: "providers.form.placeholder.bearer_token")
-                ) { [weak self] text in
-                    self?.manualBearerTokenText = text
-                    self?.refreshAddProviderCell()
-                }
-                return cell
+            cell.configure(
+                title: nil,
+                text: manualBaseURLText,
+                placeholder: providerKind.defaultBaseURLString,
+                keyboardType: .URL,
+                autocapitalizationType: .none
+            ) { [weak self] text in
+                self?.manualBaseURLText = text
+                self?.refreshSubmitButton()
             }
+            return cell
 
-        case .storedModels:
+        case .manualBearerToken:
+            guard
+                let cell = tableView.dequeueReusableCell(
+                    withIdentifier: SettingsSecureInputCell.reuseIdentifier,
+                    for: indexPath
+                ) as? SettingsSecureInputCell
+            else {
+                return UITableViewCell()
+            }
+            cell.configure(
+                text: manualBearerTokenText,
+                placeholder: String(localized: "providers.form.placeholder.bearer_token")
+            ) { [weak self] text in
+                self?.manualBearerTokenText = text
+                self?.refreshSubmitButton()
+            }
+            return cell
+
+        case .storedModel(let id):
             let cell = tableView.dequeueReusableCell(withIdentifier: "ProviderCell", for: indexPath)
+            cell.selectionStyle = .default
             let models = storedModels()
-            if models.isEmpty {
-                cell.selectionStyle = .none
-                cell.accessoryType = .none
-                var configuration = UIListContentConfiguration.cell()
-                configuration.text = String(localized: "provider_model.stored_models.empty")
-                configuration.textProperties.color = .secondaryLabel
-                configuration.textProperties.alignment = .center
-                cell.contentConfiguration = configuration
+            guard let model = models.first(where: { $0.id == id }) else {
                 return cell
             }
-            guard models.indices.contains(indexPath.row) else {
-                return cell
-            }
-            let model = models[indexPath.row]
             var configuration = cell.defaultContentConfiguration()
             configuration.text = model.effectiveDisplayName
             let sourceLabel = model.source == .official
@@ -288,25 +223,38 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
             cell.accessoryType = .disclosureIndicator
             return cell
 
-        case .manageModels:
+        case .emptyModels:
             let cell = tableView.dequeueReusableCell(withIdentifier: "ProviderCell", for: indexPath)
-            guard let row = ProviderModelManageRow(rawValue: indexPath.row) else {
-                return cell
-            }
+            cell.selectionStyle = .none
+            cell.accessoryType = .none
+            var configuration = UIListContentConfiguration.cell()
+            configuration.text = String(localized: "provider_model.stored_models.empty")
+            configuration.textProperties.color = .secondaryLabel
+            configuration.textProperties.alignment = .center
+            cell.contentConfiguration = configuration
+            return cell
+
+        case .refreshModels:
+            let cell = tableView.dequeueReusableCell(withIdentifier: "ProviderCell", for: indexPath)
+            cell.selectionStyle = .default
             var configuration = cell.defaultContentConfiguration()
-            switch row {
-            case .refreshOfficialModels:
-                configuration.text = modelManagement.isRefreshingModels
-                    ? String(localized: "provider_model.action.refreshing_models")
-                    : String(localized: "provider_model.action.refresh_models")
-                configuration.secondaryText = String(localized: "provider_model.action.refresh_models.subtitle")
-                cell.accessoryType = .none
-            case .addCustomModel:
-                configuration.text = String(localized: "provider_model.action.add_custom_model")
-                configuration.secondaryText = String(localized: "provider_model.action.add_custom_model.subtitle")
-                cell.accessoryType = .disclosureIndicator
-            }
+            configuration.text = modelManagement.isRefreshingModels
+                ? String(localized: "provider_model.action.refreshing_models")
+                : String(localized: "provider_model.action.refresh_models")
+            configuration.secondaryText = String(localized: "provider_model.action.refresh_models.subtitle")
             configuration.secondaryTextProperties.color = .secondaryLabel
+            cell.accessoryType = .none
+            cell.contentConfiguration = configuration
+            return cell
+
+        case .addCustomModel:
+            let cell = tableView.dequeueReusableCell(withIdentifier: "ProviderCell", for: indexPath)
+            cell.selectionStyle = .default
+            var configuration = cell.defaultContentConfiguration()
+            configuration.text = String(localized: "provider_model.action.add_custom_model")
+            configuration.secondaryText = String(localized: "provider_model.action.add_custom_model.subtitle")
+            configuration.secondaryTextProperties.color = .secondaryLabel
+            cell.accessoryType = .disclosureIndicator
             cell.contentConfiguration = configuration
             return cell
 
@@ -324,85 +272,146 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
         }
     }
 
-    override func tableView(_ tableView: UITableView, willSelectRowAt indexPath: IndexPath) -> IndexPath? {
-        guard let section = Section(rawValue: indexPath.section) else {
-            return nil
+    // MARK: - Snapshot
+
+    private func buildSnapshot() -> NSDiffableDataSourceSnapshot<OAuthFormSectionID, OAuthFormItemID> {
+        var snapshot = NSDiffableDataSourceSnapshot<OAuthFormSectionID, OAuthFormItemID>()
+
+        snapshot.appendSections([.label, .oauth, .manual])
+        snapshot.appendItems([.labelInput], toSection: .label)
+        snapshot.appendItems([.oauthSignIn(isSigningIn: oauthService != nil)], toSection: .oauth)
+        snapshot.appendItems([.manualBaseURL, .manualBearerToken], toSection: .manual)
+
+        if isEditingProvider {
+            snapshot.appendSections([.manageModels, .storedModels])
+
+            let isRefreshing = modelManagement.isRefreshingModels
+            snapshot.appendItems([
+                .refreshModels(isRefreshing: isRefreshing),
+                .addCustomModel
+            ], toSection: .manageModels)
+
+            let models = storedModels()
+            if models.isEmpty {
+                snapshot.appendItems([.emptyModels], toSection: .storedModels)
+            } else {
+                snapshot.appendItems(models.map { .storedModel(id: $0.id) }, toSection: .storedModels)
+            }
         }
 
-        switch section {
+        snapshot.appendSections([.addProvider])
+        snapshot.appendItems([.addProvider], toSection: .addProvider)
+
+        return snapshot
+    }
+
+    private func applySnapshot() {
+        var snapshot = buildSnapshot()
+        snapshot.reconfigureItems(snapshot.itemIdentifiers)
+        diffableDataSource.apply(snapshot, animatingDifferences: false)
+    }
+
+    private func refreshSubmitButton() {
+        guard var snapshot = diffableDataSource?.snapshot() else { return }
+        snapshot.reconfigureItems([.addProvider])
+        diffableDataSource.apply(snapshot, animatingDifferences: false)
+    }
+
+    // MARK: - Footer
+
+    private func footer(for sectionID: OAuthFormSectionID) -> String? {
+        switch sectionID {
         case .oauth:
-            return indexPath
-        case .addProvider:
-            return canSubmitProvider ? indexPath : nil
-        case .manageModels:
-            return modelManagement.isRefreshingModels ? nil : indexPath
-        case .storedModels:
-            let models = storedModels()
-            guard models.indices.contains(indexPath.row) else { return nil }
-            return indexPath
-        case .label, .manual:
+            return oauthFooterText()
+        case .manual:
+            return String(localized: "providers.form.footer.default_base_url \(providerKind.defaultBaseURLString)")
+        default:
             return nil
         }
     }
 
-    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+    // MARK: - Delegate
+
+    func tableView(_ tableView: UITableView, willSelectRowAt indexPath: IndexPath) -> IndexPath? {
+        guard let itemID = diffableDataSource.itemIdentifier(for: indexPath) else {
+            return nil
+        }
+
+        switch itemID {
+        case .oauthSignIn:
+            return indexPath
+        case .addProvider:
+            return canSubmitProvider ? indexPath : nil
+        case .refreshModels:
+            return modelManagement.isRefreshingModels ? nil : indexPath
+        case .addCustomModel:
+            return indexPath
+        case .storedModel:
+            return indexPath
+        case .labelInput, .manualBaseURL, .manualBearerToken, .emptyModels:
+            return nil
+        }
+    }
+
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         defer { tableView.deselectRow(at: indexPath, animated: true) }
 
-        guard let section = Section(rawValue: indexPath.section) else {
+        guard let itemID = diffableDataSource.itemIdentifier(for: indexPath) else {
             return
         }
 
-        switch section {
-        case .oauth:
+        switch itemID {
+        case .oauthSignIn:
             signInWithProvider()
         case .addProvider:
             if canSubmitProvider {
                 submitProvider()
             }
-        case .storedModels:
+        case .storedModel(let id):
             let models = storedModels()
-            guard models.indices.contains(indexPath.row),
+            guard let model = models.first(where: { $0.id == id }),
                   let provider = latestEditingProvider()
             else { return }
-            let model = models[indexPath.row]
             if model.source == .official {
                 modelManagement.presentModelDetail(
                     for: provider,
                     model: model,
-                    from: self
+                    tableView: tableView,
+                    from: self,
+                    onUpdate: { [weak self] in self?.applySnapshot() }
                 )
             } else {
                 modelManagement.presentModelEditor(
                     for: provider,
                     existingModel: model,
-                    from: self
+                    tableView: tableView,
+                    from: self,
+                    onUpdate: { [weak self] in self?.applySnapshot() }
                 )
             }
-        case .manageModels:
-            guard let row = ProviderModelManageRow(rawValue: indexPath.row) else {
+        case .refreshModels:
+            guard let provider = latestEditingProvider() else {
                 return
             }
-            switch row {
-            case .refreshOfficialModels:
-                guard let provider = latestEditingProvider() else {
-                    return
-                }
-                modelManagement.refreshOfficialModels(
-                    for: provider,
-                    manageSectionIndex: Section.manageModels.rawValue,
-                    in: self
-                )
-            case .addCustomModel:
-                guard let provider = latestEditingProvider() else {
-                    return
-                }
-                modelManagement.presentModelEditor(
-                    for: provider,
-                    existingModel: nil,
-                    from: self
-                )
+            modelManagement.refreshOfficialModels(
+                for: provider,
+                manageSectionIndex: 0,
+                tableView: tableView,
+                in: self,
+                onUpdate: { [weak self] in self?.applySnapshot() }
+            )
+        case .addCustomModel:
+            guard let provider = latestEditingProvider() else {
+                return
             }
-        case .label, .manual:
+            modelManagement.presentModelEditor(
+                for: provider,
+                existingModel: nil,
+                tableView: tableView,
+                from: self,
+                onUpdate: { [weak self] in self?.applySnapshot() }
+            )
+        case .labelInput, .manualBaseURL, .manualBearerToken, .emptyModels:
             break
         }
     }
@@ -434,7 +443,7 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
 
         let oauthService = OpenAIOAuthService()
         self.oauthService = oauthService
-        refreshOAuthAndAddProviderCells()
+        applySnapshot()
 
         oauthService.startWebAuth(contextProvider: self) { [weak self] result in
             self?.handleOAuthResult(result)
@@ -496,7 +505,7 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
     private func handleOAuthResult(_ result: Result<OpenAIOAuthService.SignInResult, Error>) {
         oauthService = nil
         dismissLoginIfNeeded()
-        refreshOAuthAndAddProviderCells()
+        applySnapshot()
 
         switch result {
         case let .success(payload):
@@ -506,7 +515,7 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
             manualBearerTokenText = payload.bearerToken
             oauthSuggestedAutoAppendV1 = payload.autoAppendV1
             oauthDerivedChatGPTAccountID = payload.chatGPTAccountID
-            refreshManualInputRows()
+            applySnapshot()
 
         case let .failure(error):
             if
@@ -533,7 +542,7 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
         loginSafariViewController = nil
         oauthService?.cancel()
         oauthService = nil
-        refreshOAuthAndAddProviderCells()
+        applySnapshot()
     }
 
     // MARK: - ASWebAuthenticationPresentationContextProviding
@@ -555,48 +564,6 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
             self?.popToManageProviders()
         }))
         present(alert, animated: true)
-    }
-
-    private func refreshAddProviderCell() {
-        let sectionIndex = Section.addProvider.rawValue
-        let rowIndex = 0
-        guard tableView.numberOfSections > sectionIndex else {
-            return
-        }
-        let indexPath = IndexPath(row: rowIndex, section: sectionIndex)
-        guard tableView.numberOfRows(inSection: sectionIndex) > rowIndex else {
-            return
-        }
-        tableView.reloadRows(at: [indexPath], with: .none)
-    }
-
-    private func refreshOAuthAndAddProviderCells() {
-        let oauthIndexPath = IndexPath(row: 0, section: Section.oauth.rawValue)
-        if tableView.numberOfSections > Section.oauth.rawValue,
-           tableView.numberOfRows(inSection: Section.oauth.rawValue) > 0 {
-            tableView.reloadRows(at: [oauthIndexPath], with: .none)
-        }
-        refreshAddProviderCell()
-    }
-
-    private func refreshManualInputRows() {
-        let sectionIndex = Section.manual.rawValue
-        guard tableView.numberOfSections > sectionIndex else {
-            return
-        }
-
-        let rows = [ManualRow.httpsURL.rawValue, ManualRow.bearerToken.rawValue]
-        let indexPaths = rows.compactMap { row -> IndexPath? in
-            guard tableView.numberOfRows(inSection: sectionIndex) > row else {
-                return nil
-            }
-            return IndexPath(row: row, section: sectionIndex)
-        }
-
-        if !indexPaths.isEmpty {
-            tableView.reloadRows(at: indexPaths, with: .none)
-        }
-        refreshAddProviderCell()
     }
 
     private func isValidOptionalBaseURL(_ baseURLString: String) -> Bool {
@@ -685,5 +652,58 @@ final class ProviderOAuthFormViewController: UITableViewController, SFSafariView
 
     private func storedModels() -> [LLMProviderModelRecord] {
         modelManagement.storedModels(for: latestEditingProvider())
+    }
+}
+
+// MARK: - Diffable DataSource Types
+
+nonisolated enum OAuthFormSectionID: Hashable, Sendable {
+    case label
+    case oauth
+    case manual
+    case manageModels
+    case storedModels
+    case addProvider
+
+    var header: String? {
+        switch self {
+        case .label:
+            return String(localized: "providers.form.section.label")
+        case .oauth:
+            return String(localized: "providers.form.section.oauth")
+        case .manual:
+            return String(localized: "providers.oauth_form.section.manual")
+        case .storedModels:
+            return String(localized: "provider_model.section.stored_models")
+        case .manageModels:
+            return String(localized: "provider_model.section.manage_models")
+        case .addProvider:
+            return nil
+        }
+    }
+}
+
+nonisolated enum OAuthFormItemID: Hashable, Sendable {
+    case labelInput
+    case oauthSignIn(isSigningIn: Bool)
+    case manualBaseURL
+    case manualBearerToken
+    case storedModel(id: String)
+    case emptyModels
+    case refreshModels(isRefreshing: Bool)
+    case addCustomModel
+    case addProvider
+}
+
+private final class OAuthFormDataSource: UITableViewDiffableDataSource<OAuthFormSectionID, OAuthFormItemID> {
+    var footerProvider: ((OAuthFormSectionID) -> String?)?
+
+    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
+        sectionIdentifier(for: section)?.header
+    }
+
+    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
+        guard let sectionID = sectionIdentifier(for: section) else { return nil }
+        return footerProvider?(sectionID) ?? nil
     }
 }

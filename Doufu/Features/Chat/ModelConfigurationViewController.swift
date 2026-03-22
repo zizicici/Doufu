@@ -8,7 +8,7 @@
 import UIKit
 
 @MainActor
-final class ModelConfigurationViewController: UITableViewController {
+final class ModelConfigurationViewController: UIViewController, UITableViewDelegate {
     typealias SelectionState = ModelSelectionDraft
 
     var onSelectionStateChanged: ((SelectionState) -> SelectionApplyOutcome)?
@@ -16,6 +16,7 @@ final class ModelConfigurationViewController: UITableViewController {
 
     // MARK: - State
 
+    private let tableView = UITableView(frame: .zero, style: .insetGrouped)
     private var providers: [LLMProviderRecord] = []
     private var availableProviderIDs: Set<String> = []
     private var state: SelectionState
@@ -41,7 +42,7 @@ final class ModelConfigurationViewController: UITableViewController {
         return formatter
     }()
 
-    private var diffableDataSource: UITableViewDiffableDataSource<ModelConfigSectionID, ModelConfigItemID>!
+    private var diffableDataSource: ModelConfigDataSource!
 
     init(
         initialState: SelectionState,
@@ -58,7 +59,7 @@ final class ModelConfigurationViewController: UITableViewController {
         self.inheritedState = inheritedStateProvider?() ?? inheritedState
         self.inheritTitle = inheritTitle
         self.isFollowingParent = (inheritedStateProvider != nil || inheritedState != nil) && !showsResetToDefaults
-        super.init(style: .insetGrouped)
+        super.init(nibName: nil, bundle: nil)
     }
 
     @available(*, unavailable)
@@ -70,10 +71,20 @@ final class ModelConfigurationViewController: UITableViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        view.backgroundColor = .doufuBackground
         tableView.backgroundColor = .doufuBackground
+        tableView.delegate = self
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "ProjectModelConfigCell")
         tableView.register(SettingsToggleCell.self, forCellReuseIdentifier: SettingsToggleCell.reuseIdentifier)
         tableView.register(ModelSearchBarCell.self, forCellReuseIdentifier: ModelSearchBarCell.reuseIdentifier)
+        tableView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(tableView)
+        NSLayoutConstraint.activate([
+            tableView.topAnchor.constraint(equalTo: view.topAnchor),
+            tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
         configureDiffableDataSource()
         reloadProviderContext()
         reloadUsageData()
@@ -95,11 +106,17 @@ final class ModelConfigurationViewController: UITableViewController {
     // MARK: - Diffable DataSource Setup
 
     private func configureDiffableDataSource() {
-        diffableDataSource = UITableViewDiffableDataSource<ModelConfigSectionID, ModelConfigItemID>(
+        diffableDataSource = ModelConfigDataSource(
             tableView: tableView
         ) { [weak self] tableView, indexPath, itemID in
             guard let self else { return UITableViewCell() }
             return self.cell(for: tableView, indexPath: indexPath, itemID: itemID)
+        }
+        diffableDataSource.headerProvider = { [weak self] sectionID in
+            self?.sectionHeader(for: sectionID)
+        }
+        diffableDataSource.footerProvider = { [weak self] sectionID in
+            self?.sectionFooter(for: sectionID)
         }
         diffableDataSource.defaultRowAnimation = .none
     }
@@ -455,10 +472,7 @@ final class ModelConfigurationViewController: UITableViewController {
 
     // MARK: - Section Headers & Footers
 
-    override func tableView(_ tableView: UITableView, titleForHeaderInSection sectionIndex: Int) -> String? {
-        guard let sectionID = diffableDataSource.sectionIdentifier(for: sectionIndex) else {
-            return nil
-        }
+    private func sectionHeader(for sectionID: ModelConfigSectionID) -> String? {
         switch sectionID {
         case .inherit:
             return nil
@@ -486,10 +500,7 @@ final class ModelConfigurationViewController: UITableViewController {
         }
     }
 
-    override func tableView(_ tableView: UITableView, titleForFooterInSection sectionIndex: Int) -> String? {
-        guard let sectionID = diffableDataSource.sectionIdentifier(for: sectionIndex) else {
-            return nil
-        }
+    private func sectionFooter(for sectionID: ModelConfigSectionID) -> String? {
         switch sectionID {
         case .model:
             if isFollowingParent { return nil }
@@ -502,7 +513,7 @@ final class ModelConfigurationViewController: UITableViewController {
 
     // MARK: - Selection
 
-    override func tableView(_ tableView: UITableView, willSelectRowAt indexPath: IndexPath) -> IndexPath? {
+    func tableView(_ tableView: UITableView, willSelectRowAt indexPath: IndexPath) -> IndexPath? {
         guard let itemID = diffableDataSource.itemIdentifier(for: indexPath) else {
             return nil
         }
@@ -516,7 +527,7 @@ final class ModelConfigurationViewController: UITableViewController {
         }
     }
 
-    override func tableView(
+    func tableView(
         _ tableView: UITableView,
         trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath
     ) -> UISwipeActionsConfiguration? {
@@ -542,7 +553,7 @@ final class ModelConfigurationViewController: UITableViewController {
         return UISwipeActionsConfiguration(actions: [action])
     }
 
-    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         defer { tableView.deselectRow(at: indexPath, animated: true) }
         guard let itemID = diffableDataSource.itemIdentifier(for: indexPath) else {
             return
@@ -1054,5 +1065,22 @@ final class ModelConfigurationViewController: UITableViewController {
             )
         }
         return nil
+    }
+}
+
+// MARK: - DataSource (header/footer support)
+
+private final class ModelConfigDataSource: UITableViewDiffableDataSource<ModelConfigSectionID, ModelConfigItemID> {
+    var headerProvider: ((ModelConfigSectionID) -> String?)?
+    var footerProvider: ((ModelConfigSectionID) -> String?)?
+
+    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
+        guard let sectionID = sectionIdentifier(for: section) else { return nil }
+        return headerProvider?(sectionID) ?? nil
+    }
+
+    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
+        guard let sectionID = sectionIdentifier(for: section) else { return nil }
+        return footerProvider?(sectionID) ?? nil
     }
 }

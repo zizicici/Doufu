@@ -8,7 +8,9 @@
 import UIKit
 
 @MainActor
-final class ProjectSettingsViewController: UITableViewController {
+final class ProjectSettingsViewController: UIViewController, UITableViewDelegate {
+
+    private let tableView = UITableView(frame: .zero, style: .insetGrouped)
 
     private let projectURL: URL
     private let repositoryURL: URL
@@ -44,7 +46,7 @@ final class ProjectSettingsViewController: UITableViewController {
         projectNameText = projectName
         projectDescriptionText = AppProjectStore.shared.loadProjectDescription(projectURL: projectURL)
         toolPermissionOverride = AppProjectStore.shared.loadProjectToolPermissionOverride(projectURL: projectURL)
-        super.init(style: .insetGrouped)
+        super.init(nibName: nil, bundle: nil)
     }
 
     @available(*, unavailable)
@@ -64,7 +66,17 @@ final class ProjectSettingsViewController: UITableViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         title = String(localized: "project_settings.title")
+        view.backgroundColor = .doufuBackground
         tableView.backgroundColor = .doufuBackground
+        tableView.delegate = self
+        tableView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(tableView)
+        NSLayoutConstraint.activate([
+            tableView.topAnchor.constraint(equalTo: view.topAnchor),
+            tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
         tableView.keyboardDismissMode = .onDrag
         tableView.register(SettingsTextInputCell.self, forCellReuseIdentifier: SettingsTextInputCell.reuseIdentifier)
         tableView.register(SettingsCenteredButtonCell.self, forCellReuseIdentifier: SettingsCenteredButtonCell.reuseIdentifier)
@@ -335,7 +347,7 @@ final class ProjectSettingsViewController: UITableViewController {
 
     // MARK: - Selection
 
-    override func tableView(_ tableView: UITableView, willSelectRowAt indexPath: IndexPath) -> IndexPath? {
+    func tableView(_ tableView: UITableView, willSelectRowAt indexPath: IndexPath) -> IndexPath? {
         guard let itemID = diffableDataSource.itemIdentifier(for: indexPath) else { return nil }
         switch itemID {
         case .projectName, .capability:
@@ -346,7 +358,7 @@ final class ProjectSettingsViewController: UITableViewController {
         }
     }
 
-    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         defer { tableView.deselectRow(at: indexPath, animated: true) }
         guard let itemID = diffableDataSource.itemIdentifier(for: indexPath) else { return }
 
@@ -748,7 +760,10 @@ private final class ProjectDescriptionEditorViewController: UIViewController, UI
 
 // MARK: - Checkpoint History
 
-private final class ProjectCheckpointsViewController: UITableViewController {
+private final class ProjectCheckpointsViewController: UIViewController, UITableViewDelegate {
+
+    private let tableView = UITableView(frame: .zero, style: .insetGrouped)
+
     private let repositoryURL: URL
     private let projectID: String
     private let gitService = ProjectGitService.shared
@@ -767,7 +782,7 @@ private final class ProjectCheckpointsViewController: UITableViewController {
     init(repositoryURL: URL, projectID: String) {
         self.repositoryURL = repositoryURL
         self.projectID = projectID
-        super.init(style: .insetGrouped)
+        super.init(nibName: nil, bundle: nil)
     }
 
     @available(*, unavailable)
@@ -778,7 +793,17 @@ private final class ProjectCheckpointsViewController: UITableViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         title = String(localized: "checkpoint_list.title")
+        view.backgroundColor = .doufuBackground
         tableView.backgroundColor = .doufuBackground
+        tableView.delegate = self
+        tableView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(tableView)
+        NSLayoutConstraint.activate([
+            tableView.topAnchor.constraint(equalTo: view.topAnchor),
+            tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "CheckpointRow")
         configureDiffableDataSource()
         applySnapshot()
@@ -864,7 +889,7 @@ private final class ProjectCheckpointsViewController: UITableViewController {
 
     // MARK: - Selection
 
-    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         defer { tableView.deselectRow(at: indexPath, animated: true) }
         guard let itemID = diffableDataSource.itemIdentifier(for: indexPath) else { return }
 

@@ -14,7 +14,9 @@ import StoreKit
 import UIKit
 
 @MainActor
-final class SettingsViewController: UITableViewController {
+final class SettingsViewController: UIViewController, UITableViewDelegate {
+
+    private let tableView = UITableView(frame: .zero, style: .insetGrouped)
 
     static let supportEmail = "doufu@zi.ci"
     static let appStoreID = "6760194187"
@@ -29,7 +31,7 @@ final class SettingsViewController: UITableViewController {
     private var diffableDataSource: UITableViewDiffableDataSource<SettingsSectionID, SettingsItemID>!
 
     init() {
-        super.init(style: .insetGrouped)
+        super.init(nibName: nil, bundle: nil)
     }
 
     @available(*, unavailable)
@@ -46,7 +48,17 @@ final class SettingsViewController: UITableViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         title = String(localized: "settings.title")
+        view.backgroundColor = .doufuBackground
         tableView.backgroundColor = .doufuBackground
+        tableView.delegate = self
+        tableView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(tableView)
+        NSLayoutConstraint.activate([
+            tableView.topAnchor.constraint(equalTo: view.topAnchor),
+            tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "SettingsCell")
         tableView.register(AppCell.self, forCellReuseIdentifier: "AppCell")
         tableView.rowHeight = UITableView.automaticDimension
@@ -351,7 +363,7 @@ final class SettingsViewController: UITableViewController {
 
     // MARK: - Selection
 
-    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
         guard let itemID = diffableDataSource.itemIdentifier(for: indexPath) else { return }
 

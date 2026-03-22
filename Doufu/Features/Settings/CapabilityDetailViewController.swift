@@ -26,7 +26,9 @@ nonisolated enum CapabilityDetailItemID: Hashable, Sendable {
 // MARK: - ViewController
 
 @MainActor
-final class CapabilityDetailViewController: UITableViewController {
+final class CapabilityDetailViewController: UIViewController, UITableViewDelegate {
+
+    private let tableView = UITableView(frame: .zero, style: .insetGrouped)
 
     private let capabilityType: CapabilityType
     private let capabilityStore = ProjectCapabilityStore.shared
@@ -36,7 +38,7 @@ final class CapabilityDetailViewController: UITableViewController {
 
     init(capabilityType: CapabilityType) {
         self.capabilityType = capabilityType
-        super.init(style: .insetGrouped)
+        super.init(nibName: nil, bundle: nil)
     }
 
     @available(*, unavailable)
@@ -47,7 +49,17 @@ final class CapabilityDetailViewController: UITableViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         title = capabilityType.displayName
+        view.backgroundColor = .doufuBackground
         tableView.backgroundColor = .doufuBackground
+        tableView.delegate = self
+        tableView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(tableView)
+        NSLayoutConstraint.activate([
+            tableView.topAnchor.constraint(equalTo: view.topAnchor),
+            tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "Cell")
         tableView.register(CapabilitySwitchCell.self, forCellReuseIdentifier: CapabilitySwitchCell.reuseIdentifier)
         configureDiffableDataSource()
@@ -175,7 +187,7 @@ final class CapabilityDetailViewController: UITableViewController {
 
     // MARK: - Selection
 
-    override func tableView(_ tableView: UITableView, willSelectRowAt indexPath: IndexPath) -> IndexPath? {
+    func tableView(_ tableView: UITableView, willSelectRowAt indexPath: IndexPath) -> IndexPath? {
         guard let itemID = diffableDataSource.itemIdentifier(for: indexPath) else { return nil }
         switch itemID {
         case .systemPermission, .activityLog: return indexPath
@@ -183,7 +195,7 @@ final class CapabilityDetailViewController: UITableViewController {
         }
     }
 
-    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
         guard let itemID = diffableDataSource.itemIdentifier(for: indexPath) else { return }
 

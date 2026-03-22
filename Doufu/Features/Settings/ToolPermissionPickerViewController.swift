@@ -1,20 +1,20 @@
 //
 //  ToolPermissionPickerViewController.swift
 //  Doufu
-//
 
 import UIKit
 
 @MainActor
-final class ToolPermissionPickerViewController: UITableViewController {
+final class ToolPermissionPickerViewController: UIViewController, UITableViewDelegate {
 
     var onSelectionChanged: ((ToolPermissionMode?) -> Void)?
 
+    private let tableView = UITableView(frame: .zero, style: .insetGrouped)
     private let showsUseDefault: Bool
     private var selectedMode: ToolPermissionMode?
     private var isUsingDefault: Bool
 
-    private var diffableDataSource: UITableViewDiffableDataSource<ToolPermissionPickerSectionID, ToolPermissionPickerItemID>!
+    private var diffableDataSource: ToolPermissionPickerDataSource!
 
     /// - Parameters:
     ///   - currentMode: The currently active mode (resolved, not nil).
@@ -28,7 +28,7 @@ final class ToolPermissionPickerViewController: UITableViewController {
         self.showsUseDefault = showsUseDefault
         self.selectedMode = isUsingDefault ? nil : currentMode
         self.isUsingDefault = isUsingDefault
-        super.init(style: .insetGrouped)
+        super.init(nibName: nil, bundle: nil)
     }
 
     @available(*, unavailable)
@@ -39,7 +39,17 @@ final class ToolPermissionPickerViewController: UITableViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         title = String(localized: "settings.chat.tool_permission.title")
+        view.backgroundColor = .doufuBackground
         tableView.backgroundColor = .doufuBackground
+        tableView.delegate = self
+        tableView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(tableView)
+        NSLayoutConstraint.activate([
+            tableView.topAnchor.constraint(equalTo: view.topAnchor),
+            tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        ])
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "PermissionCell")
         configureDiffableDataSource()
         applySnapshot()
@@ -48,13 +58,16 @@ final class ToolPermissionPickerViewController: UITableViewController {
     // MARK: - Diffable DataSource
 
     private func configureDiffableDataSource() {
-        diffableDataSource = UITableViewDiffableDataSource<ToolPermissionPickerSectionID, ToolPermissionPickerItemID>(
+        diffableDataSource = ToolPermissionPickerDataSource(
             tableView: tableView
         ) { [weak self] tableView, indexPath, itemID in
             guard let self else { return UITableViewCell() }
             return self.cell(for: tableView, indexPath: indexPath, itemID: itemID)
         }
         diffableDataSource.defaultRowAnimation = .none
+        diffableDataSource.footerProvider = { [weak self] sectionID in
+            self?.sectionFooter(for: sectionID)
+        }
     }
 
     private func cell(
@@ -113,13 +126,16 @@ final class ToolPermissionPickerViewController: UITableViewController {
 
     // MARK: - Section Footer
 
-    override func tableView(_ tableView: UITableView, titleForFooterInSection sectionIndex: Int) -> String? {
-        String(localized: "settings.chat.tool_permission.footer")
+    private func sectionFooter(for sectionID: ToolPermissionPickerSectionID) -> String? {
+        switch sectionID {
+        case .options:
+            return String(localized: "settings.chat.tool_permission.footer")
+        }
     }
 
     // MARK: - Selection
 
-    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
         guard let itemID = diffableDataSource.itemIdentifier(for: indexPath) else { return }
 
@@ -163,5 +179,17 @@ final class ToolPermissionPickerViewController: UITableViewController {
         case .fullAutoApprove:
             return String(localized: "tool_permission.mode.full_auto.subtitle")
         }
+    }
+}
+
+// MARK: - ToolPermissionPickerDataSource
+
+private final class ToolPermissionPickerDataSource: UITableViewDiffableDataSource<ToolPermissionPickerSectionID, ToolPermissionPickerItemID> {
+
+    var footerProvider: ((ToolPermissionPickerSectionID) -> String?)?
+
+    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
+        guard let sectionID = sectionIdentifier(for: section) else { return nil }
+        return footerProvider?(sectionID)
     }
 }

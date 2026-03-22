@@ -6,7 +6,9 @@
 import UIKit
 
 @MainActor
-final class CapabilityActivityLogViewController: UITableViewController {
+final class CapabilityActivityLogViewController: UIViewController, UITableViewDelegate {
+
+    private let tableView = UITableView(frame: .zero, style: .insetGrouped)
 
     private let filter: ActivityLogFilter
     private let store = CapabilityActivityStore.shared
@@ -31,7 +33,7 @@ final class CapabilityActivityLogViewController: UITableViewController {
 
     init(filter: ActivityLogFilter) {
         self.filter = filter
-        super.init(style: .insetGrouped)
+        super.init(nibName: nil, bundle: nil)
     }
 
     @available(*, unavailable)
@@ -42,7 +44,17 @@ final class CapabilityActivityLogViewController: UITableViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         title = String(localized: "capability.activity_log.title")
+        view.backgroundColor = .doufuBackground
         tableView.backgroundColor = .doufuBackground
+        tableView.delegate = self
+        tableView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(tableView)
+        NSLayoutConstraint.activate([
+            tableView.topAnchor.constraint(equalTo: view.topAnchor),
+            tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "Cell")
         configureDiffableDataSource()
         reloadData()
@@ -179,7 +191,7 @@ final class CapabilityActivityLogViewController: UITableViewController {
 
     // MARK: - Selection
 
-    override func tableView(_ tableView: UITableView, willSelectRowAt indexPath: IndexPath) -> IndexPath? {
+    func tableView(_ tableView: UITableView, willSelectRowAt indexPath: IndexPath) -> IndexPath? {
         nil
     }
 

@@ -7,7 +7,8 @@
 
 import UIKit
 
-final class ProviderModelEditorViewController: UITableViewController {
+final class ProviderModelEditorViewController: UIViewController, UITableViewDelegate {
+    private let tableView = UITableView(frame: .zero, style: .insetGrouped)
     struct SavePayload {
         let modelID: String
         let displayName: String
@@ -15,23 +16,6 @@ final class ProviderModelEditorViewController: UITableViewController {
     }
 
     var onSave: ((SavePayload) -> Void)?
-
-    private enum Section: Int, CaseIterable {
-        case identity
-        case capability
-        case tokenLimits
-        case save
-    }
-
-    private enum TokenLimitsRow: Int, CaseIterable {
-        case maxOutputTokens
-        case contextWindowTokens
-    }
-
-    private enum IdentityRow: Int, CaseIterable {
-        case modelID
-        case displayName
-    }
 
     private let provider: ProjectChatService.ProviderCredential
     private var existingModel: LLMProviderModelRecord?
@@ -46,6 +30,8 @@ final class ProviderModelEditorViewController: UITableViewController {
     private var contextWindowTokensText: String
     private let resolvedMaxOutputTokens: Int
     private let resolvedContextWindowTokens: Int
+
+    private var diffableDataSource: ModelEditorDataSource!
 
     init(
         provider: ProjectChatService.ProviderCredential,
@@ -72,7 +58,7 @@ final class ProviderModelEditorViewController: UITableViewController {
         )
         resolvedMaxOutputTokens = profile.maxOutputTokens
         resolvedContextWindowTokens = profile.contextWindowTokens
-        super.init(style: .insetGrouped)
+        super.init(nibName: nil, bundle: nil)
     }
 
     @available(*, unavailable)
@@ -82,7 +68,17 @@ final class ProviderModelEditorViewController: UITableViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        view.backgroundColor = .doufuBackground
         tableView.backgroundColor = .doufuBackground
+        tableView.delegate = self
+        tableView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(tableView)
+        NSLayoutConstraint.activate([
+            tableView.topAnchor.constraint(equalTo: view.topAnchor),
+            tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            tableView.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor)
+        ])
         if readOnly {
             title = String(localized: "provider_model.editor.title.detail")
             navigationItem.rightBarButtonItem = UIBarButtonItem(
@@ -96,94 +92,61 @@ final class ProviderModelEditorViewController: UITableViewController {
                 ? String(localized: "provider_model.editor.title.add")
                 : String(localized: "provider_model.editor.title.edit")
         }
+        tableView.keyboardDismissMode = .onDrag
         tableView.register(SettingsTextInputCell.self, forCellReuseIdentifier: SettingsTextInputCell.reuseIdentifier)
         tableView.register(SettingsToggleCell.self, forCellReuseIdentifier: SettingsToggleCell.reuseIdentifier)
         tableView.register(SettingsCenteredButtonCell.self, forCellReuseIdentifier: SettingsCenteredButtonCell.reuseIdentifier)
+
+        configureDiffableDataSource()
+        applySnapshot()
     }
 
-    override func numberOfSections(in tableView: UITableView) -> Int {
-        Section.allCases.count
-    }
+    // MARK: - Diffable DataSource
 
-    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        guard let section = Section(rawValue: section) else {
-            return 0
+    private func configureDiffableDataSource() {
+        diffableDataSource = ModelEditorDataSource(
+            tableView: tableView
+        ) { [weak self] tableView, indexPath, itemID in
+            guard let self else { return UITableViewCell() }
+            return self.cell(for: tableView, indexPath: indexPath, itemID: itemID)
         }
-        switch section {
-        case .identity:
-            return IdentityRow.allCases.count
-        case .capability:
-            switch provider.providerKind {
-            case .openAIResponses, .openAIChatCompletions, .openRouter:
-                return ProjectChatService.ReasoningEffort.allCases.count + 1
-            case .anthropic, .googleGemini, .xiaomiMiMo:
-                return 3
+        diffableDataSource.defaultRowAnimation = .none
+
+        let providerKind = provider.providerKind
+        diffableDataSource.headerProvider = { sectionID in
+            switch sectionID {
+            case .capability:
+                switch providerKind {
+                case .openAIResponses, .openAIChatCompletions, .openRouter:
+                    return String(localized: "provider_model.editor.section.capabilities")
+                case .anthropic, .googleGemini, .xiaomiMiMo:
+                    return String(localized: "provider_model.editor.section.thinking")
+                }
+            default:
+                return sectionID.header
             }
-        case .tokenLimits:
-            return TokenLimitsRow.allCases.count
-        case .save:
-            return readOnly ? 0 : 1
         }
     }
 
-    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
-        guard let section = Section(rawValue: section) else {
-            return nil
-        }
-        switch section {
-        case .identity:
-            return String(localized: "provider_model.editor.section.identity")
-        case .capability:
-            return (provider.providerKind == .openAIResponses || provider.providerKind == .openAIChatCompletions || provider.providerKind == .openRouter)
-                ? String(localized: "provider_model.editor.section.capabilities")
-                : String(localized: "provider_model.editor.section.thinking")
-        case .tokenLimits:
-            return String(localized: "provider_model.editor.section.token_limits")
-        case .save:
-            return nil
-        }
-    }
-
-    override func tableView(
-        _ tableView: UITableView,
-        cellForRowAt indexPath: IndexPath
+    private func cell(
+        for tableView: UITableView,
+        indexPath: IndexPath,
+        itemID: ModelEditorItemID
     ) -> UITableViewCell {
-        guard let section = Section(rawValue: indexPath.section) else {
-            return UITableViewCell()
-        }
-
-        switch section {
-        case .identity:
-            guard
-                let row = IdentityRow(rawValue: indexPath.row),
-                let cell = tableView.dequeueReusableCell(
-                    withIdentifier: SettingsTextInputCell.reuseIdentifier,
-                    for: indexPath
-                ) as? SettingsTextInputCell
-            else {
-                return UITableViewCell()
-            }
-
-            switch row {
-            case .modelID:
-                cell.configure(
-                    title: String(localized: "provider_model.editor.field.model_id"),
-                    text: modelIDText,
-                    placeholder: provider.providerKind.defaultModelID,
-                    autocapitalizationType: .none
-                ) { [weak self] text in
-                    self?.modelIDText = text
-                    self?.tableView.reloadSections(IndexSet(integer: Section.save.rawValue), with: .none)
-                }
-            case .displayName:
-                cell.configure(
-                    title: String(localized: "provider_model.editor.field.display_name"),
-                    text: displayNameText,
-                    placeholder: String(localized: "provider_model.editor.field.display_name.placeholder"),
-                    autocapitalizationType: .words
-                ) { [weak self] text in
-                    self?.displayNameText = text
-                }
+        switch itemID {
+        case .modelID:
+            guard let cell = tableView.dequeueReusableCell(
+                withIdentifier: SettingsTextInputCell.reuseIdentifier,
+                for: indexPath
+            ) as? SettingsTextInputCell else { return UITableViewCell() }
+            cell.configure(
+                title: String(localized: "provider_model.editor.field.model_id"),
+                text: modelIDText,
+                placeholder: provider.providerKind.defaultModelID,
+                autocapitalizationType: .none
+            ) { [weak self] text in
+                self?.modelIDText = text
+                self?.refreshSaveButton()
             }
             if readOnly {
                 cell.textField.isEnabled = false
@@ -191,113 +154,140 @@ final class ProviderModelEditorViewController: UITableViewController {
             }
             return cell
 
-        case .capability:
-            guard
-                let cell = tableView.dequeueReusableCell(
-                    withIdentifier: SettingsToggleCell.reuseIdentifier,
-                    for: indexPath
-                ) as? SettingsToggleCell
-            else {
-                return UITableViewCell()
+        case .displayName:
+            guard let cell = tableView.dequeueReusableCell(
+                withIdentifier: SettingsTextInputCell.reuseIdentifier,
+                for: indexPath
+            ) as? SettingsTextInputCell else { return UITableViewCell() }
+            cell.configure(
+                title: String(localized: "provider_model.editor.field.display_name"),
+                text: displayNameText,
+                placeholder: String(localized: "provider_model.editor.field.display_name.placeholder"),
+                autocapitalizationType: .words
+            ) { [weak self] text in
+                self?.displayNameText = text
             }
+            if readOnly {
+                cell.textField.isEnabled = false
+                cell.textField.textColor = .secondaryLabel
+            }
+            return cell
 
-            switch provider.providerKind {
-            case .openAIResponses, .openAIChatCompletions, .openRouter:
-                if indexPath.row < ProjectChatService.ReasoningEffort.allCases.count {
-                    let effort = ProjectChatService.ReasoningEffort.allCases[indexPath.row]
-                    cell.configure(
-                        title: String(
-                            format: String(localized: "provider_model.editor.reasoning_format"),
-                            effort.displayName
-                        ),
-                        isOn: reasoningEfforts.contains(effort)
-                    ) { [weak self] isOn in
-                        guard let self else { return }
-                        if isOn {
-                            self.reasoningEfforts.insert(effort)
-                        } else {
-                            self.reasoningEfforts.remove(effort)
-                        }
-                        self.tableView.reloadSections(IndexSet(integer: Section.save.rawValue), with: .none)
-                    }
+        case .reasoningEffort(let effort):
+            guard let cell = tableView.dequeueReusableCell(
+                withIdentifier: SettingsToggleCell.reuseIdentifier,
+                for: indexPath
+            ) as? SettingsToggleCell else { return UITableViewCell() }
+            cell.configure(
+                title: String(
+                    format: String(localized: "provider_model.editor.reasoning_format"),
+                    effort.displayName
+                ),
+                isOn: reasoningEfforts.contains(effort)
+            ) { [weak self] isOn in
+                guard let self else { return }
+                if isOn {
+                    self.reasoningEfforts.insert(effort)
                 } else {
-                    cell.configure(
-                        title: String(localized: "provider_model.editor.structured_output"),
-                        isOn: structuredOutputSupported
-                    ) { [weak self] isOn in
-                        self?.structuredOutputSupported = isOn
-                    }
+                    self.reasoningEfforts.remove(effort)
                 }
-            case .anthropic, .googleGemini, .xiaomiMiMo:
-                switch indexPath.row {
-                case 0:
-                    cell.configure(
-                        title: String(localized: "provider_model.editor.thinking_supported"),
-                        isOn: thinkingSupported
-                    ) { [weak self] isOn in
-                        guard let self else { return }
-                        self.thinkingSupported = isOn
-                        if !isOn {
-                            self.thinkingCanDisable = false
-                        }
-                        self.tableView.reloadSections(IndexSet(integer: Section.capability.rawValue), with: .none)
-                    }
-                case 1:
-                    cell.configure(
-                        title: String(localized: "provider_model.editor.thinking_can_disable"),
-                        isOn: thinkingCanDisable
-                    ) { [weak self] isOn in
-                        self?.thinkingCanDisable = isOn
-                    }
-                    cell.isUserInteractionEnabled = thinkingSupported
-                    cell.contentView.alpha = thinkingSupported ? 1.0 : 0.72
-                default:
-                    cell.configure(
-                        title: String(localized: "provider_model.editor.structured_output"),
-                        isOn: structuredOutputSupported
-                    ) { [weak self] isOn in
-                        self?.structuredOutputSupported = isOn
-                    }
-                }
+                self.applySnapshot()
             }
             if readOnly {
                 (cell.accessoryView as? UISwitch)?.isEnabled = false
             }
             return cell
 
-        case .tokenLimits:
-            guard
-                let row = TokenLimitsRow(rawValue: indexPath.row),
-                let cell = tableView.dequeueReusableCell(
-                    withIdentifier: SettingsTextInputCell.reuseIdentifier,
-                    for: indexPath
-                ) as? SettingsTextInputCell
-            else {
-                return UITableViewCell()
+        case .thinkingToggle:
+            guard let cell = tableView.dequeueReusableCell(
+                withIdentifier: SettingsToggleCell.reuseIdentifier,
+                for: indexPath
+            ) as? SettingsToggleCell else { return UITableViewCell() }
+            cell.configure(
+                title: String(localized: "provider_model.editor.thinking_supported"),
+                isOn: thinkingSupported
+            ) { [weak self] isOn in
+                guard let self else { return }
+                self.thinkingSupported = isOn
+                if !isOn {
+                    self.thinkingCanDisable = false
+                }
+                self.applySnapshot()
             }
-            switch row {
-            case .maxOutputTokens:
-                let autoLabel = String(localized: "provider_model.editor.field.max_output_tokens.placeholder")
-                let placeholder = "\(autoLabel)（\(resolvedMaxOutputTokens.formatted())）"
-                cell.configure(
-                    title: String(localized: "provider_model.editor.field.max_output_tokens"),
-                    text: maxOutputTokensText,
-                    placeholder: placeholder,
-                    keyboardType: .numberPad
-                ) { [weak self] text in
-                    self?.maxOutputTokensText = text
-                }
-            case .contextWindowTokens:
-                let autoLabel = String(localized: "provider_model.editor.field.context_window.placeholder")
-                let placeholder = "\(autoLabel)（\(resolvedContextWindowTokens.formatted())）"
-                cell.configure(
-                    title: String(localized: "provider_model.editor.field.context_window"),
-                    text: contextWindowTokensText,
-                    placeholder: placeholder,
-                    keyboardType: .numberPad
-                ) { [weak self] text in
-                    self?.contextWindowTokensText = text
-                }
+            if readOnly {
+                (cell.accessoryView as? UISwitch)?.isEnabled = false
+            }
+            return cell
+
+        case .thinkingCanDisable(let enabled):
+            guard let cell = tableView.dequeueReusableCell(
+                withIdentifier: SettingsToggleCell.reuseIdentifier,
+                for: indexPath
+            ) as? SettingsToggleCell else { return UITableViewCell() }
+            cell.configure(
+                title: String(localized: "provider_model.editor.thinking_can_disable"),
+                isOn: thinkingCanDisable
+            ) { [weak self] isOn in
+                self?.thinkingCanDisable = isOn
+            }
+            cell.isUserInteractionEnabled = enabled
+            cell.contentView.alpha = enabled ? 1.0 : 0.72
+            if readOnly {
+                (cell.accessoryView as? UISwitch)?.isEnabled = false
+            }
+            return cell
+
+        case .structuredOutput:
+            guard let cell = tableView.dequeueReusableCell(
+                withIdentifier: SettingsToggleCell.reuseIdentifier,
+                for: indexPath
+            ) as? SettingsToggleCell else { return UITableViewCell() }
+            cell.configure(
+                title: String(localized: "provider_model.editor.structured_output"),
+                isOn: structuredOutputSupported
+            ) { [weak self] isOn in
+                self?.structuredOutputSupported = isOn
+            }
+            if readOnly {
+                (cell.accessoryView as? UISwitch)?.isEnabled = false
+            }
+            return cell
+
+        case .maxOutputTokens:
+            guard let cell = tableView.dequeueReusableCell(
+                withIdentifier: SettingsTextInputCell.reuseIdentifier,
+                for: indexPath
+            ) as? SettingsTextInputCell else { return UITableViewCell() }
+            let autoLabel = String(localized: "provider_model.editor.field.max_output_tokens.placeholder")
+            let placeholder = "\(autoLabel)\u{ff08}\(resolvedMaxOutputTokens.formatted())\u{ff09}"
+            cell.configure(
+                title: String(localized: "provider_model.editor.field.max_output_tokens"),
+                text: maxOutputTokensText,
+                placeholder: placeholder,
+                keyboardType: .numberPad
+            ) { [weak self] text in
+                self?.maxOutputTokensText = text
+            }
+            if readOnly {
+                cell.textField.isEnabled = false
+                cell.textField.textColor = .secondaryLabel
+            }
+            return cell
+
+        case .contextWindowTokens:
+            guard let cell = tableView.dequeueReusableCell(
+                withIdentifier: SettingsTextInputCell.reuseIdentifier,
+                for: indexPath
+            ) as? SettingsTextInputCell else { return UITableViewCell() }
+            let autoLabel = String(localized: "provider_model.editor.field.context_window.placeholder")
+            let placeholder = "\(autoLabel)\u{ff08}\(resolvedContextWindowTokens.formatted())\u{ff09}"
+            cell.configure(
+                title: String(localized: "provider_model.editor.field.context_window"),
+                text: contextWindowTokensText,
+                placeholder: placeholder,
+                keyboardType: .numberPad
+            ) { [weak self] text in
+                self?.contextWindowTokensText = text
             }
             if readOnly {
                 cell.textField.isEnabled = false
@@ -306,14 +296,10 @@ final class ProviderModelEditorViewController: UITableViewController {
             return cell
 
         case .save:
-            guard
-                let cell = tableView.dequeueReusableCell(
-                    withIdentifier: SettingsCenteredButtonCell.reuseIdentifier,
-                    for: indexPath
-                ) as? SettingsCenteredButtonCell
-            else {
-                return UITableViewCell()
-            }
+            guard let cell = tableView.dequeueReusableCell(
+                withIdentifier: SettingsCenteredButtonCell.reuseIdentifier,
+                for: indexPath
+            ) as? SettingsCenteredButtonCell else { return UITableViewCell() }
             cell.configure(
                 title: String(localized: "provider_model.editor.button.save"),
                 isEnabled: canSave()
@@ -322,26 +308,82 @@ final class ProviderModelEditorViewController: UITableViewController {
         }
     }
 
-    override func tableView(_ tableView: UITableView, willSelectRowAt indexPath: IndexPath) -> IndexPath? {
-        guard Section(rawValue: indexPath.section) == .save else {
-            return nil
+    // MARK: - Snapshot
+
+    private func buildSnapshot() -> NSDiffableDataSourceSnapshot<ModelEditorSectionID, ModelEditorItemID> {
+        var snapshot = NSDiffableDataSourceSnapshot<ModelEditorSectionID, ModelEditorItemID>()
+
+        var sections: [ModelEditorSectionID] = [.identity, .capability, .tokenLimits]
+        if !readOnly {
+            sections.append(.save)
         }
-        return canSave() ? indexPath : nil
+        snapshot.appendSections(sections)
+
+        // Identity
+        snapshot.appendItems([.modelID, .displayName], toSection: .identity)
+
+        // Capability — dynamic based on provider kind
+        switch provider.providerKind {
+        case .openAIResponses, .openAIChatCompletions, .openRouter:
+            var items: [ModelEditorItemID] = ProjectChatService.ReasoningEffort.allCases.map {
+                .reasoningEffort($0)
+            }
+            items.append(.structuredOutput)
+            snapshot.appendItems(items, toSection: .capability)
+        case .anthropic, .googleGemini, .xiaomiMiMo:
+            snapshot.appendItems([
+                .thinkingToggle,
+                .thinkingCanDisable(enabled: thinkingSupported),
+                .structuredOutput,
+            ], toSection: .capability)
+        }
+
+        // Token Limits
+        snapshot.appendItems([.maxOutputTokens, .contextWindowTokens], toSection: .tokenLimits)
+
+        // Save
+        if !readOnly {
+            snapshot.appendItems([.save], toSection: .save)
+        }
+
+        return snapshot
     }
 
-    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
-        defer { tableView.deselectRow(at: indexPath, animated: true) }
-        guard Section(rawValue: indexPath.section) == .save, canSave() else {
-            return
-        }
+    private func applySnapshot() {
+        var snapshot = buildSnapshot()
+        snapshot.reconfigureItems(snapshot.itemIdentifiers)
+        diffableDataSource.apply(snapshot, animatingDifferences: false)
+    }
 
-        let payload = SavePayload(
-            modelID: modelIDText.trimmingCharacters(in: .whitespacesAndNewlines),
-            displayName: displayNameText.trimmingCharacters(in: .whitespacesAndNewlines),
-            capabilities: buildCapabilities()
-        )
-        onSave?(payload)
-        navigationController?.popViewController(animated: true)
+    private func refreshSaveButton() {
+        guard var snapshot = diffableDataSource?.snapshot(),
+              snapshot.itemIdentifiers.contains(.save) else { return }
+        snapshot.reconfigureItems([.save])
+        diffableDataSource.apply(snapshot, animatingDifferences: false)
+    }
+
+    // MARK: - Selection
+
+    func tableView(_ tableView: UITableView, willSelectRowAt indexPath: IndexPath) -> IndexPath? {
+        guard let itemID = diffableDataSource.itemIdentifier(for: indexPath) else { return nil }
+        if case .save = itemID {
+            return canSave() ? indexPath : nil
+        }
+        return nil
+    }
+
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        defer { tableView.deselectRow(at: indexPath, animated: true) }
+        guard let itemID = diffableDataSource.itemIdentifier(for: indexPath) else { return }
+        if case .save = itemID, canSave() {
+            let payload = SavePayload(
+                modelID: modelIDText.trimmingCharacters(in: .whitespacesAndNewlines),
+                displayName: displayNameText.trimmingCharacters(in: .whitespacesAndNewlines),
+                capabilities: buildCapabilities()
+            )
+            onSave?(payload)
+            navigationController?.popViewController(animated: true)
+        }
     }
 
     @objc private func duplicateAsCustomModel() {
@@ -349,7 +391,7 @@ final class ProviderModelEditorViewController: UITableViewController {
         existingModel = nil
         title = String(localized: "provider_model.editor.title.add")
         navigationItem.rightBarButtonItem = nil
-        tableView.reloadData()
+        applySnapshot()
     }
 
     private func canSave() -> Bool {
@@ -384,5 +426,59 @@ final class ProviderModelEditorViewController: UITableViewController {
                 contextWindowTokensOverride: contextWindowOverride
             )
         }
+    }
+}
+
+// MARK: - Section & Item IDs
+
+nonisolated enum ModelEditorSectionID: Hashable, Sendable {
+    case identity
+    case capability
+    case tokenLimits
+    case save
+
+    var header: String? {
+        switch self {
+        case .identity:
+            return String(localized: "provider_model.editor.section.identity")
+        case .capability:
+            return nil // dynamic — handled by headerProvider
+        case .tokenLimits:
+            return String(localized: "provider_model.editor.section.token_limits")
+        case .save:
+            return nil
+        }
+    }
+
+    var footer: String? { nil }
+}
+
+nonisolated enum ModelEditorItemID: Hashable, Sendable {
+    case modelID
+    case displayName
+    case reasoningEffort(ProjectChatService.ReasoningEffort)
+    case thinkingToggle
+    case thinkingCanDisable(enabled: Bool)
+    case structuredOutput
+    case maxOutputTokens
+    case contextWindowTokens
+    case save
+}
+
+// MARK: - DataSource (header/footer support)
+
+private final class ModelEditorDataSource: UITableViewDiffableDataSource<ModelEditorSectionID, ModelEditorItemID> {
+    var headerProvider: ((ModelEditorSectionID) -> String?)?
+
+    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
+        guard let sectionID = sectionIdentifier(for: section) else { return nil }
+        if let headerProvider {
+            return headerProvider(sectionID)
+        }
+        return sectionID.header
+    }
+
+    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
+        sectionIdentifier(for: section)?.footer
     }
 }

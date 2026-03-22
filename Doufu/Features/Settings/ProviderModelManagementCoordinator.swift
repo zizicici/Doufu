@@ -36,18 +36,28 @@ final class ProviderModelManagementCoordinator {
     func refreshOfficialModels(
         for provider: LLMProviderRecord,
         manageSectionIndex: Int,
-        in controller: UITableViewController
+        tableView: UITableView,
+        in controller: UIViewController,
+        onUpdate: (() -> Void)? = nil
     ) {
         isRefreshingModels = true
-        controller.tableView.reloadSections(IndexSet(integer: manageSectionIndex), with: .none)
+        if let onUpdate {
+            onUpdate()
+        } else {
+            tableView.reloadSections(IndexSet(integer: manageSectionIndex), with: .none)
+        }
         modelRefreshTask?.cancel()
-        modelRefreshTask = Task { @MainActor [weak self, weak controller] in
+        modelRefreshTask = Task { @MainActor [weak self, weak tableView, weak controller] in
             guard let self else {
                 return
             }
             defer {
                 self.isRefreshingModels = false
-                controller?.tableView.reloadData()
+                if let onUpdate {
+                    onUpdate()
+                } else {
+                    tableView?.reloadData()
+                }
             }
 
             let token = (try? self.store.loadBearerToken(for: provider))?
@@ -77,7 +87,9 @@ final class ProviderModelManagementCoordinator {
     func presentModelDetail(
         for provider: LLMProviderRecord,
         model: LLMProviderModelRecord,
-        from controller: UITableViewController
+        tableView: UITableView,
+        from controller: UIViewController,
+        onUpdate: (() -> Void)? = nil
     ) {
         guard let credential = buildCredential(for: provider) else {
             return
@@ -87,7 +99,7 @@ final class ProviderModelManagementCoordinator {
             existingModel: model,
             readOnly: true
         )
-        editor.onSave = { [weak controller, weak self] payload in
+        editor.onSave = { [weak tableView, weak controller, weak self] payload in
             guard let self else { return }
             do {
                 _ = try self.store.saveCustomModel(
@@ -97,7 +109,11 @@ final class ProviderModelManagementCoordinator {
                     capabilities: payload.capabilities,
                     existingRecordID: nil
                 )
-                controller?.tableView.reloadData()
+                if let onUpdate {
+                    onUpdate()
+                } else {
+                    tableView?.reloadData()
+                }
             } catch {
                 guard let controller else { return }
                 let alert = UIAlertController(
@@ -115,7 +131,9 @@ final class ProviderModelManagementCoordinator {
     func presentModelEditor(
         for provider: LLMProviderRecord,
         existingModel: LLMProviderModelRecord?,
-        from controller: UITableViewController
+        tableView: UITableView,
+        from controller: UIViewController,
+        onUpdate: (() -> Void)? = nil
     ) {
         guard let credential = buildCredential(for: provider) else {
             return
@@ -124,7 +142,7 @@ final class ProviderModelManagementCoordinator {
             provider: credential,
             existingModel: existingModel
         )
-        editor.onSave = { [weak controller, weak self] payload in
+        editor.onSave = { [weak tableView, weak controller, weak self] payload in
             guard let self else {
                 return
             }
@@ -136,7 +154,11 @@ final class ProviderModelManagementCoordinator {
                     capabilities: payload.capabilities,
                     existingRecordID: existingModel?.id
                 )
-                controller?.tableView.reloadData()
+                if let onUpdate {
+                    onUpdate()
+                } else {
+                    tableView?.reloadData()
+                }
             } catch {
                 guard let controller else {
                     return

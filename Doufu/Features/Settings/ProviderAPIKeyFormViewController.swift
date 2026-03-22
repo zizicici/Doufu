@@ -7,21 +7,8 @@
 
 import UIKit
 
-final class ProviderAPIKeyFormViewController: UITableViewController {
-
-    private enum Section: Int, CaseIterable {
-        case label
-        case apiKey
-        case customAPI
-        case manageModels
-        case storedModels
-        case addProvider
-    }
-
-    private enum CustomAPIRow: Int, CaseIterable {
-        case baseURL
-        case autoAppendV1
-    }
+final class ProviderAPIKeyFormViewController: UIViewController, UITableViewDelegate {
+    private let tableView = UITableView(frame: .zero, style: .insetGrouped)
 
     private let store = LLMProviderSettingsStore.shared
     private let modelManagement = ProviderModelManagementCoordinator()
@@ -32,6 +19,9 @@ final class ProviderAPIKeyFormViewController: UITableViewController {
     private var apiKeyText = ""
     private var customBaseURLText = ""
     private var shouldAutoAppendV1 = true
+
+    private var diffableDataSource: APIKeyFormDataSource!
+
     private var isEditingProvider: Bool {
         editingProvider != nil
     }
@@ -57,7 +47,7 @@ final class ProviderAPIKeyFormViewController: UITableViewController {
         editingProvider = nil
         self.providerKind = providerKind
         shouldAutoAppendV1 = providerKind.defaultAutoAppendV1
-        super.init(style: .insetGrouped)
+        super.init(nibName: nil, bundle: nil)
     }
 
     init(provider: LLMProviderRecord) {
@@ -66,7 +56,7 @@ final class ProviderAPIKeyFormViewController: UITableViewController {
         labelText = provider.label
         customBaseURLText = provider.baseURLString
         shouldAutoAppendV1 = provider.autoAppendV1
-        super.init(style: .insetGrouped)
+        super.init(nibName: nil, bundle: nil)
     }
 
     @available(*, unavailable)
@@ -76,7 +66,17 @@ final class ProviderAPIKeyFormViewController: UITableViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        view.backgroundColor = .doufuBackground
         tableView.backgroundColor = .doufuBackground
+        tableView.delegate = self
+        tableView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(tableView)
+        NSLayoutConstraint.activate([
+            tableView.topAnchor.constraint(equalTo: view.topAnchor),
+            tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            tableView.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor)
+        ])
         title = providerKind.displayName + " · " + String(localized: "providers.auth_method.api_key.title")
         if let editingProvider {
             apiKeyText = (try? store.loadAPIKey(for: editingProvider.id)) ?? ""
@@ -90,13 +90,14 @@ final class ProviderAPIKeyFormViewController: UITableViewController {
         tableView.register(SettingsToggleCell.self, forCellReuseIdentifier: SettingsToggleCell.reuseIdentifier)
         tableView.register(SettingsCenteredButtonCell.self, forCellReuseIdentifier: SettingsCenteredButtonCell.reuseIdentifier)
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "ProviderCell")
+
+        configureDiffableDataSource()
+        applySnapshot()
     }
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        if isEditingProvider {
-            tableView.reloadData()
-        }
+        applySnapshot()
     }
 
     override func viewDidDisappear(_ animated: Bool) {
@@ -104,74 +105,28 @@ final class ProviderAPIKeyFormViewController: UITableViewController {
         modelManagement.cancelRefreshIfNeeded(whenViewRemoved: view.window == nil)
     }
 
-    override func numberOfSections(in tableView: UITableView) -> Int {
-        Section.allCases.count
-    }
+    // MARK: - Diffable DataSource
 
-    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        guard let section = Section(rawValue: section) else {
-            return 0
+    private func configureDiffableDataSource() {
+        diffableDataSource = APIKeyFormDataSource(
+            tableView: tableView
+        ) { [weak self] tableView, indexPath, itemID in
+            guard let self else { return UITableViewCell() }
+            return self.cell(for: tableView, indexPath: indexPath, itemID: itemID)
         }
-
-        switch section {
-        case .label, .apiKey, .addProvider:
-            return 1
-        case .customAPI:
-            return CustomAPIRow.allCases.count
-        case .storedModels:
-            guard isEditingProvider else {
-                return 0
-            }
-            return max(storedModels().count, 1)
-        case .manageModels:
-            return isEditingProvider ? ProviderModelManageRow.allCases.count : 0
+        diffableDataSource.defaultRowAnimation = .none
+        diffableDataSource.footerProvider = { [weak self] sectionID in
+            self?.footer(for: sectionID)
         }
     }
 
-    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
-        guard let section = Section(rawValue: section) else {
-            return nil
-        }
-
-        switch section {
-        case .label:
-            return String(localized: "providers.form.section.label")
-        case .apiKey:
-            return String(localized: "providers.form.section.api_key")
-        case .customAPI:
-            return String(localized: "providers.api_key_form.section.custom_api")
-        case .storedModels:
-            return isEditingProvider ? String(localized: "provider_model.section.stored_models") : nil
-        case .manageModels:
-            return isEditingProvider ? String(localized: "provider_model.section.manage_models") : nil
-        case .addProvider:
-            return nil
-        }
-    }
-
-    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
-        guard let section = Section(rawValue: section) else {
-            return nil
-        }
-
-        switch section {
-        case .customAPI:
-            return String(localized: "providers.form.footer.default_url \(providerKind.defaultBaseURLString)")
-        default:
-            return nil
-        }
-    }
-
-    override func tableView(
-        _ tableView: UITableView,
-        cellForRowAt indexPath: IndexPath
+    private func cell(
+        for tableView: UITableView,
+        indexPath: IndexPath,
+        itemID: APIKeyFormItemID
     ) -> UITableViewCell {
-        guard let section = Section(rawValue: indexPath.section) else {
-            return UITableViewCell()
-        }
-
-        switch section {
-        case .label:
+        switch itemID {
+        case .labelInput:
             guard
                 let cell = tableView.dequeueReusableCell(
                     withIdentifier: SettingsTextInputCell.reuseIdentifier,
@@ -187,11 +142,11 @@ final class ProviderAPIKeyFormViewController: UITableViewController {
                 autocapitalizationType: .words
             ) { [weak self] text in
                 self?.labelText = text
-                self?.refreshAddProviderCell()
+                self?.refreshSubmitButton()
             }
             return cell
 
-        case .apiKey:
+        case .apiKeyInput:
             guard
                 let cell = tableView.dequeueReusableCell(
                     withIdentifier: SettingsSecureInputCell.reuseIdentifier,
@@ -205,69 +160,52 @@ final class ProviderAPIKeyFormViewController: UITableViewController {
                 placeholder: String(localized: "providers.api_key_form.placeholder.api_key")
             ) { [weak self] text in
                 self?.apiKeyText = text
-                self?.refreshAddProviderCell()
+                self?.refreshSubmitButton()
             }
             return cell
 
-        case .customAPI:
-            guard let row = CustomAPIRow(rawValue: indexPath.row) else {
+        case .baseURLInput:
+            guard
+                let cell = tableView.dequeueReusableCell(
+                    withIdentifier: SettingsTextInputCell.reuseIdentifier,
+                    for: indexPath
+                ) as? SettingsTextInputCell
+            else {
                 return UITableViewCell()
             }
-
-            switch row {
-            case .baseURL:
-                guard
-                    let cell = tableView.dequeueReusableCell(
-                        withIdentifier: SettingsTextInputCell.reuseIdentifier,
-                        for: indexPath
-                    ) as? SettingsTextInputCell
-                else {
-                    return UITableViewCell()
-                }
-                cell.configure(
-                    title: nil,
-                    text: customBaseURLText,
-                    placeholder: providerKind.defaultBaseURLString,
-                    keyboardType: .URL,
-                    autocapitalizationType: .none
-                ) { [weak self] text in
-                    self?.customBaseURLText = text
-                    self?.refreshAddProviderCell()
-                }
-                return cell
-
-            case .autoAppendV1:
-                guard
-                    let cell = tableView.dequeueReusableCell(
-                        withIdentifier: SettingsToggleCell.reuseIdentifier,
-                        for: indexPath
-                    ) as? SettingsToggleCell
-                else {
-                    return UITableViewCell()
-                }
-                cell.configure(title: String(localized: "providers.api_key_form.toggle.auto_append_v1"), isOn: shouldAutoAppendV1) { [weak self] isOn in
-                    self?.shouldAutoAppendV1 = isOn
-                }
-                return cell
+            cell.configure(
+                title: nil,
+                text: customBaseURLText,
+                placeholder: providerKind.defaultBaseURLString,
+                keyboardType: .URL,
+                autocapitalizationType: .none
+            ) { [weak self] text in
+                self?.customBaseURLText = text
+                self?.refreshSubmitButton()
             }
+            return cell
 
-        case .storedModels:
+        case .autoAppendV1Toggle:
+            guard
+                let cell = tableView.dequeueReusableCell(
+                    withIdentifier: SettingsToggleCell.reuseIdentifier,
+                    for: indexPath
+                ) as? SettingsToggleCell
+            else {
+                return UITableViewCell()
+            }
+            cell.configure(title: String(localized: "providers.api_key_form.toggle.auto_append_v1"), isOn: shouldAutoAppendV1) { [weak self] isOn in
+                self?.shouldAutoAppendV1 = isOn
+            }
+            return cell
+
+        case .storedModel(let id):
             let cell = tableView.dequeueReusableCell(withIdentifier: "ProviderCell", for: indexPath)
+            cell.selectionStyle = .default
             let models = storedModels()
-            if models.isEmpty {
-                cell.selectionStyle = .none
-                cell.accessoryType = .none
-                var configuration = UIListContentConfiguration.cell()
-                configuration.text = String(localized: "provider_model.stored_models.empty")
-                configuration.textProperties.color = .secondaryLabel
-                configuration.textProperties.alignment = .center
-                cell.contentConfiguration = configuration
+            guard let model = models.first(where: { $0.id == id }) else {
                 return cell
             }
-            guard models.indices.contains(indexPath.row) else {
-                return cell
-            }
-            let model = models[indexPath.row]
             var configuration = cell.defaultContentConfiguration()
             configuration.text = model.effectiveDisplayName
             let sourceLabel = model.source == .official
@@ -279,25 +217,38 @@ final class ProviderAPIKeyFormViewController: UITableViewController {
             cell.accessoryType = .disclosureIndicator
             return cell
 
-        case .manageModels:
+        case .emptyModels:
             let cell = tableView.dequeueReusableCell(withIdentifier: "ProviderCell", for: indexPath)
-            guard let row = ProviderModelManageRow(rawValue: indexPath.row) else {
-                return cell
-            }
+            cell.selectionStyle = .none
+            cell.accessoryType = .none
+            var configuration = UIListContentConfiguration.cell()
+            configuration.text = String(localized: "provider_model.stored_models.empty")
+            configuration.textProperties.color = .secondaryLabel
+            configuration.textProperties.alignment = .center
+            cell.contentConfiguration = configuration
+            return cell
+
+        case .refreshModels:
+            let cell = tableView.dequeueReusableCell(withIdentifier: "ProviderCell", for: indexPath)
+            cell.selectionStyle = .default
             var configuration = cell.defaultContentConfiguration()
-            switch row {
-            case .refreshOfficialModels:
-                configuration.text = modelManagement.isRefreshingModels
-                    ? String(localized: "provider_model.action.refreshing_models")
-                    : String(localized: "provider_model.action.refresh_models")
-                configuration.secondaryText = String(localized: "provider_model.action.refresh_models.subtitle")
-                cell.accessoryType = .none
-            case .addCustomModel:
-                configuration.text = String(localized: "provider_model.action.add_custom_model")
-                configuration.secondaryText = String(localized: "provider_model.action.add_custom_model.subtitle")
-                cell.accessoryType = .disclosureIndicator
-            }
+            configuration.text = modelManagement.isRefreshingModels
+                ? String(localized: "provider_model.action.refreshing_models")
+                : String(localized: "provider_model.action.refresh_models")
+            configuration.secondaryText = String(localized: "provider_model.action.refresh_models.subtitle")
             configuration.secondaryTextProperties.color = .secondaryLabel
+            cell.accessoryType = .none
+            cell.contentConfiguration = configuration
+            return cell
+
+        case .addCustomModel:
+            let cell = tableView.dequeueReusableCell(withIdentifier: "ProviderCell", for: indexPath)
+            cell.selectionStyle = .default
+            var configuration = cell.defaultContentConfiguration()
+            configuration.text = String(localized: "provider_model.action.add_custom_model")
+            configuration.secondaryText = String(localized: "provider_model.action.add_custom_model.subtitle")
+            configuration.secondaryTextProperties.color = .secondaryLabel
+            cell.accessoryType = .disclosureIndicator
             cell.contentConfiguration = configuration
             return cell
 
@@ -315,80 +266,139 @@ final class ProviderAPIKeyFormViewController: UITableViewController {
         }
     }
 
-    override func tableView(_ tableView: UITableView, willSelectRowAt indexPath: IndexPath) -> IndexPath? {
-        guard let section = Section(rawValue: indexPath.section) else {
-            return nil
-        }
-        switch section {
-        case .addProvider:
-            return canSubmitProvider ? indexPath : nil
-        case .manageModels:
-            return modelManagement.isRefreshingModels ? nil : indexPath
-        case .storedModels:
+    // MARK: - Snapshot
+
+    private func buildSnapshot() -> NSDiffableDataSourceSnapshot<APIKeyFormSectionID, APIKeyFormItemID> {
+        var snapshot = NSDiffableDataSourceSnapshot<APIKeyFormSectionID, APIKeyFormItemID>()
+
+        snapshot.appendSections([.label, .apiKey, .customAPI])
+        snapshot.appendItems([.labelInput], toSection: .label)
+        snapshot.appendItems([.apiKeyInput], toSection: .apiKey)
+        snapshot.appendItems([.baseURLInput, .autoAppendV1Toggle(isOn: shouldAutoAppendV1)], toSection: .customAPI)
+
+        if isEditingProvider {
+            snapshot.appendSections([.manageModels, .storedModels])
+
+            let isRefreshing = modelManagement.isRefreshingModels
+            snapshot.appendItems([
+                .refreshModels(isRefreshing: isRefreshing),
+                .addCustomModel
+            ], toSection: .manageModels)
+
             let models = storedModels()
-            guard models.indices.contains(indexPath.row) else { return nil }
-            return indexPath
-        case .label, .apiKey, .customAPI:
+            if models.isEmpty {
+                snapshot.appendItems([.emptyModels], toSection: .storedModels)
+            } else {
+                snapshot.appendItems(models.map { .storedModel(id: $0.id) }, toSection: .storedModels)
+            }
+        }
+
+        snapshot.appendSections([.addProvider])
+        snapshot.appendItems([.addProvider], toSection: .addProvider)
+
+        return snapshot
+    }
+
+    private func applySnapshot() {
+        var snapshot = buildSnapshot()
+        snapshot.reconfigureItems(snapshot.itemIdentifiers)
+        diffableDataSource.apply(snapshot, animatingDifferences: false)
+    }
+
+    private func refreshSubmitButton() {
+        guard var snapshot = diffableDataSource?.snapshot() else { return }
+        snapshot.reconfigureItems([.addProvider])
+        diffableDataSource.apply(snapshot, animatingDifferences: false)
+    }
+
+    // MARK: - Footer
+
+    private func footer(for sectionID: APIKeyFormSectionID) -> String? {
+        switch sectionID {
+        case .customAPI:
+            return String(localized: "providers.form.footer.default_url \(providerKind.defaultBaseURLString)")
+        default:
             return nil
         }
     }
 
-    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+    // MARK: - Delegate
+
+    func tableView(_ tableView: UITableView, willSelectRowAt indexPath: IndexPath) -> IndexPath? {
+        guard let itemID = diffableDataSource.itemIdentifier(for: indexPath) else {
+            return nil
+        }
+        switch itemID {
+        case .addProvider:
+            return canSubmitProvider ? indexPath : nil
+        case .refreshModels:
+            return modelManagement.isRefreshingModels ? nil : indexPath
+        case .addCustomModel:
+            return indexPath
+        case .storedModel:
+            return indexPath
+        case .labelInput, .apiKeyInput, .baseURLInput, .autoAppendV1Toggle, .emptyModels:
+            return nil
+        }
+    }
+
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         defer { tableView.deselectRow(at: indexPath, animated: true) }
 
-        guard let section = Section(rawValue: indexPath.section) else {
+        guard let itemID = diffableDataSource.itemIdentifier(for: indexPath) else {
             return
         }
-        switch section {
+        switch itemID {
         case .addProvider:
             guard canSubmitProvider else {
                 return
             }
             submitProvider()
-        case .storedModels:
+        case .storedModel(let id):
             let models = storedModels()
-            guard models.indices.contains(indexPath.row),
+            guard let model = models.first(where: { $0.id == id }),
                   let provider = latestEditingProvider()
             else { return }
-            let model = models[indexPath.row]
             if model.source == .official {
                 modelManagement.presentModelDetail(
                     for: provider,
                     model: model,
-                    from: self
+                    tableView: tableView,
+                    from: self,
+                    onUpdate: { [weak self] in self?.applySnapshot() }
                 )
             } else {
                 modelManagement.presentModelEditor(
                     for: provider,
                     existingModel: model,
-                    from: self
+                    tableView: tableView,
+                    from: self,
+                    onUpdate: { [weak self] in self?.applySnapshot() }
                 )
             }
-        case .manageModels:
-            guard let row = ProviderModelManageRow(rawValue: indexPath.row) else {
+        case .refreshModels:
+            guard let provider = latestEditingProvider() else {
                 return
             }
-            switch row {
-            case .refreshOfficialModels:
-                guard let provider = latestEditingProvider() else {
-                    return
-                }
-                modelManagement.refreshOfficialModels(
-                    for: provider,
-                    manageSectionIndex: Section.manageModels.rawValue,
-                    in: self
-                )
-            case .addCustomModel:
-                guard let provider = latestEditingProvider() else {
-                    return
-                }
-                modelManagement.presentModelEditor(
-                    for: provider,
-                    existingModel: nil,
-                    from: self
-                )
+            modelManagement.refreshOfficialModels(
+                for: provider,
+                manageSectionIndex: 0,
+                tableView: tableView,
+                in: self,
+                onUpdate: { [weak self] in self?.applySnapshot() }
+            )
+        case .addCustomModel:
+            guard let provider = latestEditingProvider() else {
+                return
             }
-        case .label, .apiKey, .customAPI:
+            modelManagement.presentModelEditor(
+                for: provider,
+                existingModel: nil,
+                tableView: tableView,
+                from: self,
+                onUpdate: { [weak self] in self?.applySnapshot() }
+            )
+        case .labelInput, .apiKeyInput, .baseURLInput, .autoAppendV1Toggle, .emptyModels:
             break
         }
     }
@@ -459,16 +469,19 @@ final class ProviderAPIKeyFormViewController: UITableViewController {
         present(alert, animated: true)
     }
 
-    private func refreshAddProviderCell() {
-        let sectionIndex = Section.addProvider.rawValue
-        guard tableView.numberOfSections > sectionIndex else {
-            return
-        }
-        let indexPath = IndexPath(row: 0, section: sectionIndex)
-        guard tableView.numberOfRows(inSection: sectionIndex) > indexPath.row else {
-            return
-        }
-        tableView.reloadRows(at: [indexPath], with: .none)
+    private func showAddedAlert(providerLabel: String) {
+        let alert = UIAlertController(
+            title: String(localized: "providers.form.alert.add_success.title"),
+            message: String(
+                format: String(localized: "providers.form.alert.add_success.message_format"),
+                providerLabel
+            ),
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: String(localized: "common.action.done"), style: .default, handler: { [weak self] _ in
+            self?.popToManageProviders()
+        }))
+        present(alert, animated: true)
     }
 
     private func isValidOptionalBaseURL(_ baseURLString: String) -> Bool {
@@ -485,21 +498,6 @@ final class ProviderAPIKeyFormViewController: UITableViewController {
             return false
         }
         return true
-    }
-
-    private func showAddedAlert(providerLabel: String) {
-        let alert = UIAlertController(
-            title: String(localized: "providers.form.alert.add_success.title"),
-            message: String(
-                format: String(localized: "providers.form.alert.add_success.message_format"),
-                providerLabel
-            ),
-            preferredStyle: .alert
-        )
-        alert.addAction(UIAlertAction(title: String(localized: "common.action.done"), style: .default, handler: { [weak self] _ in
-            self?.popToManageProviders()
-        }))
-        present(alert, animated: true)
     }
 
     private func popToManageProviders() {
@@ -523,5 +521,58 @@ final class ProviderAPIKeyFormViewController: UITableViewController {
 
     private func storedModels() -> [LLMProviderModelRecord] {
         modelManagement.storedModels(for: latestEditingProvider())
+    }
+}
+
+// MARK: - Diffable DataSource Types
+
+nonisolated enum APIKeyFormSectionID: Hashable, Sendable {
+    case label
+    case apiKey
+    case customAPI
+    case manageModels
+    case storedModels
+    case addProvider
+
+    var header: String? {
+        switch self {
+        case .label:
+            return String(localized: "providers.form.section.label")
+        case .apiKey:
+            return String(localized: "providers.form.section.api_key")
+        case .customAPI:
+            return String(localized: "providers.api_key_form.section.custom_api")
+        case .storedModels:
+            return String(localized: "provider_model.section.stored_models")
+        case .manageModels:
+            return String(localized: "provider_model.section.manage_models")
+        case .addProvider:
+            return nil
+        }
+    }
+}
+
+nonisolated enum APIKeyFormItemID: Hashable, Sendable {
+    case labelInput
+    case apiKeyInput
+    case baseURLInput
+    case autoAppendV1Toggle(isOn: Bool)
+    case storedModel(id: String)
+    case emptyModels
+    case refreshModels(isRefreshing: Bool)
+    case addCustomModel
+    case addProvider
+}
+
+private final class APIKeyFormDataSource: UITableViewDiffableDataSource<APIKeyFormSectionID, APIKeyFormItemID> {
+    var footerProvider: ((APIKeyFormSectionID) -> String?)?
+
+    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
+        sectionIdentifier(for: section)?.header
+    }
+
+    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
+        guard let sectionID = sectionIdentifier(for: section) else { return nil }
+        return footerProvider?(sectionID) ?? nil
     }
 }

@@ -13,14 +13,10 @@ import UIKit
 /// Layout:
 ///   Section 0 — API Key:        one cell  (manual API key)
 ///   Section 1 — OAuth:          provider-specific OAuth options
-final class ProviderAuthMethodViewController: UITableViewController, ASWebAuthenticationPresentationContextProviding {
+final class ProviderAuthMethodViewController: UIViewController, UITableViewDelegate, ASWebAuthenticationPresentationContextProviding {
+    private let tableView = UITableView(frame: .zero, style: .insetGrouped)
 
     // MARK: - Section / Row model
-
-    private enum SectionKind: Int, CaseIterable {
-        case apiKey
-        case oauth
-    }
 
     private enum OAuthRow {
         case openAI
@@ -67,11 +63,13 @@ final class ProviderAuthMethodViewController: UITableViewController, ASWebAuthen
         openAIOAuth != nil || openRouterOAuth != nil
     }
 
+    private var diffableDataSource: AuthMethodDataSource!
+
     // MARK: - Lifecycle
 
     init(providerKind: LLMProviderRecord.Kind = .openAIResponses) {
         self.providerKind = providerKind
-        super.init(style: .insetGrouped)
+        super.init(nibName: nil, bundle: nil)
     }
 
     @available(*, unavailable)
@@ -81,63 +79,58 @@ final class ProviderAuthMethodViewController: UITableViewController, ASWebAuthen
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        view.backgroundColor = .doufuBackground
         tableView.backgroundColor = .doufuBackground
+        tableView.delegate = self
+        tableView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(tableView)
+        NSLayoutConstraint.activate([
+            tableView.topAnchor.constraint(equalTo: view.topAnchor),
+            tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        ])
         title = String(localized: "providers.auth_method.title")
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "MethodCell")
+
+        configureDiffableDataSource()
+        applySnapshot()
     }
 
-    // MARK: - Data source
+    // MARK: - Diffable DataSource
 
-    override func numberOfSections(in tableView: UITableView) -> Int {
-        SectionKind.allCases.count
-    }
-
-    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        guard let kind = SectionKind(rawValue: section) else { return 0 }
-        switch kind {
-        case .apiKey:
-            return 1
-        case .oauth:
-            return oauthRows.count
+    private func configureDiffableDataSource() {
+        diffableDataSource = AuthMethodDataSource(
+            tableView: tableView
+        ) { [weak self] tableView, indexPath, itemID in
+            guard let self else { return UITableViewCell() }
+            return self.cell(for: tableView, indexPath: indexPath, itemID: itemID)
         }
+        diffableDataSource.defaultRowAnimation = .none
     }
 
-    override func tableView(
-        _ tableView: UITableView,
-        titleForHeaderInSection section: Int
-    ) -> String? {
-        guard let kind = SectionKind(rawValue: section) else { return nil }
-        switch kind {
-        case .apiKey:
-            return String(localized: "providers.auth_method.api_key.title")
-        case .oauth:
-            return String(localized: "providers.auth_method.oauth.title")
-        }
-    }
-
-    override func tableView(
-        _ tableView: UITableView,
-        cellForRowAt indexPath: IndexPath
+    private func cell(
+        for tableView: UITableView,
+        indexPath: IndexPath,
+        itemID: AuthMethodItemID
     ) -> UITableViewCell {
         let cell = tableView.dequeueReusableCell(withIdentifier: "MethodCell", for: indexPath)
         cell.accessoryType = .disclosureIndicator
 
-        guard let section = SectionKind(rawValue: indexPath.section) else {
-            return cell
-        }
-
         var configuration = cell.defaultContentConfiguration()
 
-        switch section {
+        switch itemID {
         case .apiKey:
             configuration.text = String(localized: "providers.auth_method.api_key.title")
             configuration.secondaryText = String(localized: "providers.auth_method.api_key.subtitle")
 
-        case .oauth:
-            guard indexPath.row < oauthRows.count else { return cell }
-            let row = oauthRows[indexPath.row]
-            configuration.text = row.title
-            configuration.secondaryText = row.subtitle
+        case .oauthOpenAI:
+            configuration.text = OAuthRow.openAI.title
+            configuration.secondaryText = OAuthRow.openAI.subtitle
+
+        case .oauthOpenRouter:
+            configuration.text = OAuthRow.openRouter.title
+            configuration.secondaryText = OAuthRow.openRouter.subtitle
         }
 
         configuration.secondaryTextProperties.color = .secondaryLabel
@@ -145,33 +138,60 @@ final class ProviderAuthMethodViewController: UITableViewController, ASWebAuthen
         return cell
     }
 
+    // MARK: - Snapshot
+
+    private func buildSnapshot() -> NSDiffableDataSourceSnapshot<AuthMethodSectionID, AuthMethodItemID> {
+        var snapshot = NSDiffableDataSourceSnapshot<AuthMethodSectionID, AuthMethodItemID>()
+
+        snapshot.appendSections([.apiKey])
+        snapshot.appendItems([.apiKey], toSection: .apiKey)
+
+        if !oauthRows.isEmpty {
+            snapshot.appendSections([.oauth])
+            var items: [AuthMethodItemID] = []
+            for row in oauthRows {
+                switch row {
+                case .openAI:
+                    items.append(.oauthOpenAI)
+                case .openRouter:
+                    items.append(.oauthOpenRouter)
+                }
+            }
+            snapshot.appendItems(items, toSection: .oauth)
+        }
+
+        return snapshot
+    }
+
+    private func applySnapshot() {
+        var snapshot = buildSnapshot()
+        snapshot.reconfigureItems(snapshot.itemIdentifiers)
+        diffableDataSource.apply(snapshot, animatingDifferences: false)
+    }
+
     // MARK: - Selection
 
-    override func tableView(_ tableView: UITableView, willSelectRowAt indexPath: IndexPath) -> IndexPath? {
+    func tableView(_ tableView: UITableView, willSelectRowAt indexPath: IndexPath) -> IndexPath? {
         if isOAuthInProgress {
             return nil
         }
         return indexPath
     }
 
-    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
-        guard let section = SectionKind(rawValue: indexPath.section) else { return }
+        guard let itemID = diffableDataSource.itemIdentifier(for: indexPath) else { return }
 
-        switch section {
+        switch itemID {
         case .apiKey:
             let controller = ProviderAPIKeyFormViewController(providerKind: providerKind)
             navigationController?.pushViewController(controller, animated: true)
 
-        case .oauth:
-            guard indexPath.row < oauthRows.count else { return }
-            let row = oauthRows[indexPath.row]
-            switch row {
-            case .openAI:
-                startOpenAIOAuth()
-            case .openRouter:
-                startOpenRouterOAuth()
-            }
+        case .oauthOpenAI:
+            startOpenAIOAuth()
+
+        case .oauthOpenRouter:
+            startOpenRouterOAuth()
         }
     }
 
@@ -305,5 +325,41 @@ final class ProviderAuthMethodViewController: UITableViewController, ASWebAuthen
             return
         }
         navigationController.popViewController(animated: true)
+    }
+}
+
+// MARK: - Section & Item IDs
+
+nonisolated enum AuthMethodSectionID: Hashable, Sendable {
+    case apiKey
+    case oauth
+
+    var header: String? {
+        switch self {
+        case .apiKey:
+            return String(localized: "providers.auth_method.api_key.title")
+        case .oauth:
+            return String(localized: "providers.auth_method.oauth.title")
+        }
+    }
+
+    var footer: String? { nil }
+}
+
+nonisolated enum AuthMethodItemID: Hashable, Sendable {
+    case apiKey
+    case oauthOpenAI
+    case oauthOpenRouter
+}
+
+// MARK: - DataSource (header/footer support)
+
+private final class AuthMethodDataSource: UITableViewDiffableDataSource<AuthMethodSectionID, AuthMethodItemID> {
+    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
+        sectionIdentifier(for: section)?.header
+    }
+
+    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
+        sectionIdentifier(for: section)?.footer
     }
 }

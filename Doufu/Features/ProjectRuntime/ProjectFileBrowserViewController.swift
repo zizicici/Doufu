@@ -36,7 +36,8 @@ import TreeSitterSwiftRunestone
 #endif
 
 @MainActor
-final class ProjectFileBrowserViewController: UITableViewController {
+final class ProjectFileBrowserViewController: UIViewController, UITableViewDelegate {
+    private let tableView = UITableView(frame: .zero, style: .insetGrouped)
 
     private enum ExportKind {
         case code
@@ -50,6 +51,8 @@ final class ProjectFileBrowserViewController: UITableViewController {
         let isHidden: Bool
         let fileSize: Int?
     }
+
+    private var diffableDataSource: UITableViewDiffableDataSource<FileBrowserSectionID, FileBrowserItemID>!
 
     private let projectName: String
     private let rootURL: URL
@@ -112,7 +115,7 @@ final class ProjectFileBrowserViewController: UITableViewController {
         self.excludedURL = excludedURL
         self.onDirectoryPicked = onDirectoryPicked
         self.fileManager = fileManager
-        super.init(style: .insetGrouped)
+        super.init(nibName: nil, bundle: nil)
     }
 
     @available(*, unavailable)
@@ -126,9 +129,20 @@ final class ProjectFileBrowserViewController: UITableViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        title = titleForCurrentDirectory()
+        view.backgroundColor = .doufuBackground
         tableView.backgroundColor = .doufuBackground
+        tableView.delegate = self
+        tableView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(tableView)
+        NSLayoutConstraint.activate([
+            tableView.topAnchor.constraint(equalTo: view.topAnchor),
+            tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        ])
+        title = titleForCurrentDirectory()
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "ProjectFileRow")
+        configureDiffableDataSource()
 
         if directoryPickerMode {
             let selectStyle: UIBarButtonItem.Style = .prominent
@@ -187,10 +201,81 @@ final class ProjectFileBrowserViewController: UITableViewController {
     private func reloadItems() {
         do {
             items = try loadItems()
-            tableView.reloadData()
+            applySnapshot()
         } catch {
             showLoadError(error.localizedDescription)
         }
+    }
+
+    // MARK: - Diffable DataSource
+
+    private func configureDiffableDataSource() {
+        diffableDataSource = UITableViewDiffableDataSource<FileBrowserSectionID, FileBrowserItemID>(
+            tableView: tableView
+        ) { [weak self] tableView, indexPath, itemID in
+            guard let self else { return UITableViewCell() }
+            return self.cell(for: tableView, indexPath: indexPath, itemID: itemID)
+        }
+        diffableDataSource.defaultRowAnimation = .none
+    }
+
+    private func cell(
+        for tableView: UITableView,
+        indexPath: IndexPath,
+        itemID: FileBrowserItemID
+    ) -> UITableViewCell {
+        let cell = tableView.dequeueReusableCell(withIdentifier: "ProjectFileRow", for: indexPath)
+        var configuration = UIListContentConfiguration.valueCell()
+
+        switch itemID {
+        case .empty:
+            configuration.text = String(localized: "file_browser.empty_directory")
+            configuration.secondaryText = nil
+            configuration.image = UIImage(systemName: "tray")
+            cell.accessoryType = .none
+
+        case .file(let path):
+            guard let item = items.first(where: { $0.url.path == path }) else {
+                cell.contentConfiguration = configuration
+                return cell
+            }
+            if item.isHidden {
+                let tag = String(localized: "file_browser.hidden_tag", defaultValue: "[hidden]")
+                configuration.text = "\(tag) \(item.name)"
+                configuration.textProperties.color = .secondaryLabel
+            } else {
+                configuration.text = item.name
+            }
+            if item.isDirectory {
+                configuration.secondaryText = String(localized: "file_browser.item.folder")
+                configuration.image = UIImage(systemName: "folder")
+                cell.accessoryType = .disclosureIndicator
+            } else {
+                configuration.secondaryText = item.fileSize.map(Self.formatBytes(_:))
+                    ?? String(localized: "file_browser.item.file")
+                configuration.image = UIImage(systemName: "doc.text")
+                cell.accessoryType = .disclosureIndicator
+            }
+        }
+        cell.contentConfiguration = configuration
+        return cell
+    }
+
+    private func buildSnapshot() -> NSDiffableDataSourceSnapshot<FileBrowserSectionID, FileBrowserItemID> {
+        var snapshot = NSDiffableDataSourceSnapshot<FileBrowserSectionID, FileBrowserItemID>()
+        snapshot.appendSections([.files])
+        if items.isEmpty {
+            snapshot.appendItems([.empty], toSection: .files)
+        } else {
+            snapshot.appendItems(items.map { .file(path: $0.url.path) }, toSection: .files)
+        }
+        return snapshot
+    }
+
+    private func applySnapshot() {
+        var snapshot = buildSnapshot()
+        snapshot.reconfigureItems(snapshot.itemIdentifiers)
+        diffableDataSource.apply(snapshot, animatingDifferences: false)
     }
 
     private func loadItems() throws -> [Item] {
@@ -268,49 +353,17 @@ final class ProjectFileBrowserViewController: UITableViewController {
         present(alert, animated: true)
     }
 
-    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        max(items.count, 1)
-    }
-
-    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        let cell = tableView.dequeueReusableCell(withIdentifier: "ProjectFileRow", for: indexPath)
-        var configuration = UIListContentConfiguration.valueCell()
-        if items.isEmpty {
-            configuration.text = String(localized: "file_browser.empty_directory")
-            configuration.secondaryText = nil
-            configuration.image = UIImage(systemName: "tray")
-            cell.accessoryType = .none
-        } else {
-            let item = items[indexPath.row]
-            if item.isHidden {
-                let tag = String(localized: "file_browser.hidden_tag", defaultValue: "[hidden]")
-                configuration.text = "\(tag) \(item.name)"
-                configuration.textProperties.color = .secondaryLabel
-            } else {
-                configuration.text = item.name
-            }
-            if item.isDirectory {
-                configuration.secondaryText = String(localized: "file_browser.item.folder")
-                configuration.image = UIImage(systemName: "folder")
-                cell.accessoryType = .disclosureIndicator
-            } else {
-                configuration.secondaryText = item.fileSize.map(Self.formatBytes(_:))
-                    ?? String(localized: "file_browser.item.file")
-                configuration.image = UIImage(systemName: "doc.text")
-                cell.accessoryType = .disclosureIndicator
-            }
-        }
-        cell.contentConfiguration = configuration
-        return cell
-    }
-
-    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
-        guard !items.isEmpty else {
+        guard let itemID = diffableDataSource.itemIdentifier(for: indexPath) else {
             return
         }
 
-        let item = items[indexPath.row]
+        guard case .file(let path) = itemID,
+              let item = items.first(where: { $0.url.path == path })
+        else {
+            return
+        }
         if item.isDirectory {
             let controller = ProjectFileBrowserViewController(
                 projectName: projectName,
@@ -335,7 +388,7 @@ final class ProjectFileBrowserViewController: UITableViewController {
         navigationController?.pushViewController(viewer, animated: true)
     }
 
-    override func tableView(
+    func tableView(
         _ tableView: UITableView,
         contextMenuConfigurationForRowAt indexPath: IndexPath,
         point: CGPoint
@@ -343,7 +396,11 @@ final class ProjectFileBrowserViewController: UITableViewController {
         guard !readOnly, !directoryPickerMode, isInsideAppDirectory, !items.isEmpty else {
             return nil
         }
-        let item = items[indexPath.row]
+        guard case .file(let path) = diffableDataSource.itemIdentifier(for: indexPath),
+              let item = items.first(where: { $0.url.path == path })
+        else {
+            return nil
+        }
         return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
             guard let self else { return nil }
             return self.makeContextMenu(for: item)
@@ -767,6 +824,17 @@ extension ProjectFileBrowserViewController: UIDocumentPickerDelegate {
             return false
         }
     }
+}
+
+// MARK: - Diffable DataSource Types
+
+nonisolated enum FileBrowserSectionID: Hashable, Sendable {
+    case files
+}
+
+nonisolated enum FileBrowserItemID: Hashable, Sendable {
+    case file(path: String)
+    case empty
 }
 
 @MainActor

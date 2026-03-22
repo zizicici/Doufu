@@ -9,32 +9,11 @@ import SafariServices
 import UIKit
 
 @MainActor
-final class SettingsSpecificationsViewController: UITableViewController {
+final class SettingsSpecificationsViewController: UIViewController, UITableViewDelegate {
+    private let tableView = UITableView(frame: .zero, style: .insetGrouped)
+    private var diffableDataSource: SpecificationsDataSource!
 
-    private enum Section: Int, CaseIterable {
-        case summary
-        case thirdParty
-
-        var header: String? {
-            switch self {
-            case .summary:
-                return nil
-            case .thirdParty:
-                return String(localized: "settings.specifications.third_party.header")
-            }
-        }
-
-        var footer: String? {
-            switch self {
-            case .thirdParty:
-                return String(localized: "settings.specifications.third_party.footer")
-            default:
-                return nil
-            }
-        }
-    }
-
-    private enum SummaryRow: Int, CaseIterable {
+    fileprivate enum SummaryRow: Int, CaseIterable {
         case name
         case version
         case manufacturer
@@ -88,7 +67,7 @@ final class SettingsSpecificationsViewController: UITableViewController {
     }
 
     init() {
-        super.init(style: .insetGrouped)
+        super.init(nibName: nil, bundle: nil)
     }
 
     @available(*, unavailable)
@@ -98,73 +77,142 @@ final class SettingsSpecificationsViewController: UITableViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        view.backgroundColor = .doufuBackground
+        tableView.backgroundColor = .doufuBackground
+        tableView.delegate = self
+        tableView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(tableView)
+        NSLayoutConstraint.activate([
+            tableView.topAnchor.constraint(equalTo: view.topAnchor),
+            tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        ])
         title = String(localized: "settings.specifications.title")
         navigationItem.largeTitleDisplayMode = .never
-        tableView.backgroundColor = .doufuBackground
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "Cell")
+
+        configureDiffableDataSource()
+        applySnapshot()
     }
 
-    override func numberOfSections(in tableView: UITableView) -> Int {
-        Section.allCases.count
-    }
+    // MARK: - Diffable DataSource
 
-    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        guard let section = Section(rawValue: section) else { return 0 }
-        switch section {
-        case .summary:
-            return SummaryRow.allCases.count
-        case .thirdParty:
-            return ThirdParty.current.count
+    private func configureDiffableDataSource() {
+        diffableDataSource = SpecificationsDataSource(
+            tableView: tableView
+        ) { [weak self] tableView, indexPath, itemID in
+            guard let self else { return UITableViewCell() }
+            let cell = tableView.dequeueReusableCell(withIdentifier: "Cell", for: indexPath)
+
+            switch itemID {
+            case .name, .version, .manufacturer, .publisher, .license:
+                let summaryRows: [SpecificationsItemID: SummaryRow] = [
+                    .name: .name, .version: .version, .manufacturer: .manufacturer,
+                    .publisher: .publisher, .license: .license,
+                ]
+                guard let summaryRow = summaryRows[itemID] else { return cell }
+                var config = UIListContentConfiguration.valueCell()
+                config.text = summaryRow.title
+                config.secondaryText = summaryRow.value
+                cell.contentConfiguration = config
+                cell.accessoryType = .none
+                cell.selectionStyle = .none
+
+            case .thirdParty(let index):
+                let item = ThirdParty.current[index]
+                var config = UIListContentConfiguration.valueCell()
+                config.text = item.name
+                config.secondaryText = item.version
+                cell.contentConfiguration = config
+                cell.accessoryType = .disclosureIndicator
+                cell.selectionStyle = .default
+            }
+
+            return cell
         }
+        diffableDataSource.defaultRowAnimation = .none
     }
 
-    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
-        Section(rawValue: section)?.header
+    // MARK: - Snapshot
+
+    private func buildSnapshot() -> NSDiffableDataSourceSnapshot<SpecificationsSectionID, SpecificationsItemID> {
+        var snapshot = NSDiffableDataSourceSnapshot<SpecificationsSectionID, SpecificationsItemID>()
+        snapshot.appendSections([.summary, .thirdParty])
+        snapshot.appendItems([.name, .version, .manufacturer, .publisher, .license], toSection: .summary)
+        snapshot.appendItems(
+            ThirdParty.current.indices.map { .thirdParty(index: $0) },
+            toSection: .thirdParty
+        )
+        return snapshot
     }
 
-    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
-        Section(rawValue: section)?.footer
+    private func applySnapshot() {
+        var snapshot = buildSnapshot()
+        snapshot.reconfigureItems(snapshot.itemIdentifiers)
+        diffableDataSource.apply(snapshot, animatingDifferences: false)
     }
 
-    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        let cell = tableView.dequeueReusableCell(withIdentifier: "Cell", for: indexPath)
-        guard let section = Section(rawValue: indexPath.section) else { return cell }
+    // MARK: - Selection
 
-        switch section {
-        case .summary:
-            guard let row = SummaryRow(rawValue: indexPath.row) else { return cell }
-            var config = UIListContentConfiguration.valueCell()
-            config.text = row.title
-            config.secondaryText = row.value
-            cell.contentConfiguration = config
-            cell.accessoryType = .none
-            cell.selectionStyle = .none
-
-        case .thirdParty:
-            let item = ThirdParty.current[indexPath.row]
-            var config = UIListContentConfiguration.valueCell()
-            config.text = item.name
-            config.secondaryText = item.version
-            cell.contentConfiguration = config
-            cell.accessoryType = .disclosureIndicator
-            cell.selectionStyle = .default
-        }
-
-        return cell
-    }
-
-    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
-        guard let section = Section(rawValue: indexPath.section) else { return }
+        guard let itemID = diffableDataSource.itemIdentifier(for: indexPath) else { return }
 
-        switch section {
-        case .thirdParty:
-            let item = ThirdParty.current[indexPath.row]
+        switch itemID {
+        case .thirdParty(let index):
+            let item = ThirdParty.current[index]
             guard let url = URL(string: item.urlString) else { return }
             let safari = SFSafariViewController(url: url)
             present(safari, animated: true)
         default:
             break
         }
+    }
+}
+
+// MARK: - Section & Item IDs
+
+nonisolated enum SpecificationsSectionID: Hashable, Sendable {
+    case summary
+    case thirdParty
+
+    var header: String? {
+        switch self {
+        case .summary:
+            return nil
+        case .thirdParty:
+            return String(localized: "settings.specifications.third_party.header")
+        }
+    }
+
+    var footer: String? {
+        switch self {
+        case .thirdParty:
+            return String(localized: "settings.specifications.third_party.footer")
+        case .summary:
+            return nil
+        }
+    }
+}
+
+nonisolated enum SpecificationsItemID: Hashable, Sendable {
+    case name
+    case version
+    case manufacturer
+    case publisher
+    case license
+    case thirdParty(index: Int)
+}
+
+// MARK: - DataSource (header/footer support)
+
+private final class SpecificationsDataSource: UITableViewDiffableDataSource<SpecificationsSectionID, SpecificationsItemID> {
+    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
+        sectionIdentifier(for: section)?.header
+    }
+
+    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
+        sectionIdentifier(for: section)?.footer
     }
 }

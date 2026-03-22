@@ -7,20 +7,12 @@
 
 import UIKit
 
-final class AddProviderViewController: UITableViewController {
-    private let sections: [(title: String, kinds: [LLMProviderRecord.Kind])] = [
-        (
-            String(localized: "providers.add.section.standard"),
-            [.openAIResponses, .openAIChatCompletions, .anthropic]
-        ),
-        (
-            String(localized: "providers.add.section.other"),
-            [.googleGemini, .openRouter, .xiaomiMiMo]
-        )
-    ]
+final class AddProviderViewController: UIViewController, UITableViewDelegate {
+    private let tableView = UITableView(frame: .zero, style: .insetGrouped)
+    private var diffableDataSource: AddProviderDataSource!
 
     init() {
-        super.init(style: .insetGrouped)
+        super.init(nibName: nil, bundle: nil)
     }
 
     @available(*, unavailable)
@@ -30,54 +22,131 @@ final class AddProviderViewController: UITableViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        view.backgroundColor = .doufuBackground
         tableView.backgroundColor = .doufuBackground
+        tableView.delegate = self
+        tableView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(tableView)
+        NSLayoutConstraint.activate([
+            tableView.topAnchor.constraint(equalTo: view.topAnchor),
+            tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        ])
         title = String(localized: "providers.add.title")
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "ProviderOptionCell")
+
+        configureDiffableDataSource()
+        applySnapshot()
     }
 
-    override func numberOfSections(in tableView: UITableView) -> Int {
-        sections.count
+    // MARK: - Diffable DataSource
+
+    private func configureDiffableDataSource() {
+        diffableDataSource = AddProviderDataSource(
+            tableView: tableView
+        ) { tableView, indexPath, itemID in
+            let cell = tableView.dequeueReusableCell(withIdentifier: "ProviderOptionCell", for: indexPath)
+            cell.accessoryType = .disclosureIndicator
+            let kind = itemID.kind
+            var configuration = cell.defaultContentConfiguration()
+            configuration.text = kind.displayName
+            configuration.secondaryText = kind.subtitle
+            configuration.secondaryTextProperties.color = .secondaryLabel
+            cell.contentConfiguration = configuration
+            return cell
+        }
+        diffableDataSource.defaultRowAnimation = .none
     }
 
-    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        sections[section].kinds.count
+    // MARK: - Snapshot
+
+    private func buildSnapshot() -> NSDiffableDataSourceSnapshot<AddProviderSectionID, AddProviderItemID> {
+        var snapshot = NSDiffableDataSourceSnapshot<AddProviderSectionID, AddProviderItemID>()
+        snapshot.appendSections([.standard, .other])
+        snapshot.appendItems(
+            [.openAIResponses, .openAIChatCompletions, .anthropic],
+            toSection: .standard
+        )
+        snapshot.appendItems(
+            [.googleGemini, .openRouter, .xiaomiMiMo],
+            toSection: .other
+        )
+        return snapshot
     }
 
-    override func tableView(
-        _ tableView: UITableView,
-        titleForHeaderInSection section: Int
-    ) -> String? {
-        sections[section].title
+    private func applySnapshot() {
+        var snapshot = buildSnapshot()
+        snapshot.reconfigureItems(snapshot.itemIdentifiers)
+        diffableDataSource.apply(snapshot, animatingDifferences: false)
     }
 
-    override func tableView(
-        _ tableView: UITableView,
-        cellForRowAt indexPath: IndexPath
-    ) -> UITableViewCell {
-        let cell = tableView.dequeueReusableCell(withIdentifier: "ProviderOptionCell", for: indexPath)
-        cell.accessoryType = .disclosureIndicator
-        let kind = sections[indexPath.section].kinds[indexPath.row]
+    // MARK: - Selection
 
-        var configuration = cell.defaultContentConfiguration()
-        configuration.text = kind.displayName
-        configuration.secondaryText = kind.subtitle
-        configuration.secondaryTextProperties.color = .secondaryLabel
-        cell.contentConfiguration = configuration
-        return cell
-    }
-
-    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
-        let kind = sections[indexPath.section].kinds[indexPath.row]
+        guard let itemID = diffableDataSource.itemIdentifier(for: indexPath) else { return }
         let controller: UIViewController
-        switch kind {
+        switch itemID {
         case .openAIResponses:
             controller = ProviderAuthMethodViewController()
         case .openRouter:
             controller = ProviderAuthMethodViewController(providerKind: .openRouter)
         case .openAIChatCompletions, .anthropic, .googleGemini, .xiaomiMiMo:
-            controller = ProviderAPIKeyFormViewController(providerKind: kind)
+            controller = ProviderAPIKeyFormViewController(providerKind: itemID.kind)
         }
         navigationController?.pushViewController(controller, animated: true)
+    }
+}
+
+// MARK: - Section & Item IDs
+
+nonisolated enum AddProviderSectionID: Hashable, Sendable {
+    case standard
+    case other
+
+    var header: String? {
+        switch self {
+        case .standard:
+            return String(localized: "providers.add.section.standard")
+        case .other:
+            return String(localized: "providers.add.section.other")
+        }
+    }
+
+    var footer: String? {
+        nil
+    }
+}
+
+nonisolated enum AddProviderItemID: Hashable, Sendable {
+    case openAIResponses
+    case openAIChatCompletions
+    case anthropic
+    case googleGemini
+    case openRouter
+    case xiaomiMiMo
+
+    var kind: LLMProviderRecord.Kind {
+        switch self {
+        case .openAIResponses: return .openAIResponses
+        case .openAIChatCompletions: return .openAIChatCompletions
+        case .anthropic: return .anthropic
+        case .googleGemini: return .googleGemini
+        case .openRouter: return .openRouter
+        case .xiaomiMiMo: return .xiaomiMiMo
+        }
+    }
+}
+
+// MARK: - DataSource (header/footer support)
+
+private final class AddProviderDataSource: UITableViewDiffableDataSource<AddProviderSectionID, AddProviderItemID> {
+    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
+        sectionIdentifier(for: section)?.header
+    }
+
+    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
+        sectionIdentifier(for: section)?.footer
     }
 }

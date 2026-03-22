@@ -8,11 +8,8 @@
 import UIKit
 
 @MainActor
-class TokenUsageDashboardViewController: UITableViewController {
-    private enum Section: Int, CaseIterable {
-        case total
-        case trend
-    }
+class TokenUsageDashboardViewController: UIViewController, UITableViewDelegate {
+    private let tableView = UITableView(frame: .zero, style: .insetGrouped)
 
     private enum TrendRow: Int, CaseIterable {
         case weekNavigator
@@ -70,6 +67,7 @@ class TokenUsageDashboardViewController: UITableViewController {
     private var allDailyRecords: [DisplayDailyRecord] = []
     private var selectedShareDimension: ShareDimension = .provider
     private var weekPage = 0
+    private var chartDataID = UUID()
     private var trendChartData = TrendChartData(
         weekTitle: "",
         canGoOlder: false,
@@ -81,6 +79,8 @@ class TokenUsageDashboardViewController: UITableViewController {
         outputTotal: 0,
         hasAnyData: false
     )
+
+    private var diffableDataSource: TokenUsageDataSource!
 
     private let tokenFormatter: NumberFormatter = {
         let formatter = NumberFormatter()
@@ -129,7 +129,7 @@ class TokenUsageDashboardViewController: UITableViewController {
         pageTitle = titleText
         self.projectIdentifier = projectIdentifier
         self.includeDoneButton = includeDoneButton
-        super.init(style: .insetGrouped)
+        super.init(nibName: nil, bundle: nil)
     }
 
     @available(*, unavailable)
@@ -139,7 +139,17 @@ class TokenUsageDashboardViewController: UITableViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        view.backgroundColor = .doufuBackground
         tableView.backgroundColor = .doufuBackground
+        tableView.delegate = self
+        tableView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(tableView)
+        NSLayoutConstraint.activate([
+            tableView.topAnchor.constraint(equalTo: view.topAnchor),
+            tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        ])
         title = pageTitle
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "UsageCell")
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "UsagePlaceholderCell")
@@ -166,6 +176,7 @@ class TokenUsageDashboardViewController: UITableViewController {
             )
         }
 
+        configureDiffableDataSource()
         reloadUsageData()
     }
 
@@ -174,54 +185,65 @@ class TokenUsageDashboardViewController: UITableViewController {
         reloadUsageData()
     }
 
-    override func numberOfSections(in tableView: UITableView) -> Int {
-        Section.allCases.count
-    }
+    // MARK: - Diffable DataSource
 
-    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        guard let section = Section(rawValue: section) else {
-            return 0
+    private func configureDiffableDataSource() {
+        diffableDataSource = TokenUsageDataSource(
+            tableView: tableView
+        ) { [weak self] tableView, indexPath, itemID in
+            guard let self else { return UITableViewCell() }
+            return self.cell(for: tableView, indexPath: indexPath, itemID: itemID)
         }
-        switch section {
-        case .total:
-            return 2
-        case .trend:
-            return TrendRow.allCases.count
-        }
-    }
-
-    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
-        guard let section = Section(rawValue: section) else {
-            return nil
-        }
-        switch section {
-        case .total:
-            return String(localized: "providers.usage.section.total")
-        case .trend:
-            return String(localized: "chat.project_usage.daily_usage")
+        diffableDataSource.defaultRowAnimation = .none
+        diffableDataSource.footerProvider = { [weak self] sectionID in
+            self?.footer(for: sectionID)
         }
     }
 
-    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
-        guard Section(rawValue: section) == .trend else {
-            return nil
-        }
-        return trendChartData.hasAnyData ? nil : String(localized: "chat.project_usage.daily_empty")
-    }
-
-    override func tableView(
-        _ tableView: UITableView,
-        cellForRowAt indexPath: IndexPath
+    private func cell(
+        for tableView: UITableView,
+        indexPath: IndexPath,
+        itemID: TokenUsageItemID
     ) -> UITableViewCell {
-        guard let section = Section(rawValue: indexPath.section) else {
-            return UITableViewCell()
+        switch itemID {
+        case .inputTokens, .outputTokens:
+            return makeTotalCell(tableView: tableView, indexPath: indexPath, itemID: itemID)
+        case .weekNavigator, .dimensionPicker, .inputChart, .outputChart:
+            return makeTrendCell(tableView: tableView, indexPath: indexPath, itemID: itemID)
         }
+    }
 
-        switch section {
-        case .total:
-            return makeTotalCell(tableView: tableView, indexPath: indexPath)
+    private func buildSnapshot() -> NSDiffableDataSourceSnapshot<TokenUsageSectionID, TokenUsageItemID> {
+        var snapshot = NSDiffableDataSourceSnapshot<TokenUsageSectionID, TokenUsageItemID>()
+        snapshot.appendSections([.total, .trend])
+
+        snapshot.appendItems([
+            .inputTokens(value: formattedTokens(totals.inputTokens)),
+            .outputTokens(value: formattedTokens(totals.outputTokens))
+        ], toSection: .total)
+
+        snapshot.appendItems([
+            .weekNavigator(title: trendChartData.weekTitle),
+            .dimensionPicker(selected: selectedShareDimension.rawValue),
+            .inputChart(id: chartDataID),
+            .outputChart(id: chartDataID)
+        ], toSection: .trend)
+
+        return snapshot
+    }
+
+    func applySnapshot() {
+        var snapshot = buildSnapshot()
+        snapshot.reconfigureItems(snapshot.itemIdentifiers)
+        diffableDataSource.apply(snapshot, animatingDifferences: false)
+    }
+
+    private func footer(for sectionID: TokenUsageSectionID) -> String? {
+        switch sectionID {
         case .trend:
-            return makeTrendCell(tableView: tableView, indexPath: indexPath)
+            return trendChartData.hasAnyData ? nil : String(localized: "chat.project_usage.daily_empty")
+        case .total:
+            return nil
         }
     }
 
@@ -230,29 +252,28 @@ class TokenUsageDashboardViewController: UITableViewController {
         dismiss(animated: true)
     }
 
-    private func makeTotalCell(tableView: UITableView, indexPath: IndexPath) -> UITableViewCell {
+    private func makeTotalCell(tableView: UITableView, indexPath: IndexPath, itemID: TokenUsageItemID) -> UITableViewCell {
         let cell = tableView.dequeueReusableCell(withIdentifier: "UsageCell", for: indexPath)
         cell.selectionStyle = .none
         cell.accessoryType = .none
         var configuration = cell.defaultContentConfiguration()
-        if indexPath.row == 0 {
+        switch itemID {
+        case .inputTokens(let value):
             configuration.text = String(localized: "providers.usage.total.input")
-            configuration.secondaryText = formattedTokens(totals.inputTokens)
-        } else {
+            configuration.secondaryText = value
+        case .outputTokens(let value):
             configuration.text = String(localized: "providers.usage.total.output")
-            configuration.secondaryText = formattedTokens(totals.outputTokens)
+            configuration.secondaryText = value
+        default:
+            break
         }
         configuration.secondaryTextProperties.color = .secondaryLabel
         cell.contentConfiguration = configuration
         return cell
     }
 
-    private func makeTrendCell(tableView: UITableView, indexPath: IndexPath) -> UITableViewCell {
-        guard let row = TrendRow(rawValue: indexPath.row) else {
-            return UITableViewCell()
-        }
-
-        switch row {
+    private func makeTrendCell(tableView: UITableView, indexPath: IndexPath, itemID: TokenUsageItemID) -> UITableViewCell {
+        switch itemID {
         case .weekNavigator:
             guard
                 let cell = tableView.dequeueReusableCell(
@@ -270,19 +291,19 @@ class TokenUsageDashboardViewController: UITableViewController {
                     guard let self else { return }
                     self.weekPage += 1
                     self.recomputeTrendData()
-                    self.reloadTrendSection()
+                    self.applySnapshot()
                 },
                 onGoNewer: { [weak self] in
                     guard let self else { return }
                     guard self.weekPage > 0 else { return }
                     self.weekPage -= 1
                     self.recomputeTrendData()
-                    self.reloadTrendSection()
+                    self.applySnapshot()
                 }
             )
             return cell
 
-        case .dimension:
+        case .dimensionPicker:
             guard
                 let cell = tableView.dequeueReusableCell(
                     withIdentifier: SegmentedControlTableViewCell.reuseIdentifier,
@@ -307,7 +328,7 @@ class TokenUsageDashboardViewController: UITableViewController {
                 }
                 self.selectedShareDimension = newDimension
                 self.recomputeTrendData()
-                self.reloadTrendSection()
+                self.applySnapshot()
             }
             return cell
 
@@ -320,7 +341,12 @@ class TokenUsageDashboardViewController: UITableViewController {
             else {
                 return UITableViewCell()
             }
-            let isInput = row == .inputChart
+            let isInput: Bool
+            if case .inputChart = itemID {
+                isInput = true
+            } else {
+                isInput = false
+            }
             let title = isInput
                 ? String(localized: "providers.usage.total.input")
                 : String(localized: "providers.usage.total.output")
@@ -335,6 +361,9 @@ class TokenUsageDashboardViewController: UITableViewController {
                 emptyText: String(localized: "providers.usage.breakdown.empty")
             )
             return cell
+
+        default:
+            return UITableViewCell()
         }
     }
 
@@ -348,10 +377,11 @@ class TokenUsageDashboardViewController: UITableViewController {
         weekPage = max(0, weekPage)
 
         recomputeTrendData()
-        tableView.reloadData()
+        applySnapshot()
     }
 
     private func recomputeTrendData() {
+        chartDataID = UUID()
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: Date())
         guard
@@ -488,7 +518,7 @@ class TokenUsageDashboardViewController: UITableViewController {
     }
 
     private func reloadTrendSection() {
-        tableView.reloadSections(IndexSet(integer: Section.trend.rawValue), with: .automatic)
+        applySnapshot()
     }
 
     private func normalizedDisplayRecord(
@@ -551,6 +581,44 @@ final class TokenUsageViewController: TokenUsageDashboardViewController {
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+}
+
+// MARK: - Diffable DataSource Types
+
+nonisolated enum TokenUsageSectionID: Hashable, Sendable {
+    case total
+    case trend
+
+    var header: String? {
+        switch self {
+        case .total:
+            return String(localized: "providers.usage.section.total")
+        case .trend:
+            return String(localized: "chat.project_usage.daily_usage")
+        }
+    }
+}
+
+nonisolated enum TokenUsageItemID: Hashable, Sendable {
+    case inputTokens(value: String)
+    case outputTokens(value: String)
+    case weekNavigator(title: String)
+    case dimensionPicker(selected: Int)
+    case inputChart(id: UUID)
+    case outputChart(id: UUID)
+}
+
+final class TokenUsageDataSource: UITableViewDiffableDataSource<TokenUsageSectionID, TokenUsageItemID> {
+    var footerProvider: ((TokenUsageSectionID) -> String?)?
+
+    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
+        sectionIdentifier(for: section)?.header
+    }
+
+    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
+        guard let sectionID = sectionIdentifier(for: section) else { return nil }
+        return footerProvider?(sectionID) ?? nil
     }
 }
 

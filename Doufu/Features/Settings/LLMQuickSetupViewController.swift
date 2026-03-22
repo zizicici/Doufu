@@ -8,21 +8,18 @@
 import UIKit
 
 @MainActor
-final class LLMQuickSetupViewController: UITableViewController {
+final class LLMQuickSetupViewController: UIViewController, UITableViewDelegate {
+    private let tableView = UITableView(frame: .zero, style: .insetGrouped)
+    private var diffableDataSource: LLMQuickSetupDataSource!
 
     var onDismiss: (() -> Void)?
-
-    private enum Row: Int, CaseIterable {
-        case manageProviders
-        case defaultModel
-    }
 
     private let store = LLMProviderSettingsStore.shared
     private let modelSelectionStore = ModelSelectionStateStore.shared
     private var modelSelectionObserver: NSObjectProtocol?
 
     init() {
-        super.init(style: .insetGrouped)
+        super.init(nibName: nil, bundle: nil)
     }
 
     @available(*, unavailable)
@@ -38,7 +35,17 @@ final class LLMQuickSetupViewController: UITableViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        view.backgroundColor = .doufuBackground
         tableView.backgroundColor = .doufuBackground
+        tableView.delegate = self
+        tableView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(tableView)
+        NSLayoutConstraint.activate([
+            tableView.topAnchor.constraint(equalTo: view.topAnchor),
+            tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        ])
         title = String(localized: "settings.section.llm_providers")
         navigationItem.rightBarButtonItem = UIBarButtonItem(
             barButtonSystemItem: .done,
@@ -46,55 +53,76 @@ final class LLMQuickSetupViewController: UITableViewController {
             action: #selector(didTapDone)
         )
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "Cell")
+
+        configureDiffableDataSource()
+
         modelSelectionObserver = modelSelectionStore.addObserver { [weak self] change in
             guard case .appDefault = change.scope else { return }
-            self?.reloadDefaultModelRow()
+            self?.applySnapshot()
         }
+        applySnapshot()
     }
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        tableView.reloadData()
+        applySnapshot()
     }
 
-    override func numberOfSections(in tableView: UITableView) -> Int {
-        1
-    }
+    // MARK: - Diffable DataSource
 
-    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        Row.allCases.count
-    }
-
-    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
-        String(localized: "settings.section.llm_providers")
-    }
-
-    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        let cell = tableView.dequeueReusableCell(withIdentifier: "Cell", for: indexPath)
-        cell.accessoryType = .disclosureIndicator
-        guard let row = Row(rawValue: indexPath.row) else { return cell }
-
-        var configuration = UIListContentConfiguration.valueCell()
-        switch row {
-        case .manageProviders:
-            let count = store.loadProviders().count
-            configuration.text = String(localized: "settings.providers.title")
-            configuration.secondaryText = String(
-                format: String(localized: "settings.manage_providers.configured_count_format"),
-                count
-            )
-        case .defaultModel:
-            configuration.text = String(localized: "settings.default_model.title")
-            configuration.secondaryText = defaultModelDisplayName()
+    private func configureDiffableDataSource() {
+        diffableDataSource = LLMQuickSetupDataSource(
+            tableView: tableView
+        ) { [weak self] tableView, indexPath, itemID in
+            guard let self else { return UITableViewCell() }
+            let cell = tableView.dequeueReusableCell(withIdentifier: "Cell", for: indexPath)
+            cell.accessoryType = .disclosureIndicator
+            var configuration = UIListContentConfiguration.valueCell()
+            switch itemID {
+            case .manageProviders(let subtitle):
+                configuration.text = String(localized: "settings.providers.title")
+                configuration.secondaryText = subtitle
+            case .defaultModel(let subtitle):
+                configuration.text = String(localized: "settings.default_model.title")
+                configuration.secondaryText = subtitle
+            }
+            cell.contentConfiguration = configuration
+            return cell
         }
-        cell.contentConfiguration = configuration
-        return cell
+        diffableDataSource.defaultRowAnimation = .none
     }
 
-    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+    // MARK: - Snapshot
+
+    private func buildSnapshot() -> NSDiffableDataSourceSnapshot<LLMQuickSetupSectionID, LLMQuickSetupItemID> {
+        var snapshot = NSDiffableDataSourceSnapshot<LLMQuickSetupSectionID, LLMQuickSetupItemID>()
+        snapshot.appendSections([.main])
+
+        let count = store.loadProviders().count
+        let providersSubtitle = String(
+            format: String(localized: "settings.manage_providers.configured_count_format"),
+            count
+        )
+        snapshot.appendItems([
+            .manageProviders(subtitle: providersSubtitle),
+            .defaultModel(subtitle: defaultModelDisplayName()),
+        ], toSection: .main)
+
+        return snapshot
+    }
+
+    private func applySnapshot() {
+        var snapshot = buildSnapshot()
+        snapshot.reconfigureItems(snapshot.itemIdentifiers)
+        diffableDataSource.apply(snapshot, animatingDifferences: false)
+    }
+
+    // MARK: - Selection
+
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
-        guard let row = Row(rawValue: indexPath.row) else { return }
-        switch row {
+        guard let itemID = diffableDataSource.itemIdentifier(for: indexPath) else { return }
+        switch itemID {
         case .manageProviders:
             let controller = ManageProvidersViewController()
             navigationController?.pushViewController(controller, animated: true)
@@ -137,13 +165,38 @@ final class LLMQuickSetupViewController: UITableViewController {
         let modelName = model?.effectiveDisplayName ?? selection.modelRecordID
         return provider.label + " · " + modelName
     }
+}
 
-    private func reloadDefaultModelRow() {
-        guard isViewLoaded else { return }
-        let indexPath = IndexPath(row: Row.defaultModel.rawValue, section: 0)
-        guard tableView.numberOfRows(inSection: 0) > indexPath.row else {
-            return
+// MARK: - Section & Item IDs
+
+nonisolated enum LLMQuickSetupSectionID: Hashable, Sendable {
+    case main
+
+    var header: String? {
+        switch self {
+        case .main:
+            return String(localized: "settings.section.llm_providers")
         }
-        tableView.reloadRows(at: [indexPath], with: .none)
+    }
+
+    var footer: String? {
+        nil
+    }
+}
+
+nonisolated enum LLMQuickSetupItemID: Hashable, Sendable {
+    case manageProviders(subtitle: String)
+    case defaultModel(subtitle: String)
+}
+
+// MARK: - DataSource (header/footer support)
+
+private final class LLMQuickSetupDataSource: UITableViewDiffableDataSource<LLMQuickSetupSectionID, LLMQuickSetupItemID> {
+    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
+        sectionIdentifier(for: section)?.header
+    }
+
+    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
+        sectionIdentifier(for: section)?.footer
     }
 }

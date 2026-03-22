@@ -12,7 +12,8 @@ protocol ThreadManagementViewControllerDelegate: AnyObject {
     func threadManagementDidChange()
 }
 
-final class ThreadManagementViewController: UITableViewController {
+final class ThreadManagementViewController: UIViewController, UITableViewDelegate {
+    private let tableView = UITableView(frame: .zero, style: .insetGrouped)
 
     weak var delegate: ThreadManagementViewControllerDelegate?
 
@@ -20,9 +21,11 @@ final class ThreadManagementViewController: UITableViewController {
     private var threads: [ProjectChatThreadRecord] = []
     private var currentThreadID: String = ""
 
+    private var diffableDataSource: ThreadManagementDataSource!
+
     init(session: ChatSession) {
         self.session = session
-        super.init(style: .insetGrouped)
+        super.init(nibName: nil, bundle: nil)
     }
 
     @available(*, unavailable)
@@ -32,6 +35,16 @@ final class ThreadManagementViewController: UITableViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        view.backgroundColor = .doufuBackground
+        tableView.delegate = self
+        tableView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(tableView)
+        NSLayoutConstraint.activate([
+            tableView.topAnchor.constraint(equalTo: view.topAnchor),
+            tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        ])
         title = String(localized: "thread_management.title")
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "ThreadCell")
 
@@ -42,13 +55,14 @@ final class ThreadManagementViewController: UITableViewController {
         )
         navigationItem.rightBarButtonItem = editButtonItem
 
+        configureDiffableDataSource()
         reloadThreads()
     }
 
     private func reloadThreads() {
         threads = session.threadList
         currentThreadID = session.currentThreadID ?? ""
-        tableView.reloadData()
+        applySnapshot()
     }
 
     // MARK: - Editing mode toggle
@@ -61,22 +75,38 @@ final class ThreadManagementViewController: UITableViewController {
             delegate?.threadManagementDidChange()
         }
         super.setEditing(editing, animated: animated)
+        tableView.setEditing(editing, animated: animated)
     }
 
-    // MARK: - UITableViewDataSource
+    // MARK: - Diffable DataSource
 
-    override func numberOfSections(in tableView: UITableView) -> Int { 1 }
-
-    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        threads.count
+    private func configureDiffableDataSource() {
+        let dataSource = ThreadManagementDataSource(
+            tableView: tableView
+        ) { [weak self] tableView, indexPath, itemID in
+            guard let self else { return UITableViewCell() }
+            return self.cell(for: tableView, indexPath: indexPath, itemID: itemID)
+        }
+        dataSource.defaultRowAnimation = .none
+        dataSource.moveHandler = { [weak self] sourceIndexPath, destinationIndexPath in
+            guard let self, sourceIndexPath != destinationIndexPath else { return }
+            let moved = self.threads.remove(at: sourceIndexPath.row)
+            self.threads.insert(moved, at: destinationIndexPath.row)
+        }
+        diffableDataSource = dataSource
     }
 
-    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+    private func cell(
+        for tableView: UITableView,
+        indexPath: IndexPath,
+        itemID: ThreadManagementItemID
+    ) -> UITableViewCell {
         let cell = tableView.dequeueReusableCell(withIdentifier: "ThreadCell", for: indexPath)
-        let thread = threads[indexPath.row]
+        guard case .thread(let id, let isCurrent) = itemID else { return cell }
+        let thread = threads.first(where: { $0.id == id })
         var config = cell.defaultContentConfiguration()
-        config.text = thread.title
-        if thread.id == currentThreadID {
+        config.text = thread?.title ?? id
+        if isCurrent {
             config.secondaryText = String(localized: "thread_management.current_thread")
             config.secondaryTextProperties.color = .systemBlue
         }
@@ -84,40 +114,48 @@ final class ThreadManagementViewController: UITableViewController {
         return cell
     }
 
-    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
-        String(localized: "thread_management.footer.hint")
+    // MARK: - Snapshot
+
+    private func buildSnapshot() -> NSDiffableDataSourceSnapshot<ThreadManagementSectionID, ThreadManagementItemID> {
+        var snapshot = NSDiffableDataSourceSnapshot<ThreadManagementSectionID, ThreadManagementItemID>()
+        snapshot.appendSections([.threads])
+        let items: [ThreadManagementItemID] = threads.map {
+            .thread(id: $0.id, isCurrent: $0.id == currentThreadID)
+        }
+        snapshot.appendItems(items, toSection: .threads)
+        return snapshot
     }
 
-    // MARK: - Reorder (editing mode)
-
-    override func tableView(_ tableView: UITableView, canMoveRowAt indexPath: IndexPath) -> Bool { true }
-
-    override func tableView(_ tableView: UITableView, moveRowAt sourceIndexPath: IndexPath, to destinationIndexPath: IndexPath) {
-        guard sourceIndexPath != destinationIndexPath else { return }
-        let moved = threads.remove(at: sourceIndexPath.row)
-        threads.insert(moved, at: destinationIndexPath.row)
+    private func applySnapshot() {
+        var snapshot = buildSnapshot()
+        snapshot.reconfigureItems(snapshot.itemIdentifiers)
+        diffableDataSource.apply(snapshot, animatingDifferences: false)
     }
 
-    override func tableView(_ tableView: UITableView, editingStyleForRowAt indexPath: IndexPath) -> UITableViewCell.EditingStyle {
+    // MARK: - Delegate: editing style & indentation
+
+    func tableView(_ tableView: UITableView, editingStyleForRowAt indexPath: IndexPath) -> UITableViewCell.EditingStyle {
         .none
     }
 
-    override func tableView(_ tableView: UITableView, shouldIndentWhileEditingRowAt indexPath: IndexPath) -> Bool {
+    func tableView(_ tableView: UITableView, shouldIndentWhileEditingRowAt indexPath: IndexPath) -> Bool {
         false
     }
 
     // MARK: - Swipe to delete (non-editing mode)
 
-    override func tableView(_ tableView: UITableView, trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath) -> UISwipeActionsConfiguration? {
+    func tableView(_ tableView: UITableView, trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath) -> UISwipeActionsConfiguration? {
         guard threads.count > 1 else { return nil }
-        let thread = threads[indexPath.row]
+        guard let itemID = diffableDataSource.itemIdentifier(for: indexPath),
+              case .thread(let id, _) = itemID,
+              let thread = threads.first(where: { $0.id == id }) else { return nil }
         let deleteAction = UIContextualAction(style: .destructive, title: String(localized: "common.action.delete")) { [weak self] _, _, completion in
-            self?.confirmDelete(thread: thread, at: indexPath, completion: completion)
+            self?.confirmDelete(thread: thread, completion: completion)
         }
         return UISwipeActionsConfiguration(actions: [deleteAction])
     }
 
-    private func confirmDelete(thread: ProjectChatThreadRecord, at indexPath: IndexPath, completion: @escaping (Bool) -> Void) {
+    private func confirmDelete(thread: ProjectChatThreadRecord, completion: @escaping (Bool) -> Void) {
         let alert = UIAlertController(
             title: String(localized: "thread_management.delete.title"),
             message: String(format: String(localized: "thread_management.delete.message_format"), thread.title),
@@ -127,16 +165,15 @@ final class ThreadManagementViewController: UITableViewController {
             completion(false)
         })
         alert.addAction(UIAlertAction(title: String(localized: "common.action.delete"), style: .destructive) { [weak self] _ in
-            self?.performDelete(at: indexPath)
+            self?.performDelete(threadID: thread.id)
             completion(true)
         })
         present(alert, animated: true)
     }
 
-    private func performDelete(at indexPath: IndexPath) {
-        let thread = threads[indexPath.row]
+    private func performDelete(threadID: String) {
         do {
-            try session.deleteThread(threadID: thread.id)
+            try session.deleteThread(threadID: threadID)
             reloadThreads()
             delegate?.threadManagementDidChange()
         } catch {
@@ -148,14 +185,16 @@ final class ThreadManagementViewController: UITableViewController {
 
     // MARK: - Tap to rename
 
-    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
         guard !isEditing else { return }
-        let thread = threads[indexPath.row]
-        showRenameAlert(for: thread, at: indexPath)
+        guard let itemID = diffableDataSource.itemIdentifier(for: indexPath),
+              case .thread(let id, _) = itemID,
+              let thread = threads.first(where: { $0.id == id }) else { return }
+        showRenameAlert(for: thread)
     }
 
-    private func showRenameAlert(for thread: ProjectChatThreadRecord, at indexPath: IndexPath) {
+    private func showRenameAlert(for thread: ProjectChatThreadRecord) {
         let alert = UIAlertController(
             title: String(localized: "thread_management.rename.title"),
             message: nil,
@@ -187,5 +226,46 @@ final class ThreadManagementViewController: UITableViewController {
 
     @objc private func didTapClose() {
         dismiss(animated: true)
+    }
+}
+
+// MARK: - Section & Item IDs
+
+nonisolated enum ThreadManagementSectionID: Hashable, Sendable {
+    case threads
+
+    var header: String? { nil }
+
+    var footer: String? {
+        switch self {
+        case .threads:
+            return String(localized: "thread_management.footer.hint")
+        }
+    }
+}
+
+nonisolated enum ThreadManagementItemID: Hashable, Sendable {
+    case thread(id: String, isCurrent: Bool)
+}
+
+// MARK: - DataSource (header/footer + reorder support)
+
+private final class ThreadManagementDataSource: UITableViewDiffableDataSource<ThreadManagementSectionID, ThreadManagementItemID> {
+    var moveHandler: ((IndexPath, IndexPath) -> Void)?
+
+    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
+        sectionIdentifier(for: section)?.header
+    }
+
+    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
+        sectionIdentifier(for: section)?.footer
+    }
+
+    override func tableView(_ tableView: UITableView, canMoveRowAt indexPath: IndexPath) -> Bool {
+        tableView.isEditing
+    }
+
+    override func tableView(_ tableView: UITableView, moveRowAt sourceIndexPath: IndexPath, to destinationIndexPath: IndexPath) {
+        moveHandler?(sourceIndexPath, destinationIndexPath)
     }
 }
