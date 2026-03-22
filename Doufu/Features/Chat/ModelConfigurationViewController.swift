@@ -42,6 +42,7 @@ final class ModelConfigurationViewController: UIViewController, UITableViewDeleg
         return formatter
     }()
 
+    private var cellDataMap: [ModelConfigItemID: ModelConfigCellData] = [:]
     private var diffableDataSource: ModelConfigDataSource!
 
     init(
@@ -134,7 +135,9 @@ final class ModelConfigurationViewController: UIViewController, UITableViewDeleg
             ) as? ModelSearchBarCell else {
                 return UITableViewCell()
             }
-            cell.configure(text: modelFilterText)
+            if case .modelSearchBar(let filterText) = cellDataMap[itemID] {
+                cell.configure(text: filterText)
+            }
             cell.onTextChanged = { [weak self] text in
                 guard let self else { return }
                 self.modelFilterText = text
@@ -149,10 +152,16 @@ final class ModelConfigurationViewController: UIViewController, UITableViewDeleg
             ) as? SettingsToggleCell else {
                 return UITableViewCell()
             }
-            cell.configure(
-                title: inheritTitle ?? String(localized: "project_settings.chat.tool_permission.use_default"),
-                isOn: isFollowingParent
-            ) { [weak self] value in
+            let title: String
+            let isOn: Bool
+            if case .inheritToggle(let t, let on) = cellDataMap[itemID] {
+                title = t
+                isOn = on
+            } else {
+                title = ""
+                isOn = false
+            }
+            cell.configure(title: title, isOn: isOn) { [weak self] value in
                 guard let self else { return }
                 if value {
                     self.isFollowingParent = true
@@ -170,152 +179,90 @@ final class ModelConfigurationViewController: UIViewController, UITableViewDeleg
             cell.isUserInteractionEnabled = true
             return cell
 
-        case .provider(let providerID, let inherited):
+        case .provider:
             let cell = tableView.dequeueReusableCell(withIdentifier: "ProjectModelConfigCell", for: indexPath)
-            guard let provider = providers.first(where: { $0.id == providerID }) else {
+            var configuration = cell.defaultContentConfiguration()
+            if case .provider(let title, let subtitle, let isSelected, let inherited) = cellDataMap[itemID] {
+                configuration.text = title
+                configuration.secondaryText = subtitle.isEmpty ? nil : subtitle
                 if inherited {
-                    var configuration = cell.defaultContentConfiguration()
-                    if !providerID.isEmpty {
-                        configuration.text = providerID
-                        configuration.secondaryText = String(
-                            localized: "chat.model_selection.invalid.generic",
-                            defaultValue: "Invalid Model Selection"
-                        )
-                    } else {
-                        configuration.text = String(
-                            localized: "chat.model_selection.missing.short",
-                            defaultValue: "Missing Model Selection"
-                        )
-                    }
                     configuration.textProperties.color = .tertiaryLabel
                     configuration.secondaryTextProperties.color = .tertiaryLabel
-                    cell.contentConfiguration = configuration
-                    cell.accessoryType = .none
+                } else {
+                    configuration.secondaryTextProperties.color = .secondaryLabel
                 }
-                return cell
-            }
-            var configuration = cell.defaultContentConfiguration()
-            configuration.text = providerTitle(for: provider)
-            if inherited {
-                configuration.secondaryText = provider.kind.displayName
-                configuration.textProperties.color = .tertiaryLabel
-                configuration.secondaryTextProperties.color = .tertiaryLabel
-                cell.accessoryType = .none
+                cell.accessoryType = isSelected ? .checkmark : .none
             } else {
-                configuration.secondaryText = providerSubtitle(for: provider)
-                configuration.secondaryTextProperties.color = .secondaryLabel
-                cell.accessoryType = provider.id == state.selectedProviderID ? .checkmark : .none
+                cell.accessoryType = .none
             }
             cell.contentConfiguration = configuration
             return cell
 
-        case .model(let modelRecordID, let inherited):
+        case .model:
             let cell = tableView.dequeueReusableCell(withIdentifier: "ProjectModelConfigCell", for: indexPath)
-            let currentSelection = inherited ? (inheritedState ?? .empty) : state
-            guard let selectedProvider = providerRecord(for: currentSelection) else {
-                return cell
-            }
-            let models = availableModels(for: selectedProvider)
-            guard let model = models.first(where: {
-                inherited
-                    ? $0.normalizedID == modelRecordID.lowercased()
-                    : $0.id == modelRecordID
-            }) else {
+            var configuration = cell.defaultContentConfiguration()
+            if case .model(let displayName, let subtitle, let isSelected, let inherited) = cellDataMap[itemID] {
+                configuration.text = displayName
                 if inherited {
-                    var configuration = cell.defaultContentConfiguration()
-                    configuration.text = modelRecordID.isEmpty
-                        ? String(localized: "chat.model_selection.missing.short", defaultValue: "Missing Model Selection")
-                        : modelRecordID
                     configuration.textProperties.color = .tertiaryLabel
-                    cell.contentConfiguration = configuration
-                    cell.accessoryType = .none
+                } else {
+                    configuration.secondaryText = subtitle
+                    configuration.secondaryTextProperties.color = .secondaryLabel
                 }
-                return cell
-            }
-            var configuration = cell.defaultContentConfiguration()
-            configuration.text = model.effectiveDisplayName
-            if inherited {
-                configuration.textProperties.color = .tertiaryLabel
-                cell.accessoryType = .none
+                cell.accessoryType = isSelected ? .checkmark : .none
             } else {
-                let modelID = model.modelID
-                let usageText = usedTokenCountText(
-                    modelTokenUsage(providerID: selectedProvider.id, modelID: modelID)
-                )
-                let sourceText: String
-                switch model.source {
-                case .official:
-                    sourceText = String(localized: "model_config.source.official")
-                case .custom:
-                    sourceText = String(localized: "model_config.source.custom")
-                }
-                configuration.secondaryText = sourceText + " · " + usageText
-                configuration.secondaryTextProperties.color = .secondaryLabel
-                cell.accessoryType = model.id.caseInsensitiveCompare(selectedModelRecordID(for: selectedProvider)) == .orderedSame
-                    ? .checkmark
-                    : .none
+                cell.accessoryType = .none
             }
             cell.contentConfiguration = configuration
             return cell
 
-        case .reasoningEffort(let effortRawValue, let inherited):
+        case .reasoningEffort:
             let cell = tableView.dequeueReusableCell(withIdentifier: "ProjectModelConfigCell", for: indexPath)
-            let currentSelection = inherited ? (inheritedState ?? .empty) : state
-            guard let selectedProvider = providerRecord(for: currentSelection),
-                  let selectedModel = selectedModelRecord(for: selectedProvider, selection: currentSelection) else {
-                return cell
-            }
-            let currentEffort = resolvedReasoningEffort(
-                for: selectedProvider,
-                modelID: selectedModel.id,
-                reasoningEffort: currentSelection.selectedReasoningEffort
-            )
             var configuration = cell.defaultContentConfiguration()
-            if inherited {
-                configuration.text = currentEffort.displayName
-                configuration.textProperties.color = .tertiaryLabel
-                cell.accessoryType = .none
-            } else {
-                let profile = reasoningProfile(for: selectedProvider, modelID: selectedModel.id)
-                guard let effort = profile?.supported.first(where: { $0.rawValue == effortRawValue }) else {
-                    return cell
+            if case .reasoningEffort(let displayName, let isSelected, let inherited) = cellDataMap[itemID] {
+                configuration.text = displayName
+                if inherited {
+                    configuration.textProperties.color = .tertiaryLabel
                 }
-                configuration.text = effort.displayName
-                cell.accessoryType = effort == currentEffort ? .checkmark : .none
+                cell.accessoryType = isSelected ? .checkmark : .none
+            } else {
+                cell.accessoryType = .none
             }
             cell.contentConfiguration = configuration
             return cell
 
-        case .thinkingToggle(let inherited):
+        case .thinkingToggle:
             guard let cell = tableView.dequeueReusableCell(
                 withIdentifier: SettingsToggleCell.reuseIdentifier,
                 for: indexPath
             ) as? SettingsToggleCell else {
                 return UITableViewCell()
             }
-            let currentSelection = inherited ? (inheritedState ?? .empty) : state
-            guard let selectedProvider = providerRecord(for: currentSelection),
-                  let selectedModel = selectedModelRecord(for: selectedProvider, selection: currentSelection) else {
-                return cell
+            let title: String
+            let isOn: Bool
+            let canInteract: Bool
+            let inherited: Bool
+            if case .thinkingToggle(let t, let on, let interact, let inh) = cellDataMap[itemID] {
+                title = t
+                isOn = on
+                canInteract = interact
+                inherited = inh
+            } else {
+                title = ""
+                isOn = false
+                canInteract = false
+                inherited = true
             }
-            let selectedModelRecordID = selectedModel.id
-            let capabilities = resolveModelProfile(for: selectedProvider, modelID: selectedModelRecordID)
-            let isOn = resolvedThinkingEnabled(
-                for: selectedProvider,
-                modelID: selectedModelRecordID,
-                thinkingEnabled: currentSelection.selectedThinkingEnabled
-            )
-            let canInteract = !inherited && capabilities.thinkingCanDisable
-            cell.configure(
-                title: capabilities.thinkingCanDisable
-                    ? String(localized: "chat.menu.thinking")
-                    : String(localized: "model_config.thinking_required"),
-                isOn: isOn
-            ) { [weak self] value in
+            cell.configure(title: title, isOn: isOn) { [weak self] value in
                 guard let self else { return }
                 guard !inherited else { return }
                 guard value != isOn else { return }
-                self.applyThinkingEnabled(value, for: selectedProvider, modelID: selectedModelRecordID)
+                let currentSelection = self.state
+                guard let selectedProvider = self.providerRecord(for: currentSelection),
+                      let selectedModel = self.selectedModelRecord(for: selectedProvider) else {
+                    return
+                }
+                self.applyThinkingEnabled(value, for: selectedProvider, modelID: selectedModel.id)
                 self.notifySelectionChanged()
             }
             if var config = cell.contentConfiguration as? UIListContentConfiguration {
@@ -325,49 +272,18 @@ final class ModelConfigurationViewController: UIViewController, UITableViewDeleg
             cell.isUserInteractionEnabled = canInteract
             return cell
 
-        case .manageUseDefault:
+        case .manageUseDefault, .manageProviders, .manageRefreshModels, .manageAddCustomModel:
             let cell = tableView.dequeueReusableCell(withIdentifier: "ProjectModelConfigCell", for: indexPath)
             var configuration = cell.defaultContentConfiguration()
-            configuration.text = String(localized: "project_settings.chat.tool_permission.use_default")
-            configuration.secondaryText = nil
-            configuration.secondaryTextProperties.color = .secondaryLabel
+            if case .manage(let title, let subtitle, let hasDisclosure) = cellDataMap[itemID] {
+                configuration.text = title
+                configuration.secondaryText = subtitle
+                configuration.secondaryTextProperties.color = .secondaryLabel
+                cell.accessoryType = hasDisclosure ? .disclosureIndicator : .none
+            } else {
+                cell.accessoryType = .none
+            }
             cell.contentConfiguration = configuration
-            cell.accessoryType = .none
-            return cell
-
-        case .manageProviders:
-            let cell = tableView.dequeueReusableCell(withIdentifier: "ProjectModelConfigCell", for: indexPath)
-            var configuration = cell.defaultContentConfiguration()
-            configuration.text = String(localized: "settings.providers.title")
-            configuration.secondaryText = String(
-                localized: "chat.model_selection.manage_provider",
-                defaultValue: "Fix provider credentials or add providers."
-            )
-            configuration.secondaryTextProperties.color = .secondaryLabel
-            cell.contentConfiguration = configuration
-            cell.accessoryType = .disclosureIndicator
-            return cell
-
-        case .manageRefreshModels(let isRefreshing):
-            let cell = tableView.dequeueReusableCell(withIdentifier: "ProjectModelConfigCell", for: indexPath)
-            var configuration = cell.defaultContentConfiguration()
-            configuration.text = isRefreshing
-                ? String(localized: "model_config.manage.refreshing_models")
-                : String(localized: "model_config.manage.refresh_models")
-            configuration.secondaryText = String(localized: "model_config.manage.refresh_models_subtitle")
-            configuration.secondaryTextProperties.color = .secondaryLabel
-            cell.contentConfiguration = configuration
-            cell.accessoryType = .none
-            return cell
-
-        case .manageAddCustomModel:
-            let cell = tableView.dequeueReusableCell(withIdentifier: "ProjectModelConfigCell", for: indexPath)
-            var configuration = cell.defaultContentConfiguration()
-            configuration.text = String(localized: "model_config.manage.add_custom_model")
-            configuration.secondaryText = String(localized: "model_config.manage.add_custom_model_subtitle")
-            configuration.secondaryTextProperties.color = .secondaryLabel
-            cell.contentConfiguration = configuration
-            cell.accessoryType = .disclosureIndicator
             return cell
         }
     }
@@ -376,11 +292,17 @@ final class ModelConfigurationViewController: UIViewController, UITableViewDeleg
 
     private func buildSnapshot() -> NSDiffableDataSourceSnapshot<ModelConfigSectionID, ModelConfigItemID> {
         var snapshot = NSDiffableDataSourceSnapshot<ModelConfigSectionID, ModelConfigItemID>()
+        var dataMap: [ModelConfigItemID: ModelConfigCellData] = [:]
 
         // Inherit section
         if hasInheritedSelectionSource {
             snapshot.appendSections([.inherit])
-            snapshot.appendItems([.inheritToggle], toSection: .inherit)
+            let item = ModelConfigItemID.inheritToggle
+            snapshot.appendItems([item], toSection: .inherit)
+            dataMap[item] = .inheritToggle(
+                title: inheritTitle ?? String(localized: "project_settings.chat.tool_permission.use_default"),
+                isOn: isFollowingParent
+            )
         }
 
         // Provider section
@@ -388,9 +310,41 @@ final class ModelConfigurationViewController: UIViewController, UITableViewDeleg
         if isFollowingParent {
             let inherited = inheritedState ?? .empty
             let providerID = trimmedProviderID(in: inherited)
-            snapshot.appendItems([.provider(id: providerID, inherited: true)], toSection: .provider)
+            let item = ModelConfigItemID.provider(id: providerID, inherited: true)
+            snapshot.appendItems([item], toSection: .provider)
+            let provider = providers.first(where: { $0.id == providerID })
+            let title: String
+            let subtitle: String
+            if let provider {
+                title = providerTitle(for: provider)
+                subtitle = provider.kind.displayName
+            } else if !providerID.isEmpty {
+                title = providerID
+                subtitle = String(
+                    localized: "chat.model_selection.invalid.generic",
+                    defaultValue: "Invalid Model Selection"
+                )
+            } else {
+                title = String(localized: "chat.model_selection.missing.short", defaultValue: "Missing Model Selection")
+                subtitle = ""
+            }
+            dataMap[item] = .provider(
+                title: title,
+                subtitle: subtitle,
+                isSelected: false,
+                inherited: true
+            )
         } else {
-            snapshot.appendItems(providers.map { .provider(id: $0.id, inherited: false) }, toSection: .provider)
+            for provider in providers {
+                let item = ModelConfigItemID.provider(id: provider.id, inherited: false)
+                snapshot.appendItems([item], toSection: .provider)
+                dataMap[item] = .provider(
+                    title: providerTitle(for: provider),
+                    subtitle: providerSubtitle(for: provider),
+                    isSelected: provider.id == state.selectedProviderID,
+                    inherited: false
+                )
+            }
         }
 
         // Model section
@@ -398,11 +352,26 @@ final class ModelConfigurationViewController: UIViewController, UITableViewDeleg
         if isFollowingParent {
             let inherited = inheritedState ?? .empty
             let modelRecordID = trimmedModelRecordID(in: inherited)
-            snapshot.appendItems([.model(id: modelRecordID, inherited: true)], toSection: .model)
+            let item = ModelConfigItemID.model(id: modelRecordID, inherited: true)
+            snapshot.appendItems([item], toSection: .model)
+            let provider = providerRecord(for: inherited)
+            let model = provider.flatMap { p in
+                availableModels(for: p).first(where: { $0.normalizedID == modelRecordID.lowercased() })
+            }
+            dataMap[item] = .model(
+                displayName: model?.effectiveDisplayName ?? (modelRecordID.isEmpty
+                    ? String(localized: "chat.model_selection.missing.short", defaultValue: "Missing Model Selection")
+                    : modelRecordID),
+                subtitle: "",
+                isSelected: false,
+                inherited: true
+            )
         } else if let provider = selectedProviderRecord() {
             let allModels = availableModels(for: provider)
             if allModels.count >= 10 {
-                snapshot.appendItems([.modelSearchBar], toSection: .model)
+                let searchItem = ModelConfigItemID.modelSearchBar
+                snapshot.appendItems([searchItem], toSection: .model)
+                dataMap[searchItem] = .modelSearchBar(filterText: modelFilterText)
             }
             let models: [LLMProviderModelRecord]
             if modelFilterText.isEmpty {
@@ -414,7 +383,28 @@ final class ModelConfigurationViewController: UIViewController, UITableViewDeleg
                         || $0.modelID.lowercased().contains(query)
                 }
             }
-            snapshot.appendItems(models.map { .model(id: $0.id, inherited: false) }, toSection: .model)
+            let currentModelRecordID = selectedModelRecordID(for: provider)
+            for model in models {
+                let item = ModelConfigItemID.model(id: model.id, inherited: false)
+                snapshot.appendItems([item], toSection: .model)
+                let modelID = model.modelID
+                let usageText = usedTokenCountText(
+                    modelTokenUsage(providerID: provider.id, modelID: modelID)
+                )
+                let sourceText: String
+                switch model.source {
+                case .official:
+                    sourceText = String(localized: "model_config.source.official")
+                case .custom:
+                    sourceText = String(localized: "model_config.source.custom")
+                }
+                dataMap[item] = .model(
+                    displayName: model.effectiveDisplayName,
+                    subtitle: sourceText + " · " + usageText,
+                    isSelected: model.id.caseInsensitiveCompare(currentModelRecordID) == .orderedSame,
+                    inherited: false
+                )
+            }
         }
 
         // Parameter section
@@ -424,24 +414,50 @@ final class ModelConfigurationViewController: UIViewController, UITableViewDeleg
            let selectedModel = selectedModelRecord(for: selectedProvider, selection: currentSelection) {
             switch selectedProvider.kind {
             case .openAIResponses, .openAIChatCompletions, .openRouter:
+                let currentEffort = resolvedReasoningEffort(
+                    for: selectedProvider,
+                    modelID: selectedModel.id,
+                    reasoningEffort: currentSelection.selectedReasoningEffort
+                )
                 if isFollowingParent {
-                    let effort = resolvedReasoningEffort(
-                        for: selectedProvider,
-                        modelID: selectedModel.id,
-                        reasoningEffort: currentSelection.selectedReasoningEffort
-                    )
                     if reasoningProfile(for: selectedProvider, modelID: selectedModel.id) != nil {
-                        snapshot.appendItems([.reasoningEffort(effort.rawValue, inherited: true)], toSection: .parameter)
+                        let item = ModelConfigItemID.reasoningEffort(currentEffort.rawValue, inherited: true)
+                        snapshot.appendItems([item], toSection: .parameter)
+                        dataMap[item] = .reasoningEffort(
+                            displayName: currentEffort.displayName,
+                            isSelected: false,
+                            inherited: true
+                        )
                     }
                 } else if let profile = reasoningProfile(for: selectedProvider, modelID: selectedModel.id) {
-                    snapshot.appendItems(
-                        profile.supported.map { .reasoningEffort($0.rawValue, inherited: false) },
-                        toSection: .parameter
-                    )
+                    for effort in profile.supported {
+                        let item = ModelConfigItemID.reasoningEffort(effort.rawValue, inherited: false)
+                        snapshot.appendItems([item], toSection: .parameter)
+                        dataMap[item] = .reasoningEffort(
+                            displayName: effort.displayName,
+                            isSelected: effort == currentEffort,
+                            inherited: false
+                        )
+                    }
                 }
             case .anthropic, .googleGemini, .xiaomiMiMo:
-                if resolveModelProfile(for: selectedProvider, modelID: selectedModel.id).thinkingSupported {
-                    snapshot.appendItems([.thinkingToggle(inherited: isFollowingParent)], toSection: .parameter)
+                let capabilities = resolveModelProfile(for: selectedProvider, modelID: selectedModel.id)
+                if capabilities.thinkingSupported {
+                    let item = ModelConfigItemID.thinkingToggle(inherited: isFollowingParent)
+                    snapshot.appendItems([item], toSection: .parameter)
+                    let isOn = resolvedThinkingEnabled(
+                        for: selectedProvider,
+                        modelID: selectedModel.id,
+                        thinkingEnabled: currentSelection.selectedThinkingEnabled
+                    )
+                    dataMap[item] = .thinkingToggle(
+                        title: capabilities.thinkingCanDisable
+                            ? String(localized: "chat.menu.thinking")
+                            : String(localized: "model_config.thinking_required"),
+                        isOn: isOn,
+                        canInteract: !isFollowingParent && capabilities.thinkingCanDisable,
+                        inherited: isFollowingParent
+                    )
                 }
             }
         }
@@ -449,24 +465,56 @@ final class ModelConfigurationViewController: UIViewController, UITableViewDeleg
         // Manage section
         snapshot.appendSections([.manage])
         if !isFollowingParent {
-            var manageItems: [ModelConfigItemID] = []
             if showsResetToDefaults && !hasInheritedSelectionSource {
-                manageItems.append(.manageUseDefault)
+                let item = ModelConfigItemID.manageUseDefault
+                snapshot.appendItems([item], toSection: .manage)
+                dataMap[item] = .manage(
+                    title: String(localized: "project_settings.chat.tool_permission.use_default"),
+                    subtitle: nil,
+                    hasDisclosure: false
+                )
             }
-            manageItems.append(.manageProviders)
+            let providersItem = ModelConfigItemID.manageProviders
+            snapshot.appendItems([providersItem], toSection: .manage)
+            dataMap[providersItem] = .manage(
+                title: String(localized: "settings.providers.title"),
+                subtitle: String(
+                    localized: "chat.model_selection.manage_provider",
+                    defaultValue: "Fix provider credentials or add providers."
+                ),
+                hasDisclosure: true
+            )
             if selectedProviderRecord() != nil {
-                manageItems.append(.manageRefreshModels(isRefreshing: isRefreshingModels))
-                manageItems.append(.manageAddCustomModel)
+                let refreshItem = ModelConfigItemID.manageRefreshModels(isRefreshing: isRefreshingModels)
+                snapshot.appendItems([refreshItem], toSection: .manage)
+                dataMap[refreshItem] = .manage(
+                    title: isRefreshingModels
+                        ? String(localized: "model_config.manage.refreshing_models")
+                        : String(localized: "model_config.manage.refresh_models"),
+                    subtitle: String(localized: "model_config.manage.refresh_models_subtitle"),
+                    hasDisclosure: false
+                )
+                let addItem = ModelConfigItemID.manageAddCustomModel
+                snapshot.appendItems([addItem], toSection: .manage)
+                dataMap[addItem] = .manage(
+                    title: String(localized: "model_config.manage.add_custom_model"),
+                    subtitle: String(localized: "model_config.manage.add_custom_model_subtitle"),
+                    hasDisclosure: true
+                )
             }
-            snapshot.appendItems(manageItems, toSection: .manage)
         }
 
+        cellDataMap = dataMap
         return snapshot
     }
 
     private func applySnapshot(animatingDifferences: Bool = false) {
         var snapshot = buildSnapshot()
-        snapshot.reconfigureItems(snapshot.itemIdentifiers)
+        let existing = Set(diffableDataSource.snapshot().itemIdentifiers)
+        let staleItems = snapshot.itemIdentifiers.filter { existing.contains($0) }
+        if !staleItems.isEmpty {
+            snapshot.reloadItems(staleItems)
+        }
         diffableDataSource.apply(snapshot, animatingDifferences: animatingDifferences)
     }
 

@@ -23,3 +23,13 @@ nonisolated enum ModelConfigItemID: Hashable, Sendable {
     case manageAddCustomModel
     case modelSearchBar
 }
+
+nonisolated enum ModelConfigCellData: Sendable {
+    case inheritToggle(title: String, isOn: Bool)
+    case provider(title: String, subtitle: String, isSelected: Bool, inherited: Bool)
+    case model(displayName: String, subtitle: String, isSelected: Bool, inherited: Bool)
+    case reasoningEffort(displayName: String, isSelected: Bool, inherited: Bool)
+    case thinkingToggle(title: String, isOn: Bool, canInteract: Bool, inherited: Bool)
+    case modelSearchBar(filterText: String)
+    case manage(title: String, subtitle: String?, hasDisclosure: Bool)
+}
