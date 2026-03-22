@@ -7,17 +7,7 @@
 
 import Foundation
 
-final class MiMoProvider: LLMProviderAdapter {
-    private let configuration: ProjectChatConfiguration
-    private let jsonEncoder: JSONEncoder = {
-        let enc = JSONEncoder()
-        enc.outputFormatting = [.sortedKeys]
-        return enc
-    }()
-
-    init(configuration: ProjectChatConfiguration) {
-        self.configuration = configuration
-    }
+final class MiMoProvider: ChatCompletionsBaseProvider, LLMProviderAdapter {
 
     // MARK: - Streaming (non-tool-use)
 
@@ -68,20 +58,12 @@ final class MiMoProvider: LLMProviderAdapter {
             throw ProjectChatService.ServiceError.networkFailed(String(localized: "llm.error.invalid_response"))
         }
         guard (200...299).contains(httpResponse.statusCode) else {
-            let data = try await LLMProviderHelpers.consumeStreamBytes(bytes: bytes)
-            LLMProviderHelpers.logFailedResponse(
-                request: request, httpResponse: httpResponse,
-                responseBodyData: data, requestLabel: requestLabel
-            )
-            let message = LLMProviderHelpers.parseErrorMessage(from: data)
-                ?? HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
-            throw ProjectChatService.ServiceError.networkFailed(
-                String(format: String(localized: "llm.error.request_failed_format"), message)
-            )
+            try await throwHTTPError(request: request, httpResponse: httpResponse, bytes: bytes, requestLabel: requestLabel)
         }
 
         return try await consumeStreamingResponse(
             bytes: bytes, timeoutSeconds: timeoutSeconds,
+            options: ChatCompletionsStreamingOptions(checkContentFilter: true),
             onStreamedText: onStreamedText, onUsage: onUsage
         )
     }
@@ -101,10 +83,8 @@ final class MiMoProvider: LLMProviderAdapter {
         let model = credential.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
         let timeoutSeconds = LLMProviderHelpers.timeoutSeconds(for: executionOptions.reasoningEffort, configuration: configuration)
 
-        let messages = buildToolUseMessages(systemInstruction: systemInstruction, from: conversationItems)
-        let toolDefinitions = tools.map { tool in
-            OpenRouterToolDefinition(name: tool.name, description: tool.description, parameters: tool.parameters)
-        }
+        let messages = buildMiMoToolUseMessages(systemInstruction: systemInstruction, from: conversationItems)
+        let toolDefinitions = buildToolDefinitions(from: tools)
 
         let requestBody = MiMoChatRequest(
             model: model,
@@ -124,27 +104,19 @@ final class MiMoProvider: LLMProviderAdapter {
             throw ProjectChatService.ServiceError.networkFailed(String(localized: "llm.error.invalid_response"))
         }
         guard (200...299).contains(httpResponse.statusCode) else {
-            let data = try await LLMProviderHelpers.consumeStreamBytes(bytes: bytes)
-            LLMProviderHelpers.logFailedResponse(
-                request: request, httpResponse: httpResponse,
-                responseBodyData: data, requestLabel: "MiMo ToolUse"
-            )
-            let message = LLMProviderHelpers.parseErrorMessage(from: data)
-                ?? HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
-            throw ProjectChatService.ServiceError.networkFailed(
-                String(format: String(localized: "llm.error.request_failed_format"), message)
-            )
+            try await throwHTTPError(request: request, httpResponse: httpResponse, bytes: bytes, requestLabel: "MiMo ToolUse")
         }
 
         return try await consumeToolUseStream(
             bytes: bytes, timeoutSeconds: timeoutSeconds,
+            options: ChatCompletionsToolUseStreamOptions(parseReasoningContent: true, checkContentFilter: true),
             onStreamedText: onStreamedText, onUsage: onUsage
         )
     }
 
-    // MARK: - Build Messages
+    // MARK: - MiMo-Specific Message Builder
 
-    private func buildToolUseMessages(
+    private func buildMiMoToolUseMessages(
         systemInstruction: String,
         from items: [AgentConversationItem]
     ) -> [MiMoMessage] {
@@ -172,9 +144,8 @@ final class MiMoProvider: LLMProviderAdapter {
         return messages
     }
 
-    // MARK: - Helpers
+    // MARK: - MiMo-Specific Helpers
 
-    /// Returns nil for models that don't support thinking (e.g. mimo-v2-tts).
     private func mimoThinking(
         for profile: ResolvedModelProfile,
         executionOptions: ProjectChatService.ModelExecutionOptions
@@ -183,226 +154,8 @@ final class MiMoProvider: LLMProviderAdapter {
         return MiMoThinking(enabled: executionOptions.mimoThinkingEnabled)
     }
 
-    /// Converts the generic ResponsesTextFormat to MiMo's response_format.
-    /// MiMo supports "json_object" but not full JSON schema; we map any structured
-    /// output request to json_object mode.
     private func mimoResponseFormat(from format: ResponsesTextFormat?) -> MiMoResponseFormat? {
         guard format != nil else { return nil }
         return MiMoResponseFormat(type: "json_object")
-    }
-
-    // MARK: - URL Request Builder
-
-    private func buildURLRequest(
-        credential: ProjectChatService.ProviderCredential,
-        path: String,
-        timeoutSeconds: TimeInterval
-    ) -> URLRequest {
-        var request = URLRequest(url: credential.baseURL.appendingPathComponent(path))
-        request.httpMethod = "POST"
-        request.timeoutInterval = timeoutSeconds
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-        request.setValue("Bearer \(credential.bearerToken)", forHTTPHeaderField: "Authorization")
-        return request
-    }
-
-    // MARK: - Streaming Response Consumer (non-tool-use)
-
-    private func consumeStreamingResponse(
-        bytes: URLSession.AsyncBytes,
-        timeoutSeconds: TimeInterval,
-        onStreamedText: (@MainActor (String) -> Void)?,
-        onUsage: ((Int?, Int?) -> Void)?
-    ) async throws -> String {
-        try await LLMProviderHelpers.withStreamTimeout(seconds: timeoutSeconds + configuration.streamCompletionGraceSeconds) {
-            var streamedText = ""
-            var inputTokens: Int?
-            var outputTokens: Int?
-
-            for try await rawLine in bytes.lines {
-                let line = rawLine.trimmingCharacters(in: .newlines)
-                guard line.hasPrefix("data:") else { continue }
-                var dataLine = String(line.dropFirst(5))
-                if dataLine.hasPrefix(" ") { dataLine.removeFirst() }
-                if dataLine == "[DONE]" { break }
-
-                guard let data = dataLine.data(using: .utf8),
-                      let chunk = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-                else { continue }
-
-                // Parse error event
-                if let error = chunk["error"] as? [String: Any],
-                   let message = error["message"] as? String {
-                    throw ProjectChatService.ServiceError.networkFailed(
-                        String(format: String(localized: "llm.error.request_failed_format"), message)
-                    )
-                }
-
-                // Parse choices
-                if let choices = chunk["choices"] as? [[String: Any]],
-                   let choice = choices.first {
-                    // Check content_filter
-                    if let reason = choice["finish_reason"] as? String, reason == "content_filter" {
-                        throw ProjectChatService.ServiceError.networkFailed(
-                            String(localized: "llm.error.content_filtered")
-                        )
-                    }
-                    if let delta = choice["delta"] as? [String: Any],
-                       let content = delta["content"] as? String, !content.isEmpty {
-                        streamedText.append(content)
-                        if let onStreamedText { onStreamedText(streamedText) }
-                    }
-                    // reasoning_content is intentionally not streamed to UI in non-tool-use mode,
-                    // but we still consume it so the stream doesn't stall.
-                }
-
-                // Parse usage
-                if let usage = chunk["usage"] as? [String: Any] {
-                    inputTokens = usage["prompt_tokens"] as? Int
-                    outputTokens = usage["completion_tokens"] as? Int
-                }
-            }
-
-            onUsage?(inputTokens, outputTokens)
-
-            guard !streamedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                throw ProjectChatService.ServiceError.invalidResponse
-            }
-            return streamedText
-        }
-    }
-
-    // MARK: - Tool Use Stream Consumer
-
-    private func consumeToolUseStream(
-        bytes: URLSession.AsyncBytes,
-        timeoutSeconds: TimeInterval,
-        onStreamedText: (@MainActor (String) -> Void)?,
-        onUsage: ((Int?, Int?) -> Void)?
-    ) async throws -> AgentLLMResponse {
-        try await LLMProviderHelpers.withStreamTimeout(seconds: timeoutSeconds + configuration.streamCompletionGraceSeconds) {
-            var streamedText = ""
-            var thinkingContent = ""
-            var pendingToolCalls: [Int: (id: String, name: String, arguments: String)] = [:]
-            var finishedToolCalls: [AgentToolCall] = []
-            var finishReason: String?
-            var inputTokens: Int?
-            var outputTokens: Int?
-
-            for try await rawLine in bytes.lines {
-                let line = rawLine.trimmingCharacters(in: .newlines)
-                guard line.hasPrefix("data:") else { continue }
-                var dataLine = String(line.dropFirst(5))
-                if dataLine.hasPrefix(" ") { dataLine.removeFirst() }
-                if dataLine == "[DONE]" { break }
-
-                guard let data = dataLine.data(using: .utf8),
-                      let chunk = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-                else { continue }
-
-                // Parse error event
-                if let error = chunk["error"] as? [String: Any],
-                   let message = error["message"] as? String {
-                    throw ProjectChatService.ServiceError.networkFailed(
-                        String(format: String(localized: "llm.error.request_failed_format"), message)
-                    )
-                }
-
-                guard let choices = chunk["choices"] as? [[String: Any]],
-                      let choice = choices.first
-                else {
-                    // Parse usage from top-level (final chunk with empty choices)
-                    if let usage = chunk["usage"] as? [String: Any] {
-                        inputTokens = usage["prompt_tokens"] as? Int
-                        outputTokens = usage["completion_tokens"] as? Int
-                    }
-                    continue
-                }
-
-                // Capture finish_reason
-                if let reason = choice["finish_reason"] as? String {
-                    finishReason = reason
-                }
-
-                guard let delta = choice["delta"] as? [String: Any] else { continue }
-
-                // Reasoning content (MiMo thinking)
-                if let reasoning = delta["reasoning_content"] as? String, !reasoning.isEmpty {
-                    thinkingContent.append(reasoning)
-                }
-
-                // Text content
-                if let content = delta["content"] as? String, !content.isEmpty {
-                    streamedText.append(content)
-                    if let onStreamedText { onStreamedText(streamedText) }
-                }
-
-                // Tool calls
-                if let toolCallDeltas = delta["tool_calls"] as? [[String: Any]] {
-                    for tcDelta in toolCallDeltas {
-                        let index = tcDelta["index"] as? Int ?? 0
-                        if let function = tcDelta["function"] as? [String: Any] {
-                            if let name = function["name"] as? String {
-                                let id = tcDelta["id"] as? String ?? UUID().uuidString
-                                pendingToolCalls[index] = (id: id, name: name, arguments: "")
-                            }
-                            if let args = function["arguments"] as? String {
-                                if var pending = pendingToolCalls[index] {
-                                    pending.arguments += args
-                                    pendingToolCalls[index] = pending
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Parse usage
-                if let usage = chunk["usage"] as? [String: Any] {
-                    inputTokens = usage["prompt_tokens"] as? Int
-                    outputTokens = usage["completion_tokens"] as? Int
-                }
-            }
-
-            // Finalize pending tool calls
-            for (_, pending) in pendingToolCalls.sorted(by: { $0.key < $1.key }) {
-                finishedToolCalls.append(AgentToolCall(
-                    id: pending.id, name: pending.name, argumentsJSON: pending.arguments
-                ))
-            }
-
-            onUsage?(inputTokens, outputTokens)
-
-            let stopReason: AgentStopReason
-            switch finishReason {
-            case "tool_calls":
-                stopReason = .toolUse
-            case "length":
-                stopReason = .maxTokens
-            case "content_filter":
-                stopReason = .endTurn
-            default:
-                stopReason = finishedToolCalls.isEmpty ? .endTurn : .toolUse
-            }
-
-            let responseUsage: ResponsesUsage? = (inputTokens != nil || outputTokens != nil)
-                ? ResponsesUsage(
-                    inputTokens: inputTokens,
-                    outputTokens: outputTokens,
-                    totalTokens: (inputTokens ?? 0) + (outputTokens ?? 0),
-                    inputTokensDetails: nil,
-                    outputTokensDetails: nil
-                )
-                : nil
-
-            return AgentLLMResponse(
-                textContent: streamedText,
-                toolCalls: finishedToolCalls,
-                usage: responseUsage,
-                stopReason: stopReason,
-                thinkingContent: thinkingContent.isEmpty ? nil : thinkingContent,
-                replayState: nil
-            )
-        }
     }
 }
