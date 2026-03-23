@@ -22,6 +22,10 @@ final class ModelSearchBarCell: UITableViewCell, UISearchBarDelegate {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
         selectionStyle = .none
         backgroundColor = .secondarySystemGroupedBackground
+        // UITableViewDiffableDataSource requires non-nil contentConfiguration on all cells.
+        var emptyConfig = defaultContentConfiguration()
+        emptyConfig.directionalLayoutMargins = .zero
+        contentConfiguration = emptyConfig
         contentView.addSubview(searchBar)
         NSLayoutConstraint.activate([
             searchBar.topAnchor.constraint(equalTo: contentView.topAnchor),

@@ -553,14 +553,14 @@ final class ModelConfigurationViewController: UIViewController, UITableViewDeleg
         return snapshot
     }
 
-    private func applySnapshot(animatingDifferences: Bool = false) {
+    private func applySnapshot() {
         var snapshot = buildSnapshot()
         let existing = Set(diffableDataSource.snapshot().itemIdentifiers)
         let staleItems = snapshot.itemIdentifiers.filter { existing.contains($0) }
         if !staleItems.isEmpty {
-            snapshot.reloadItems(staleItems)
+            snapshot.reconfigureItems(staleItems)
         }
-        diffableDataSource.apply(snapshot, animatingDifferences: animatingDifferences)
+        diffableDataSource.apply(snapshot, animatingDifferences: false)
     }
 
     // MARK: - Section Headers & Footers
