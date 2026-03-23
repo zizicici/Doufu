@@ -14,18 +14,22 @@ import Network
 /// so that web apps can make cross-origin requests through the host app,
 /// bypassing CORS restrictions transparently.
 final class LocalWebServer: @unchecked Sendable {
+    static let requestTokenHeaderName = "X-Doufu-Token"
 
     private let projectURL: URL
-    private let preferredPort: UInt16
     private var listener: NWListener?
     private let queue = DispatchQueue(label: "com.doufu.localwebserver", qos: .userInitiated)
     private let urlSession: URLSession
     private(set) var port: UInt16 = 0
     private var restartAttempts = 0
     private static let maxRestartAttempts = 3
+    private static let dynamicPortRange: ClosedRange<UInt16> = 49_152...65_535
+    private static let tokenCookieName = "__doufu_dt"
 
-    /// Per-launch secret token. Required as `__dt` query param on
-    /// `/__doufu_proxy__` and `/__doufu_appdata__/` endpoints.
+    /// Per-launch secret token. Required on protected localhost routes.
+    /// The initial main-document request can bootstrap access via
+    /// `X-Doufu-Token`, after which a same-origin cookie is set for
+    /// transparent subresource loading.
     let authToken = UUID().uuidString
 
     /// Optional secondary directory served under the `/__doufu_tmp__/` path prefix.
@@ -36,23 +40,11 @@ final class LocalWebServer: @unchecked Sendable {
     /// Supports GET (read) and PUT (write) for binary file persistence (e.g. SQLite databases).
     var appDataDirectoryURL: URL?
 
-    init(projectURL: URL, projectID: String) {
+    init(projectURL: URL, projectID _: String) {
         self.projectURL = projectURL
-        self.preferredPort = Self.stablePort(for: projectID)
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 30
         self.urlSession = URLSession(configuration: config)
-    }
-
-    /// Derive a stable port (10000–59999) from the project ID so that
-    /// the localhost origin stays the same across launches, preserving
-    /// cookies and other origin-keyed browser storage.
-    private static func stablePort(for projectID: String) -> UInt16 {
-        var hash: UInt64 = 5381
-        for byte in projectID.utf8 {
-            hash = hash &* 33 &+ UInt64(byte)
-        }
-        return UInt16(10000 + (hash % 50000))
     }
 
     deinit {
@@ -63,9 +55,13 @@ final class LocalWebServer: @unchecked Sendable {
     @discardableResult
     func start() throws -> UInt16 {
         stop()
-        // Try the stable preferred port first; fall back to any available port.
-        if let p = try? startListener(on: NWEndpoint.Port(rawValue: preferredPort)!) {
-            return p
+        // Use a fresh random high port each launch to make same-device probing harder.
+        for _ in 0..<8 {
+            let candidate = UInt16.random(in: Self.dynamicPortRange)
+            if let port = NWEndpoint.Port(rawValue: candidate),
+               let startedPort = try? startListener(on: port) {
+                return startedPort
+            }
         }
         return try startListener(on: .any)
     }
@@ -127,9 +123,9 @@ final class LocalWebServer: @unchecked Sendable {
                     self.port = port
                 }
             case .failed, .waiting:
+                let restartPort = self.port
                 self.listener?.cancel()
                 self.listener = nil
-                let restartPort = self.port
                 self.port = 0
                 guard self.restartAttempts < Self.maxRestartAttempts else { return }
                 self.restartAttempts += 1
@@ -143,10 +139,14 @@ final class LocalWebServer: @unchecked Sendable {
         }
     }
 
-    /// Ensures the server is running. Call before reloading the webView.
+    /// Ensures the server is running on a fresh random high port when needed.
+    /// Callers that cache `baseURL` should refresh it after calling this.
     @discardableResult
     func ensureRunning() -> Bool {
         if listener != nil, port != 0 { return true }
+        listener?.cancel()
+        listener = nil
+        port = 0
         restartAttempts = 0
         return (try? start()) != nil
     }
@@ -260,7 +260,7 @@ final class LocalWebServer: @unchecked Sendable {
         }
 
         if request.path == "/__doufu_proxy__" {
-            guard parseQueryParam(named: "__dt", from: request.query) == authToken else {
+            guard hasValidAuthToken(request) else {
                 let response = buildResponse(statusCode: 403, statusText: "Forbidden",
                                               body: Data("Missing or invalid token".utf8), contentType: "text/plain")
                 sendResponse(response, on: connection)
@@ -270,12 +270,18 @@ final class LocalWebServer: @unchecked Sendable {
                 self?.sendResponse(response, on: connection)
             }
         } else if request.path.hasPrefix(Self.tmpPathPrefix) {
+            guard hasValidAuthToken(request) else {
+                let response = buildResponse(statusCode: 403, statusText: "Forbidden",
+                                             body: Data("Missing or invalid token".utf8), contentType: "text/plain")
+                sendResponse(response, on: connection)
+                return
+            }
             let response = handleTmpFileRequest(request)
             sendResponse(response, on: connection)
         } else if request.path.hasPrefix(Self.appDataPathPrefix) {
             // OPTIONS preflight cannot carry custom query params — skip token check.
             if request.method != "OPTIONS" {
-                guard parseQueryParam(named: "__dt", from: request.query) == authToken else {
+                guard hasValidAuthToken(request) else {
                     let response = buildResponse(statusCode: 403, statusText: "Forbidden",
                                                   body: Data("Missing or invalid token".utf8), contentType: "text/plain")
                     sendResponse(response, on: connection)
@@ -285,9 +291,21 @@ final class LocalWebServer: @unchecked Sendable {
             let response = handleAppDataRequest(request)
             sendResponse(response, on: connection)
         } else if request.path.hasPrefix(Self.staticBundlePathPrefix) {
+            guard hasValidAuthToken(request) else {
+                let response = buildResponse(statusCode: 403, statusText: "Forbidden",
+                                             body: Data("Missing or invalid token".utf8), contentType: "text/plain")
+                sendResponse(response, on: connection)
+                return
+            }
             let response = handleStaticBundleRequest(request)
             sendResponse(response, on: connection)
         } else {
+            guard hasValidAuthToken(request) else {
+                let response = buildResponse(statusCode: 403, statusText: "Forbidden",
+                                             body: Data("Missing or invalid token".utf8), contentType: "text/plain")
+                sendResponse(response, on: connection)
+                return
+            }
             let response = handleStaticFileRequest(request)
             sendResponse(response, on: connection)
         }
@@ -353,6 +371,48 @@ final class LocalWebServer: @unchecked Sendable {
             }
         }
         return nil
+    }
+
+    private func parseHeader(named name: String, from request: HTTPRequest) -> String? {
+        if let exact = request.headers[name] {
+            return exact
+        }
+        let target = name.lowercased()
+        for (key, value) in request.headers where key.lowercased() == target {
+            return value
+        }
+        return nil
+    }
+
+    private func parseCookie(named name: String, from request: HTTPRequest) -> String? {
+        guard let cookieHeader = parseHeader(named: "Cookie", from: request) else {
+            return nil
+        }
+        for part in cookieHeader.split(separator: ";") {
+            let pair = part.split(separator: "=", maxSplits: 1)
+            guard pair.count == 2 else { continue }
+            let key = pair[0].trimmingCharacters(in: .whitespaces)
+            guard key == name else { continue }
+            return String(pair[1]).trimmingCharacters(in: .whitespaces).removingPercentEncoding
+        }
+        return nil
+    }
+
+    private func hasValidAuthToken(_ request: HTTPRequest) -> Bool {
+        if parseQueryParam(named: "__dt", from: request.query) == authToken {
+            return true
+        }
+        if parseHeader(named: Self.requestTokenHeaderName, from: request) == authToken {
+            return true
+        }
+        if parseCookie(named: Self.tokenCookieName, from: request) == authToken {
+            return true
+        }
+        return false
+    }
+
+    private func authCookieHeaderValue() -> String {
+        "\(Self.tokenCookieName)=\(authToken); Path=/; HttpOnly; SameSite=Strict"
     }
 
     // MARK: - Proxy
@@ -574,7 +634,13 @@ final class LocalWebServer: @unchecked Sendable {
             body = fileData
         }
 
-        return buildResponse(statusCode: 200, statusText: "OK", body: body, contentType: contentType)
+        return buildResponse(
+            statusCode: 200,
+            statusText: "OK",
+            body: body,
+            contentType: contentType,
+            additionalHeaders: ["Set-Cookie": authCookieHeaderValue()]
+        )
     }
 
     // MARK: - Tmp File Serving
@@ -731,11 +797,20 @@ final class LocalWebServer: @unchecked Sendable {
 
     // MARK: - Response Builder
 
-    private func buildResponse(statusCode: Int, statusText: String, body: Data, contentType: String) -> Data {
+    private func buildResponse(
+        statusCode: Int,
+        statusText: String,
+        body: Data,
+        contentType: String,
+        additionalHeaders: [String: String] = [:]
+    ) -> Data {
         var header = "HTTP/1.1 \(statusCode) \(statusText)\r\n"
         header += "Content-Type: \(contentType)\r\n"
         header += "Content-Length: \(body.count)\r\n"
         header += "Cache-Control: no-cache\r\n"
+        for (name, value) in additionalHeaders {
+            header += "\(name): \(value)\r\n"
+        }
         header += "Connection: close\r\n"
         header += "\r\n"
 
@@ -800,7 +875,7 @@ final class LocalWebServer: @unchecked Sendable {
             var allowed = CharacterSet.urlQueryAllowed
             allowed.remove(charactersIn: "&=?#+")
             let encoded = rawURL.addingPercentEncoding(withAllowedCharacters: allowed) ?? rawURL
-            result += "\(prefix)/__doufu_proxy__?url=\(encoded)&cache=1&__dt=\(authToken)\(suffix)"
+            result += "\(prefix)/__doufu_proxy__?url=\(encoded)&cache=1\(suffix)"
 
             lastEnd = match.range.location + match.range.length
         }

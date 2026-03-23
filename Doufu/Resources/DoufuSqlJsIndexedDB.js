@@ -7,7 +7,6 @@
 
   var _ready = false, _db = null, _pendingOps = [];
   var _APPDATAURL = '__DOUFU_APPDATAURL__';
-  var _TOKEN = '__DOUFU_TOKEN__';
 
   function _whenReady(fn) {
     if (_ready) fn(); else _pendingOps.push(fn);
@@ -622,7 +621,7 @@
     _flushTimer = null;
     if (!_db) return;
     var data = _db.export();
-    fetch(_APPDATAURL + '/indexedDB.sqlite?__dt=' + _TOKEN, { method: 'PUT', body: data })
+    fetch(_APPDATAURL + '/indexedDB.sqlite', { method: 'PUT', body: data })
       .catch(function(e) { console.error('[Doufu] IDB persist failed:', e); });
   }
   // Synchronous persist for unload events — guarantees data is written before
@@ -633,7 +632,7 @@
     try {
       var data = _db.export();
       var xhr = new XMLHttpRequest();
-      xhr.open('PUT', _APPDATAURL + '/indexedDB.sqlite?__dt=' + _TOKEN, false);
+      xhr.open('PUT', _APPDATAURL + '/indexedDB.sqlite', false);
       xhr.send(data);
     } catch(e) {
       // Sync XHR blocked — fall back to async (best-effort)
@@ -1845,7 +1844,7 @@
   initSqlJs({ locateFile: function() { return '__DOUFU_WASMURL__'; } })
     .then(function(SQL) {
       window.__doufuSQL = SQL;
-      return fetch(_APPDATAURL + '/indexedDB.sqlite?__dt=' + _TOKEN)
+      return fetch(_APPDATAURL + '/indexedDB.sqlite')
         .then(function(r) {
           if (r.ok) return r.arrayBuffer().then(function(b) {
             var sqlDb = new SQL.Database(new Uint8Array(b));
@@ -1854,13 +1853,13 @@
             return sqlDb;
           });
           // Try migrating from old JSON
-          return fetch(_APPDATAURL + '/indexedDB.json?__dt=' + _TOKEN)
+          return fetch(_APPDATAURL + '/indexedDB.json')
             .then(function(r2) {
               if (r2.ok) return r2.json().then(function(json) {
                 var migratedDb = _migrateFromJSON(SQL, json);
                 // Persist the migrated SQLite file immediately
                 var data = migratedDb.export();
-                fetch(_APPDATAURL + '/indexedDB.sqlite?__dt=' + _TOKEN, { method: 'PUT', body: data })
+                fetch(_APPDATAURL + '/indexedDB.sqlite', { method: 'PUT', body: data })
                   .catch(function(e) { console.error('[Doufu] Migration persist failed:', e); });
                 return migratedDb;
               });

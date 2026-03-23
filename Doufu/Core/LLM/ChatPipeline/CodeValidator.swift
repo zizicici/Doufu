@@ -97,17 +97,7 @@ final class CodeValidator: NSObject {
         return await runValidation(url: pageURL, bridge: bridge)
     }
 
-    /// Fallback: validate by loading a file:// URL directly.
-    func validate(entryFileURL: URL, allowingReadAccessTo directoryURL: URL) async -> ValidationResult {
-        return await runValidation(fileURL: entryFileURL, readAccessURL: directoryURL, bridge: nil)
-    }
-
-    private func runValidation(
-        url: URL? = nil,
-        fileURL: URL? = nil,
-        readAccessURL: URL? = nil,
-        bridge: DoufuBridge?
-    ) async -> ValidationResult {
+    private func runValidation(url: URL, bridge: DoufuBridge?) async -> ValidationResult {
         cleanup()
         collectedErrors = []
         collectedResourceErrors = []
@@ -137,11 +127,11 @@ final class CodeValidator: NSObject {
         self.webView = wv
         self.activeBridge = bridge
 
-        if let url {
-            wv.load(URLRequest(url: url))
-        } else if let fileURL, let readAccessURL {
-            wv.loadFileURL(fileURL, allowingReadAccessTo: readAccessURL)
+        var request = URLRequest(url: url)
+        if let token = bridge?.serverAuthToken, !token.isEmpty {
+            request.setValue(token, forHTTPHeaderField: LocalWebServer.requestTokenHeaderName)
         }
+        wv.load(request)
 
         return await withCheckedContinuation { cont in
             self.continuation = cont

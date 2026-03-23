@@ -1804,30 +1804,30 @@ final class AgentToolProvider {
             )
         }
 
+        guard let serverBase = validationServerBaseURL else {
+            return ToolExecutionResult(
+                output: "Code validation requires the local project server, but it is unavailable.",
+                isError: true,
+                changedPaths: []
+            )
+        }
+
         let normalizedPath = normalizeRelativePath(path)
-        var result: CodeValidator.ValidationResult
-        if let serverBase = validationServerBaseURL {
+        var result = await validator.validate(
+            relativePath: normalizedPath,
+            serverBaseURL: serverBase,
+            bridge: validationBridge
+        )
+        // Retry once on navigation failure — the local server may be
+        // restarting after a transient NWListener state change.
+        if !result.errors.isEmpty,
+           result.errors.allSatisfy({ $0.source == "navigation" }),
+           result.consoleOutput.isEmpty {
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
             result = await validator.validate(
                 relativePath: normalizedPath,
                 serverBaseURL: serverBase,
                 bridge: validationBridge
-            )
-            // Retry once on navigation failure — the local server may be
-            // restarting after a transient NWListener state change.
-            if !result.errors.isEmpty,
-               result.errors.allSatisfy({ $0.source == "navigation" }),
-               result.consoleOutput.isEmpty {
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
-                result = await validator.validate(
-                    relativePath: normalizedPath,
-                    serverBaseURL: serverBase,
-                    bridge: validationBridge
-                )
-            }
-        } else {
-            result = await validator.validate(
-                entryFileURL: resolved,
-                allowingReadAccessTo: workspaceURL
             )
         }
 
@@ -2017,7 +2017,8 @@ final class AgentToolProvider {
             ```js
             // Pick a single photo from the system photo picker (no permission needed)
             const url = await doufu.photos.pick();
-            // Returns a URL path string, e.g. "/__doufu_tmp__/photos/xxx.jpg"
+            // Returns a temporary same-origin URL path string, e.g.
+            // "/__doufu_tmp__/photos/xxx.jpg"
             // Returns null if user cancels
             if (url) img.src = url;
 

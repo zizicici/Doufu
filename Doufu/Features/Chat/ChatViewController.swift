@@ -25,6 +25,9 @@ final class ChatViewController: UIViewController {
     var validationServerBaseURL: URL?
     /// A temporary bridge whose storage is isolated from real user data.
     var validationBridge: DoufuBridge?
+    /// Allows the presenter to refresh validation context before each request,
+    /// so validate_code does not use a stale localhost server reference.
+    var validationContextProvider: (() -> (URL?, DoufuBridge?))?
 
     private let inputMinHeight: CGFloat = 38
     private let inputMaxHeight: CGFloat = 120
@@ -611,6 +614,11 @@ final class ChatViewController: UIViewController {
         updateInputTextViewHeight()
         session.appendUserMessage(userInput)
         inputTextView.resignFirstResponder()
+
+        if let context = validationContextProvider?() {
+            validationServerBaseURL = context.0
+            validationBridge = context.1
+        }
 
         session.sendMessage(
             userInput,

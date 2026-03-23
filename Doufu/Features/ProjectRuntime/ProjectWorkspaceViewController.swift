@@ -572,10 +572,26 @@ final class ProjectWorkspaceViewController: UIViewController {
                 forMainFrameOnly: false
             )
             webView.configuration.userContentController.addUserScript(errorScript)
-            webView.load(URLRequest(url: url))
+            var request = URLRequest(url: url)
+            request.setValue(webServer.authToken, forHTTPHeaderField: LocalWebServer.requestTokenHeaderName)
+            webView.load(request)
         } catch {
-            // Fallback to file:// if the server fails to start.
-            webView.loadFileURL(entryPath, allowingReadAccessTo: appURL)
+            showLoadError(error.localizedDescription)
+        }
+    }
+
+    private func reloadProjectPageFromActiveServer() {
+        doufuBridge.flushAllStorageSync()
+        guard webServer.ensureRunning() else {
+            showLoadError(LocalWebServer.ServerError.failedToStart.localizedDescription)
+            return
+        }
+        let isUsingActiveServer = webView.url?.host == "localhost"
+            && webView.url?.port == Int(webServer.port)
+        if isUsingActiveServer {
+            webView.reload()
+        } else {
+            loadProjectPage()
         }
     }
 
@@ -849,13 +865,7 @@ final class ProjectWorkspaceViewController: UIViewController {
     @objc
     private func didTapRefresh() {
         scheduleAutoCollapse()
-        doufuBridge.flushAllStorageSync()
-        webServer.ensureRunning()
-        if webView.url != nil {
-            webView.reload()
-        } else {
-            loadProjectPage()
-        }
+        reloadProjectPageFromActiveServer()
     }
 
     @objc
@@ -1010,15 +1020,12 @@ final class ProjectWorkspaceViewController: UIViewController {
         let session = coordinator.session(for: project)
         let chatController = ChatViewController(session: session)
         chatController.isReadOnly = readOnly
-        chatController.validationServerBaseURL = webServer.baseURL
-        // Use a temp bridge for validation so localStorage writes don't pollute real user data.
-        let tempStorageDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("doufu_validation", isDirectory: true)
-            .appendingPathComponent(projectIdentifier, isDirectory: true)
-        let validationBridge = DoufuBridge(projectURL: projectURL, storageDirectoryOverride: tempStorageDir)
-        validationBridge.serverAuthToken = webServer.authToken
-        validationBridge.expectedPort = Int(webServer.port)
-        chatController.validationBridge = validationBridge
+        let validationContext = makeValidationContext()
+        chatController.validationServerBaseURL = validationContext.0
+        chatController.validationBridge = validationContext.1
+        chatController.validationContextProvider = { [weak self] in
+            self?.makeValidationContext() ?? (nil, nil)
+        }
 
         let navigationController = UINavigationController(rootViewController: chatController)
         navigationController.modalPresentationStyle = .pageSheet
@@ -1029,6 +1036,23 @@ final class ProjectWorkspaceViewController: UIViewController {
         navigationController.presentationController?.delegate = self
         chatNavigationController = navigationController
         present(navigationController, animated: true)
+    }
+
+    private func makeValidationContext() -> (URL?, DoufuBridge?) {
+        webServer.tmpDirectoryURL = projectURL.appendingPathComponent("tmp", isDirectory: true)
+        webServer.appDataDirectoryURL = project.dataURL
+        guard webServer.ensureRunning(), let baseURL = webServer.baseURL else {
+            return (nil, nil)
+        }
+
+        // Use a temp bridge for validation so localStorage writes don't pollute real user data.
+        let tempStorageDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("doufu_validation", isDirectory: true)
+            .appendingPathComponent(projectIdentifier, isDirectory: true)
+        let validationBridge = DoufuBridge(projectURL: projectURL, storageDirectoryOverride: tempStorageDir)
+        validationBridge.serverAuthToken = webServer.authToken
+        validationBridge.expectedPort = Int(webServer.port)
+        return (baseURL, validationBridge)
     }
 
     @objc
@@ -1110,22 +1134,10 @@ final class ProjectWorkspaceViewController: UIViewController {
 
         switch change.kind {
         case .filesChanged, .checkpointRestored:
-            doufuBridge.flushAllStorageSync()
-            webServer.ensureRunning()
-            if webView.url != nil {
-                webView.reload()
-            } else {
-                loadProjectPage()
-            }
+            reloadProjectPageFromActiveServer()
             consumeVisibleProjectUpdateIfNeeded()
         case .renamed:
-            doufuBridge.flushAllStorageSync()
-            webServer.ensureRunning()
-            if webView.url != nil {
-                webView.reload()
-            } else {
-                loadProjectPage()
-            }
+            reloadProjectPageFromActiveServer()
         case .descriptionChanged, .toolPermissionChanged, .modelSelectionChanged:
             break
         }
@@ -1300,13 +1312,12 @@ extension ProjectWorkspaceViewController: WKNavigationDelegate {
         decidePolicyFor navigationAction: WKNavigationAction,
         decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
     ) {
-        // Only allow main-frame navigations to the local web server or file:// URLs.
+        // Only allow main-frame navigations to the current local web server.
         // This prevents project JS from navigating the top frame to an external URL
         // that would inherit the native bridge and all granted capabilities.
         if navigationAction.targetFrame?.isMainFrame == true {
             if let url = navigationAction.request.url {
-                let isLocal = url.scheme == "file"
-                    || (url.host == "localhost" && url.port == Int(webServer.port))
+                let isLocal = url.host == "localhost" && url.port == Int(webServer.port)
                 if !isLocal {
                     decisionHandler(.cancel)
                     return
