@@ -60,7 +60,7 @@ class ChatCompletionsBaseProvider {
         )
         for msg in conversationMessages {
             if msg.role == "assistant" {
-                messages.append(.assistant(content: msg.text, toolCalls: nil))
+                messages.append(.assistant(content: msg.text, toolCalls: nil, reasoningContent: nil))
             } else {
                 messages.append(.user(content: msg.text))
             }
@@ -86,7 +86,7 @@ class ChatCompletionsBaseProvider {
                 let calls = msg.toolCalls.map { tc in
                     OpenRouterToolCall(id: tc.id, name: tc.name, arguments: tc.argumentsJSON)
                 }
-                messages.append(.assistant(content: msg.text, toolCalls: calls.isEmpty ? nil : calls))
+                messages.append(.assistant(content: msg.text, toolCalls: calls.isEmpty ? nil : calls, reasoningContent: msg.thinkingContent))
             case let .toolResult(callID, _, content, _):
                 messages.append(.tool(toolCallID: callID, content: content))
             }

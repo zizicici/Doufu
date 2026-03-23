@@ -32,11 +32,12 @@ final class OpenAIChatCompletionsProvider: ChatCompletionsBaseProvider, LLMProvi
             tools: nil,
             stream: true,
             maxCompletionTokens: credential.profile.maxOutputTokens,
+            maxTokens: credential.profile.maxOutputTokens,
             reasoningEffort: sendReasoning ? reasoningEffortString(from: effort) : nil,
+            thinking: chatCompletionsThinking(for: credential.profile, executionOptions: executionOptions),
             streamOptions: OpenAIChatCompletionsRequest.StreamOptions(includeUsage: true)
         )
-        var didFallbackMaxCompletionTokens = false
-        var didFallbackReasoningEffort = false
+        var fallbackState = FallbackState()
 
         while true {
             let timeoutSeconds = LLMProviderHelpers.timeoutSeconds(for: initialReasoningEffort, configuration: configuration)
@@ -51,15 +52,7 @@ final class OpenAIChatCompletionsProvider: ChatCompletionsBaseProvider, LLMProvi
                 let data = try await LLMProviderHelpers.consumeStreamBytes(bytes: bytes)
                 let errorMessage = LLMProviderHelpers.parseErrorMessage(from: data) ?? ""
 
-                if shouldFallbackMaxCompletionTokens(errorMessage: errorMessage, alreadyFallback: didFallbackMaxCompletionTokens, currentValue: requestBody.maxCompletionTokens) {
-                    didFallbackMaxCompletionTokens = true
-                    requestBody.maxCompletionTokens = nil
-                    continue
-                }
-
-                if shouldFallbackReasoningEffort(errorMessage: errorMessage, alreadyFallback: didFallbackReasoningEffort, currentValue: requestBody.reasoningEffort) {
-                    didFallbackReasoningEffort = true
-                    requestBody.reasoningEffort = nil
+                if applyFallback(to: &requestBody, errorMessage: errorMessage, state: &fallbackState) {
                     continue
                 }
 
@@ -108,11 +101,12 @@ final class OpenAIChatCompletionsProvider: ChatCompletionsBaseProvider, LLMProvi
             tools: toolDefinitions,
             stream: true,
             maxCompletionTokens: credential.profile.maxOutputTokens,
+            maxTokens: credential.profile.maxOutputTokens,
             reasoningEffort: sendReasoning ? reasoningEffortString(from: effort) : nil,
+            thinking: chatCompletionsThinking(for: credential.profile, executionOptions: executionOptions),
             streamOptions: OpenAIChatCompletionsRequest.StreamOptions(includeUsage: true)
         )
-        var didFallbackMaxCompletionTokens = false
-        var didFallbackReasoningEffort = false
+        var fallbackState = FallbackState()
 
         while true {
             var request = buildURLRequest(credential: credential, path: "chat/completions", timeoutSeconds: timeoutSeconds)
@@ -126,15 +120,7 @@ final class OpenAIChatCompletionsProvider: ChatCompletionsBaseProvider, LLMProvi
                 let data = try await LLMProviderHelpers.consumeStreamBytes(bytes: bytes)
                 let errorMessage = LLMProviderHelpers.parseErrorMessage(from: data) ?? ""
 
-                if shouldFallbackMaxCompletionTokens(errorMessage: errorMessage, alreadyFallback: didFallbackMaxCompletionTokens, currentValue: requestBody.maxCompletionTokens) {
-                    didFallbackMaxCompletionTokens = true
-                    requestBody.maxCompletionTokens = nil
-                    continue
-                }
-
-                if shouldFallbackReasoningEffort(errorMessage: errorMessage, alreadyFallback: didFallbackReasoningEffort, currentValue: requestBody.reasoningEffort) {
-                    didFallbackReasoningEffort = true
-                    requestBody.reasoningEffort = nil
+                if applyFallback(to: &requestBody, errorMessage: errorMessage, state: &fallbackState) {
                     continue
                 }
 
@@ -152,6 +138,7 @@ final class OpenAIChatCompletionsProvider: ChatCompletionsBaseProvider, LLMProvi
 
             return try await consumeToolUseStream(
                 bytes: bytes, timeoutSeconds: timeoutSeconds,
+                options: ChatCompletionsToolUseStreamOptions(parseReasoningContent: true),
                 onStreamedText: onStreamedText, onUsage: onUsage
             )
         }
@@ -168,17 +155,69 @@ final class OpenAIChatCompletionsProvider: ChatCompletionsBaseProvider, LLMProvi
         }
     }
 
-    // MARK: - Fallback Helpers
+    // MARK: - Thinking
 
-    private func shouldFallbackMaxCompletionTokens(errorMessage: String, alreadyFallback: Bool, currentValue: Int?) -> Bool {
-        guard !alreadyFallback, currentValue != nil else { return false }
-        let msg = errorMessage.lowercased()
-        return msg.contains("max_completion_tokens") || msg.contains("max_output_tokens")
+    private func chatCompletionsThinking(
+        for profile: ResolvedModelProfile,
+        executionOptions: ProjectChatService.ModelExecutionOptions
+    ) -> ChatCompletionsThinking? {
+        guard profile.thinkingSupported else { return nil }
+        return ChatCompletionsThinking(enabled: executionOptions.chatCompletionsThinkingEnabled)
     }
 
-    private func shouldFallbackReasoningEffort(errorMessage: String, alreadyFallback: Bool, currentValue: String?) -> Bool {
-        guard !alreadyFallback, currentValue != nil else { return false }
+    // MARK: - Fallback
+
+    private struct FallbackState {
+        var didMaxCompletionTokens = false
+        var didMaxTokens = false
+        var didReasoningEffort = false
+        var didThinking = false
+        var didStreamOptions = false
+    }
+
+    /// Tries each fallback in order. Returns true if a parameter was removed (caller should retry).
+    private func applyFallback(
+        to requestBody: inout OpenAIChatCompletionsRequest,
+        errorMessage: String,
+        state: inout FallbackState
+    ) -> Bool {
         let msg = errorMessage.lowercased()
-        return msg.contains("reasoning_effort")
+
+        if !state.didMaxCompletionTokens, requestBody.maxCompletionTokens != nil,
+           msg.contains("max_completion_tokens") || msg.contains("max_output_tokens") {
+            state.didMaxCompletionTokens = true
+            requestBody.maxCompletionTokens = nil
+            return true
+        }
+
+        if !state.didMaxTokens, requestBody.maxTokens != nil,
+           msg.contains("max_tokens") {
+            state.didMaxTokens = true
+            requestBody.maxTokens = nil
+            return true
+        }
+
+        if !state.didReasoningEffort, requestBody.reasoningEffort != nil,
+           msg.contains("reasoning_effort") {
+            state.didReasoningEffort = true
+            requestBody.reasoningEffort = nil
+            return true
+        }
+
+        if !state.didThinking, requestBody.thinking != nil,
+           msg.contains("thinking") {
+            state.didThinking = true
+            requestBody.thinking = nil
+            return true
+        }
+
+        if !state.didStreamOptions, requestBody.streamOptions != nil,
+           msg.contains("stream_options") {
+            state.didStreamOptions = true
+            requestBody.streamOptions = nil
+            return true
+        }
+
+        return false
     }
 }

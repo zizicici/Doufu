@@ -123,8 +123,10 @@ struct OpenAIChatCompletionsRequest: Encodable {
     let tools: [OpenRouterToolDefinition]?
     let stream: Bool
     var maxCompletionTokens: Int?
+    var maxTokens: Int?
     var reasoningEffort: String?
-    let streamOptions: StreamOptions?
+    var thinking: ChatCompletionsThinking?
+    var streamOptions: StreamOptions?
 
     struct StreamOptions: Encodable {
         let includeUsage: Bool
@@ -137,7 +139,9 @@ struct OpenAIChatCompletionsRequest: Encodable {
     private enum CodingKeys: String, CodingKey {
         case model, messages, tools, stream
         case maxCompletionTokens = "max_completion_tokens"
+        case maxTokens = "max_tokens"
         case reasoningEffort = "reasoning_effort"
+        case thinking
         case streamOptions = "stream_options"
     }
 
@@ -150,7 +154,9 @@ struct OpenAIChatCompletionsRequest: Encodable {
         }
         try container.encode(stream, forKey: .stream)
         try container.encodeIfPresent(maxCompletionTokens, forKey: .maxCompletionTokens)
+        try container.encodeIfPresent(maxTokens, forKey: .maxTokens)
         try container.encodeIfPresent(reasoningEffort, forKey: .reasoningEffort)
+        try container.encodeIfPresent(thinking, forKey: .thinking)
         try container.encodeIfPresent(streamOptions, forKey: .streamOptions)
     }
 }
@@ -171,123 +177,6 @@ struct OpenRouterReasoning: Encodable {
 }
 
 enum OpenRouterMessage: Encodable {
-    case system(content: String)
-    case user(content: String)
-    case assistant(content: String, toolCalls: [OpenRouterToolCall]?)
-    case tool(toolCallID: String, content: String)
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        switch self {
-        case let .system(content):
-            try container.encode("system", forKey: .role)
-            try container.encode(content, forKey: .content)
-        case let .user(content):
-            try container.encode("user", forKey: .role)
-            try container.encode(content, forKey: .content)
-        case let .assistant(content, toolCalls):
-            try container.encode("assistant", forKey: .role)
-            if let toolCalls, !toolCalls.isEmpty {
-                if !content.isEmpty {
-                    try container.encode(content, forKey: .content)
-                }
-                try container.encode(toolCalls, forKey: .toolCalls)
-            } else {
-                try container.encode(content, forKey: .content)
-            }
-        case let .tool(toolCallID, content):
-            try container.encode("tool", forKey: .role)
-            try container.encode(toolCallID, forKey: .toolCallID)
-            try container.encode(content, forKey: .content)
-        }
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case role, content
-        case toolCalls = "tool_calls"
-        case toolCallID = "tool_call_id"
-    }
-}
-
-struct OpenRouterToolCall: Encodable {
-    let id: String
-    let type: String
-    let function: OpenRouterFunctionCall
-
-    init(id: String, name: String, arguments: String) {
-        self.id = id
-        self.type = "function"
-        self.function = OpenRouterFunctionCall(name: name, arguments: arguments)
-    }
-}
-
-struct OpenRouterFunctionCall: Encodable {
-    let name: String
-    let arguments: String
-}
-
-struct OpenRouterToolDefinition: Encodable {
-    let type = "function"
-    let function: OpenRouterFunctionDefinition
-
-    init(name: String, description: String, parameters: JSONValue) {
-        self.function = OpenRouterFunctionDefinition(name: name, description: description, parameters: parameters)
-    }
-}
-
-struct OpenRouterFunctionDefinition: Encodable {
-    let name: String
-    let description: String
-    let parameters: JSONValue
-}
-
-// MARK: - Xiaomi MiMo Chat Completions API
-
-struct MiMoChatRequest: Encodable {
-    let model: String
-    let messages: [MiMoMessage]
-    let tools: [OpenRouterToolDefinition]?
-    let stream: Bool
-    let maxCompletionTokens: Int?
-    let thinking: MiMoThinking?
-    let responseFormat: MiMoResponseFormat?
-
-    private enum CodingKeys: String, CodingKey {
-        case model, messages, tools, stream
-        case maxCompletionTokens = "max_completion_tokens"
-        case thinking
-        case responseFormat = "response_format"
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(model, forKey: .model)
-        try container.encode(messages, forKey: .messages)
-        if let tools, !tools.isEmpty {
-            try container.encode(tools, forKey: .tools)
-        }
-        try container.encode(stream, forKey: .stream)
-        try container.encodeIfPresent(maxCompletionTokens, forKey: .maxCompletionTokens)
-        try container.encodeIfPresent(thinking, forKey: .thinking)
-        try container.encodeIfPresent(responseFormat, forKey: .responseFormat)
-    }
-}
-
-struct MiMoThinking: Encodable {
-    let type: String
-
-    init(enabled: Bool) {
-        self.type = enabled ? "enabled" : "disabled"
-    }
-}
-
-/// MiMo-specific response format (json_object support).
-struct MiMoResponseFormat: Encodable {
-    let type: String
-}
-
-/// MiMo message type that extends OpenRouterMessage with `reasoning_content`.
-enum MiMoMessage: Encodable {
     case system(content: String)
     case user(content: String)
     case assistant(content: String, toolCalls: [OpenRouterToolCall]?, reasoningContent: String?)
@@ -327,6 +216,84 @@ enum MiMoMessage: Encodable {
         case reasoningContent = "reasoning_content"
     }
 }
+
+struct OpenRouterToolCall: Encodable {
+    let id: String
+    let type: String
+    let function: OpenRouterFunctionCall
+
+    init(id: String, name: String, arguments: String) {
+        self.id = id
+        self.type = "function"
+        self.function = OpenRouterFunctionCall(name: name, arguments: arguments)
+    }
+}
+
+struct OpenRouterFunctionCall: Encodable {
+    let name: String
+    let arguments: String
+}
+
+struct OpenRouterToolDefinition: Encodable {
+    let type = "function"
+    let function: OpenRouterFunctionDefinition
+
+    init(name: String, description: String, parameters: JSONValue) {
+        self.function = OpenRouterFunctionDefinition(name: name, description: description, parameters: parameters)
+    }
+}
+
+struct OpenRouterFunctionDefinition: Encodable {
+    let name: String
+    let description: String
+    let parameters: JSONValue
+}
+
+// MARK: - Xiaomi MiMo Chat Completions API
+
+struct MiMoChatRequest: Encodable {
+    let model: String
+    let messages: [OpenRouterMessage]
+    let tools: [OpenRouterToolDefinition]?
+    let stream: Bool
+    let maxCompletionTokens: Int?
+    let thinking: ChatCompletionsThinking?
+    let responseFormat: MiMoResponseFormat?
+
+    private enum CodingKeys: String, CodingKey {
+        case model, messages, tools, stream
+        case maxCompletionTokens = "max_completion_tokens"
+        case thinking
+        case responseFormat = "response_format"
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(model, forKey: .model)
+        try container.encode(messages, forKey: .messages)
+        if let tools, !tools.isEmpty {
+            try container.encode(tools, forKey: .tools)
+        }
+        try container.encode(stream, forKey: .stream)
+        try container.encodeIfPresent(maxCompletionTokens, forKey: .maxCompletionTokens)
+        try container.encodeIfPresent(thinking, forKey: .thinking)
+        try container.encodeIfPresent(responseFormat, forKey: .responseFormat)
+    }
+}
+
+struct ChatCompletionsThinking: Encodable {
+    let type: String
+
+    init(enabled: Bool) {
+        self.type = enabled ? "enabled" : "disabled"
+    }
+}
+
+/// MiMo-specific response format (json_object support).
+struct MiMoResponseFormat: Encodable {
+    let type: String
+}
+
 
 // MARK: - Anthropic Prompt Caching
 

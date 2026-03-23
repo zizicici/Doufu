@@ -226,33 +226,45 @@ final class ChatModelSelectionManager {
         )
 
         switch providerKind {
-        case .openAIResponses, .openAIChatCompletions, .openRouter:
+        case .openAIResponses, .openRouter:
             return ProjectChatService.ModelExecutionOptions(
                 reasoningEffort: reasoningEffort,
                 anthropicThinkingEnabled: true,
                 geminiThinkingEnabled: true,
-                mimoThinkingEnabled: true
+                mimoThinkingEnabled: true,
+                chatCompletionsThinkingEnabled: true
+            )
+        case .openAIChatCompletions:
+            return ProjectChatService.ModelExecutionOptions(
+                reasoningEffort: reasoningEffort,
+                anthropicThinkingEnabled: true,
+                geminiThinkingEnabled: true,
+                mimoThinkingEnabled: true,
+                chatCompletionsThinkingEnabled: thinkingEnabled
             )
         case .anthropic:
             return ProjectChatService.ModelExecutionOptions(
                 reasoningEffort: reasoningEffort,
                 anthropicThinkingEnabled: thinkingEnabled,
                 geminiThinkingEnabled: true,
-                mimoThinkingEnabled: true
+                mimoThinkingEnabled: true,
+                chatCompletionsThinkingEnabled: true
             )
         case .googleGemini:
             return ProjectChatService.ModelExecutionOptions(
                 reasoningEffort: reasoningEffort,
                 anthropicThinkingEnabled: true,
                 geminiThinkingEnabled: thinkingEnabled,
-                mimoThinkingEnabled: true
+                mimoThinkingEnabled: true,
+                chatCompletionsThinkingEnabled: true
             )
         case .xiaomiMiMo:
             return ProjectChatService.ModelExecutionOptions(
                 reasoningEffort: reasoningEffort,
                 anthropicThinkingEnabled: true,
                 geminiThinkingEnabled: true,
-                mimoThinkingEnabled: thinkingEnabled
+                mimoThinkingEnabled: thinkingEnabled,
+                chatCompletionsThinkingEnabled: true
             )
         }
     }

@@ -24,20 +24,7 @@ final class MiMoProvider: ChatCompletionsBaseProvider, LLMProviderAdapter {
         onStreamedText: (@MainActor (String) -> Void)?,
         onUsage: ((Int?, Int?) -> Void)?
     ) async throws -> String {
-        var messages: [MiMoMessage] = []
-        if !developerInstruction.isEmpty {
-            messages.append(.system(content: developerInstruction))
-        }
-        let conversationMessages = LLMProviderHelpers.normalizedConversationMessages(
-            from: inputItems, assistantRole: "assistant", userRole: "user"
-        )
-        for msg in conversationMessages {
-            if msg.role == "assistant" {
-                messages.append(.assistant(content: msg.text, toolCalls: nil, reasoningContent: nil))
-            } else {
-                messages.append(.user(content: msg.text))
-            }
-        }
+        let messages = buildNonToolMessages(developerInstruction: developerInstruction, inputItems: inputItems)
 
         let requestBody = MiMoChatRequest(
             model: model,
@@ -83,7 +70,7 @@ final class MiMoProvider: ChatCompletionsBaseProvider, LLMProviderAdapter {
         let model = credential.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
         let timeoutSeconds = LLMProviderHelpers.timeoutSeconds(for: executionOptions.reasoningEffort, configuration: configuration)
 
-        let messages = buildMiMoToolUseMessages(systemInstruction: systemInstruction, from: conversationItems)
+        let messages = buildToolUseMessages(systemInstruction: systemInstruction, from: conversationItems)
         let toolDefinitions = buildToolDefinitions(from: tools)
 
         let requestBody = MiMoChatRequest(
@@ -114,44 +101,14 @@ final class MiMoProvider: ChatCompletionsBaseProvider, LLMProviderAdapter {
         )
     }
 
-    // MARK: - MiMo-Specific Message Builder
-
-    private func buildMiMoToolUseMessages(
-        systemInstruction: String,
-        from items: [AgentConversationItem]
-    ) -> [MiMoMessage] {
-        var messages: [MiMoMessage] = []
-        if !systemInstruction.isEmpty {
-            messages.append(.system(content: systemInstruction))
-        }
-        for item in items {
-            switch item {
-            case let .userMessage(text):
-                messages.append(.user(content: text))
-            case let .assistantMessage(msg):
-                let calls = msg.toolCalls.map { tc in
-                    OpenRouterToolCall(id: tc.id, name: tc.name, arguments: tc.argumentsJSON)
-                }
-                messages.append(.assistant(
-                    content: msg.text,
-                    toolCalls: calls.isEmpty ? nil : calls,
-                    reasoningContent: msg.thinkingContent
-                ))
-            case let .toolResult(callID, _, content, _):
-                messages.append(.tool(toolCallID: callID, content: content))
-            }
-        }
-        return messages
-    }
-
     // MARK: - MiMo-Specific Helpers
 
     private func mimoThinking(
         for profile: ResolvedModelProfile,
         executionOptions: ProjectChatService.ModelExecutionOptions
-    ) -> MiMoThinking? {
+    ) -> ChatCompletionsThinking? {
         guard profile.thinkingSupported else { return nil }
-        return MiMoThinking(enabled: executionOptions.mimoThinkingEnabled)
+        return ChatCompletionsThinking(enabled: executionOptions.mimoThinkingEnabled)
     }
 
     private func mimoResponseFormat(from format: ResponsesTextFormat?) -> MiMoResponseFormat? {

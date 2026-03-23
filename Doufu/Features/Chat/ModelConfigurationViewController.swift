@@ -413,7 +413,7 @@ final class ModelConfigurationViewController: UIViewController, UITableViewDeleg
         if let selectedProvider = providerRecord(for: currentSelection),
            let selectedModel = selectedModelRecord(for: selectedProvider, selection: currentSelection) {
             switch selectedProvider.kind {
-            case .openAIResponses, .openAIChatCompletions, .openRouter:
+            case .openAIResponses, .openRouter:
                 let currentEffort = resolvedReasoningEffort(
                     for: selectedProvider,
                     modelID: selectedModel.id,
@@ -439,6 +439,51 @@ final class ModelConfigurationViewController: UIViewController, UITableViewDeleg
                             inherited: false
                         )
                     }
+                }
+            case .openAIChatCompletions:
+                let currentEffort = resolvedReasoningEffort(
+                    for: selectedProvider,
+                    modelID: selectedModel.id,
+                    reasoningEffort: currentSelection.selectedReasoningEffort
+                )
+                if isFollowingParent {
+                    if reasoningProfile(for: selectedProvider, modelID: selectedModel.id) != nil {
+                        let item = ModelConfigItemID.reasoningEffort(currentEffort.rawValue, inherited: true)
+                        snapshot.appendItems([item], toSection: .parameter)
+                        dataMap[item] = .reasoningEffort(
+                            displayName: currentEffort.displayName,
+                            isSelected: false,
+                            inherited: true
+                        )
+                    }
+                } else if let profile = reasoningProfile(for: selectedProvider, modelID: selectedModel.id) {
+                    for effort in profile.supported {
+                        let item = ModelConfigItemID.reasoningEffort(effort.rawValue, inherited: false)
+                        snapshot.appendItems([item], toSection: .parameter)
+                        dataMap[item] = .reasoningEffort(
+                            displayName: effort.displayName,
+                            isSelected: effort == currentEffort,
+                            inherited: false
+                        )
+                    }
+                }
+                let capabilities = resolveModelProfile(for: selectedProvider, modelID: selectedModel.id)
+                if capabilities.thinkingSupported {
+                    let item = ModelConfigItemID.thinkingToggle(inherited: isFollowingParent)
+                    snapshot.appendItems([item], toSection: .parameter)
+                    let isOn = resolvedThinkingEnabled(
+                        for: selectedProvider,
+                        modelID: selectedModel.id,
+                        thinkingEnabled: currentSelection.selectedThinkingEnabled
+                    )
+                    dataMap[item] = .thinkingToggle(
+                        title: capabilities.thinkingCanDisable
+                            ? String(localized: "chat.menu.thinking")
+                            : String(localized: "model_config.thinking_required"),
+                        isOn: isOn,
+                        canInteract: !isFollowingParent && capabilities.thinkingCanDisable,
+                        inherited: isFollowingParent
+                    )
                 }
             case .anthropic, .googleGemini, .xiaomiMiMo:
                 let capabilities = resolveModelProfile(for: selectedProvider, modelID: selectedModel.id)

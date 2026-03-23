@@ -70,12 +70,14 @@ enum ProjectChatService {
         let anthropicThinkingEnabled: Bool
         let geminiThinkingEnabled: Bool
         let mimoThinkingEnabled: Bool
+        let chatCompletionsThinkingEnabled: Bool
 
         static let `default` = ModelExecutionOptions(
             reasoningEffort: .high,
             anthropicThinkingEnabled: true,
             geminiThinkingEnabled: true,
-            mimoThinkingEnabled: true
+            mimoThinkingEnabled: true,
+            chatCompletionsThinkingEnabled: true
         )
     }
 

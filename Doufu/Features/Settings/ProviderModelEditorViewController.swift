@@ -324,10 +324,18 @@ final class ProviderModelEditorViewController: UIViewController, UITableViewDele
 
         // Capability — dynamic based on provider kind
         switch provider.providerKind {
-        case .openAIResponses, .openAIChatCompletions, .openRouter:
+        case .openAIResponses, .openRouter:
             var items: [ModelEditorItemID] = ProjectChatService.ReasoningEffort.allCases.map {
                 .reasoningEffort($0)
             }
+            items.append(.structuredOutput)
+            snapshot.appendItems(items, toSection: .capability)
+        case .openAIChatCompletions:
+            var items: [ModelEditorItemID] = ProjectChatService.ReasoningEffort.allCases.map {
+                .reasoningEffort($0)
+            }
+            items.append(.thinkingToggle)
+            items.append(.thinkingCanDisable(enabled: thinkingSupported))
             items.append(.structuredOutput)
             snapshot.appendItems(items, toSection: .capability)
         case .anthropic, .googleGemini, .xiaomiMiMo:
@@ -406,12 +414,22 @@ final class ProviderModelEditorViewController: UIViewController, UITableViewDele
         let contextWindowOverride = (contextWindow ?? 0) > 0 ? contextWindow : nil
 
         switch provider.providerKind {
-        case .openAIResponses, .openAIChatCompletions, .openRouter:
+        case .openAIResponses, .openRouter:
             let orderedEfforts = ProjectChatService.ReasoningEffort.allCases.filter { reasoningEfforts.contains($0) }
             return LLMProviderModelCapabilities(
                 reasoningEfforts: orderedEfforts,
                 thinkingSupported: false,
                 thinkingCanDisable: false,
+                structuredOutputSupported: structuredOutputSupported,
+                maxOutputTokensOverride: maxOutputOverride,
+                contextWindowTokensOverride: contextWindowOverride
+            )
+        case .openAIChatCompletions:
+            let orderedEfforts = ProjectChatService.ReasoningEffort.allCases.filter { reasoningEfforts.contains($0) }
+            return LLMProviderModelCapabilities(
+                reasoningEfforts: orderedEfforts,
+                thinkingSupported: thinkingSupported,
+                thinkingCanDisable: thinkingSupported && thinkingCanDisable,
                 structuredOutputSupported: structuredOutputSupported,
                 maxOutputTokensOverride: maxOutputOverride,
                 contextWindowTokensOverride: contextWindowOverride

@@ -161,7 +161,8 @@ nonisolated final class LLMCodeScanner {
                 reasoningEffort: .low,
                 anthropicThinkingEnabled: false,
                 geminiThinkingEnabled: false,
-                mimoThinkingEnabled: false
+                mimoThinkingEnabled: false,
+                chatCompletionsThinkingEnabled: false
             ),
             responseFormat: nil,
             onStreamedText: onProgress,
