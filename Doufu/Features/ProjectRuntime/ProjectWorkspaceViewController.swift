@@ -559,8 +559,7 @@ final class ProjectWorkspaceViewController: UIViewController {
         do {
             webServer.tmpDirectoryURL = projectURL.appendingPathComponent("tmp", isDirectory: true)
             webServer.appDataDirectoryURL = project.dataURL
-            try webServer.start()
-            guard let url = webServer.baseURL else {
+            guard webServer.ensureRunning(), let url = webServer.baseURL else {
                 throw LocalWebServer.ServerError.failedToStart
             }
             // Re-inject bridge scripts now that the actual port is known,
@@ -851,7 +850,12 @@ final class ProjectWorkspaceViewController: UIViewController {
     private func didTapRefresh() {
         scheduleAutoCollapse()
         doufuBridge.flushAllStorageSync()
-        webView.reload()
+        webServer.ensureRunning()
+        if webView.url != nil {
+            webView.reload()
+        } else {
+            loadProjectPage()
+        }
     }
 
     @objc
@@ -1042,7 +1046,11 @@ final class ProjectWorkspaceViewController: UIViewController {
         settingsController.onStorageCleared = { [weak self] in
             guard let self else { return }
             self.doufuBridge.refreshStorageScript(on: self.webView.configuration)
-            self.webView.reload()
+            if self.webView.url != nil {
+                self.webView.reload()
+            } else {
+                self.loadProjectPage()
+            }
         }
         settingsController.onProjectDeleted = { [weak self] in
             self?.dismiss(animated: true)
@@ -1103,11 +1111,21 @@ final class ProjectWorkspaceViewController: UIViewController {
         switch change.kind {
         case .filesChanged, .checkpointRestored:
             doufuBridge.flushAllStorageSync()
-            webView.reload()
+            webServer.ensureRunning()
+            if webView.url != nil {
+                webView.reload()
+            } else {
+                loadProjectPage()
+            }
             consumeVisibleProjectUpdateIfNeeded()
         case .renamed:
             doufuBridge.flushAllStorageSync()
-            webView.reload()
+            webServer.ensureRunning()
+            if webView.url != nil {
+                webView.reload()
+            } else {
+                loadProjectPage()
+            }
         case .descriptionChanged, .toolPermissionChanged, .modelSelectionChanged:
             break
         }
@@ -1325,6 +1343,10 @@ extension ProjectWorkspaceViewController: WKNavigationDelegate {
         withError error: Error
     ) {
         showLoadError(error.localizedDescription)
+    }
+
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        loadProjectPage()
     }
 }
 

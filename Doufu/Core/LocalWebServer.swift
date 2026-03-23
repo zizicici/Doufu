@@ -21,6 +21,8 @@ final class LocalWebServer: @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.doufu.localwebserver", qos: .userInitiated)
     private let urlSession: URLSession
     private(set) var port: UInt16 = 0
+    private var restartAttempts = 0
+    private static let maxRestartAttempts = 3
 
     /// Per-launch secret token. Required as `__dt` query param on
     /// `/__doufu_proxy__` and `/__doufu_appdata__/` endpoints.
@@ -57,8 +59,10 @@ final class LocalWebServer: @unchecked Sendable {
         stop()
     }
 
+    /// Idempotent — stops any existing listener before starting a new one.
     @discardableResult
     func start() throws -> UInt16 {
+        stop()
         // Try the stable preferred port first; fall back to any available port.
         if let p = try? startListener(on: NWEndpoint.Port(rawValue: preferredPort)!) {
             return p
@@ -76,12 +80,7 @@ final class LocalWebServer: @unchecked Sendable {
         parameters.requiredLocalEndpoint = NWEndpoint.hostPort(host: .ipv4(.loopback), port: requestedPort)
         let listener = try NWListener(using: parameters, on: requestedPort)
 
-        listener.stateUpdateHandler = { [weak self] state in
-            if case .ready = state, let port = self?.listener?.port?.rawValue {
-                self?.port = port
-            }
-        }
-
+        listener.stateUpdateHandler = makeStateHandler()
         listener.newConnectionHandler = { [weak self] connection in
             self?.handleConnection(connection)
         }
@@ -101,6 +100,55 @@ final class LocalWebServer: @unchecked Sendable {
         }
 
         return port
+    }
+
+    /// Non-blocking restart on the same port (called from stateUpdateHandler on `queue`).
+    private func restartListener(on requestedPort: NWEndpoint.Port) throws {
+        let parameters = NWParameters.tcp
+        parameters.requiredLocalEndpoint = NWEndpoint.hostPort(host: .ipv4(.loopback), port: requestedPort)
+        let newListener = try NWListener(using: parameters, on: requestedPort)
+
+        newListener.stateUpdateHandler = makeStateHandler()
+        newListener.newConnectionHandler = { [weak self] connection in
+            self?.handleConnection(connection)
+        }
+
+        newListener.start(queue: queue)
+        self.listener = newListener
+    }
+
+    private func makeStateHandler() -> (NWListener.State) -> Void {
+        return { [weak self] state in
+            guard let self else { return }
+            switch state {
+            case .ready:
+                self.restartAttempts = 0
+                if let port = self.listener?.port?.rawValue {
+                    self.port = port
+                }
+            case .failed, .waiting:
+                self.listener?.cancel()
+                self.listener = nil
+                let restartPort = self.port
+                self.port = 0
+                guard self.restartAttempts < Self.maxRestartAttempts else { return }
+                self.restartAttempts += 1
+                if restartPort != 0,
+                   let nwPort = NWEndpoint.Port(rawValue: restartPort) {
+                    try? self.restartListener(on: nwPort)
+                }
+            default:
+                break
+            }
+        }
+    }
+
+    /// Ensures the server is running. Call before reloading the webView.
+    @discardableResult
+    func ensureRunning() -> Bool {
+        if listener != nil, port != 0 { return true }
+        restartAttempts = 0
+        return (try? start()) != nil
     }
 
     func stop() {
