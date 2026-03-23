@@ -1805,13 +1805,25 @@ final class AgentToolProvider {
         }
 
         let normalizedPath = normalizeRelativePath(path)
-        let result: CodeValidator.ValidationResult
+        var result: CodeValidator.ValidationResult
         if let serverBase = validationServerBaseURL {
             result = await validator.validate(
                 relativePath: normalizedPath,
                 serverBaseURL: serverBase,
                 bridge: validationBridge
             )
+            // Retry once on navigation failure — the local server may be
+            // restarting after a transient NWListener state change.
+            if !result.errors.isEmpty,
+               result.errors.allSatisfy({ $0.source == "navigation" }),
+               result.consoleOutput.isEmpty {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                result = await validator.validate(
+                    relativePath: normalizedPath,
+                    serverBaseURL: serverBase,
+                    bridge: validationBridge
+                )
+            }
         } else {
             result = await validator.validate(
                 entryFileURL: resolved,
