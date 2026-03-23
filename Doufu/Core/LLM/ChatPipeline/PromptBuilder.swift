@@ -77,6 +77,15 @@ final class PromptBuilder {
 
         **When to update:** Include a `<memory-update>` when you (1) clarify or change the objective, (2) complete one or more TODO items, (3) discover a new constraint, or (4) the user changes direction. Do not skip this — stale memory degrades future responses.
 
+        ### `<commit-message>` — Describe your changes
+        When you modify files, include a short commit message summarizing what you did:
+        ```
+        <commit-message>Add dark mode toggle button and theme switching logic</commit-message>
+        ```
+        - One line, imperative mood (e.g. "Add …", "Fix …", "Refactor …").
+        - Max 72 characters. Focus on *what changed*, not *why*.
+        - Always include this when you have written or edited files.
+
         ## Error Recovery
         - If `edit_file` fails with "old_text not found", do NOT retry with the same text. Use `read_file` to see the current file content, then adjust your `old_text` accordingly.
         - If an approach is blocked, do not retry the same action repeatedly. Step back, consider why it failed, and try an alternative approach.

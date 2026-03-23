@@ -475,16 +475,13 @@ final class ProjectChatOrchestrator {
         onStreamedText: (@MainActor (String) -> Void)?
     ) async throws -> ProjectChatService.ResultPayload {
         let rawFinalMessage = accumulatedText.isEmpty ? String(localized: "orchestrator.done") : accumulatedText
-        let (modelMemoryUpdate, afterMemory) = extractMemoryUpdate(from: rawFinalMessage)
+        let (commitMessageFromModel, afterCommitMsg) = extractCommitMessage(from: rawFinalMessage)
+        let (modelMemoryUpdate, afterMemory) = extractMemoryUpdate(from: afterCommitMsg)
         let cleanedFinalMessage = extractAndPersistDoufuUpdate(from: afterMemory, workspaceURL: workspaceURL)
         let finalMessage = cleanedFinalMessage.isEmpty ? String(localized: "orchestrator.done") : cleanedFinalMessage
 
         if let onStreamedText, cleanedFinalMessage != rawFinalMessage {
             onStreamedText(finalMessage)
-        }
-
-        if !allChangedPaths.isEmpty {
-            createCheckpointAfterAgentLoop(workspaceURL: workspaceURL, userMessage: trimmedMessage)
         }
 
         let updatedMemory = memoryManager.buildRolledMemory(
@@ -494,6 +491,13 @@ final class ProjectChatOrchestrator {
             changedPaths: allChangedPaths,
             modelMemoryUpdate: modelMemoryUpdate
         )
+
+        if !allChangedPaths.isEmpty {
+            let commitMessage = commitMessageFromModel
+                ?? inferCommitMessage(from: finalMessage)
+                ?? trimmedMessage
+            createCheckpointAfterAgentLoop(workspaceURL: workspaceURL, userMessage: commitMessage)
+        }
 
         return ProjectChatService.ResultPayload(
             assistantMessage: finalMessage,
@@ -1068,6 +1072,41 @@ final class ProjectChatOrchestrator {
         }
 
         return cleaned
+    }
+
+    /// Extract a `<commit-message>` block from the model's response text.
+    /// Returns the commit message (or nil) and the text with the block removed.
+    private func extractCommitMessage(from text: String) -> (commitMessage: String?, cleanedText: String) {
+        let openTag = "<commit-message>"
+        let closeTag = "</commit-message>"
+
+        guard let openRange = text.range(of: openTag),
+              let closeRange = text.range(of: closeTag, range: openRange.upperBound..<text.endIndex)
+        else {
+            return (nil, text)
+        }
+
+        let message = String(text[openRange.upperBound..<closeRange.lowerBound])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        var cleaned = text
+        cleaned.removeSubrange(openRange.lowerBound..<closeRange.upperBound)
+        cleaned = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return (message.isEmpty ? nil : String(message.prefix(120)), cleaned)
+    }
+
+    /// Infer a commit message from the assistant's final response text.
+    /// Takes the first non-empty line, stripped of markdown markers.
+    private func inferCommitMessage(from text: String) -> String? {
+        let line = text
+            .components(separatedBy: .newlines)
+            .lazy
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .map { $0.replacingOccurrences(of: "^[#*>•\\-–—]+\\s*", with: "", options: .regularExpression) }
+            .first { !$0.isEmpty }
+        guard let line, !line.isEmpty else { return nil }
+        return String(line.prefix(120))
     }
 
     /// Parse a `<memory-update>` JSON block from the model's response text.
