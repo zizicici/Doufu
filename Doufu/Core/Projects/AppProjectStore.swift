@@ -294,6 +294,21 @@ final class AppProjectStore {
         UserDefaults.standard.set(mode.rawValue, forKey: Self.appToolPermissionModeKey)
     }
 
+    // MARK: - SearXNG
+
+    private static let searxngBaseURLKey = "searxngBaseURL"
+
+    var searxngBaseURL: String? {
+        get { UserDefaults.standard.string(forKey: Self.searxngBaseURLKey) }
+        set {
+            if let newValue, newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                UserDefaults.standard.removeObject(forKey: Self.searxngBaseURLKey)
+            } else {
+                UserDefaults.standard.set(newValue, forKey: Self.searxngBaseURLKey)
+            }
+        }
+    }
+
     // MARK: - Project-Level Tool Permission Mode
 
     /// Returns the project-level override, or nil if not explicitly set.

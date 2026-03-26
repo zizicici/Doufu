@@ -70,13 +70,28 @@ final class WebToolProvider {
         }
     }
 
-    func webSearch(query: String) async -> Result<[SearchResult], WebToolError> {
+    func webSearch(query: String, searxngBaseURL: String? = nil) async -> Result<[SearchResult], WebToolError> {
         guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return .failure(WebToolError(message: "Missing required parameter: query"))
         }
 
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         var lastError = ""
+
+        // Try SearXNG first if configured
+        if let baseURL = searxngBaseURL, !baseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if Task.isCancelled {
+                return .failure(WebToolError(message: "Operation cancelled"))
+            }
+            switch await querySearXNG(baseURL: baseURL, query: trimmedQuery) {
+            case .success(let results) where !results.isEmpty:
+                return .success(Array(results.prefix(configuration.webSearchMaxResults)))
+            case .success:
+                lastError = "SearXNG returned no results"
+            case .failure(let error):
+                lastError = "SearXNG failed: \(error.message)"
+            }
+        }
 
         // Try each search engine in order; fall back on failure or empty results
         for engine in SearchEngine.allCases {
@@ -249,6 +264,53 @@ final class WebToolProvider {
             savedPath: nil,
             fileSize: nil
         ))
+    }
+
+    // MARK: - SearXNG
+
+    private struct SearXNGResponse: Codable {
+        let results: [SearXNGResult]
+    }
+
+    private struct SearXNGResult: Codable {
+        let title: String
+        let url: String
+        let content: String?
+    }
+
+    private func querySearXNG(baseURL: String, query: String) async -> Result<[SearchResult], WebToolError> {
+        let trimmedBase = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let url = URL(string: "\(trimmedBase)/search?q=\(encoded)&format=json&categories=general")
+        else {
+            return .failure(WebToolError(message: "Invalid SearXNG URL"))
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = configuration.webFetchTimeoutSeconds
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse,
+                  (200...299).contains(httpResponse.statusCode) else {
+                let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+                return .failure(WebToolError(message: "SearXNG returned status \(code)"))
+            }
+            let decoded = try JSONDecoder().decode(SearXNGResponse.self, from: data)
+            let results = decoded.results.map { item in
+                SearchResult(
+                    title: item.title,
+                    url: item.url,
+                    description: item.content ?? ""
+                )
+            }
+            return .success(results)
+        } catch {
+            return .failure(WebToolError(message: error.localizedDescription))
+        }
     }
 
     // MARK: - DuckDuckGo HTML Parser

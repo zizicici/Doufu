@@ -10,6 +10,7 @@ nonisolated enum SettingsSectionID: Hashable, Sendable {
     case permissions
     case llmProviders
     case project
+    case agentTool
     case contact
     case appjun
     case about
@@ -24,6 +25,8 @@ nonisolated enum SettingsSectionID: Hashable, Sendable {
             return String(localized: "settings.section.llm_providers")
         case .project:
             return String(localized: "settings.section.project")
+        case .agentTool:
+            return String(localized: "settings.section.agent_tool")
         case .contact:
             return String(localized: "settings.section.contact")
         case .appjun:
@@ -39,7 +42,7 @@ nonisolated enum SettingsSectionID: Hashable, Sendable {
             return String(localized: "settings.section.permissions.footer")
         case .llmProviders:
             return String(localized: "settings.section.llm_providers.footer")
-        case .general, .project, .contact, .appjun, .about:
+        case .general, .project, .agentTool, .contact, .appjun, .about:
             return nil
         }
     }
@@ -63,9 +66,12 @@ nonisolated enum SettingsItemID: Hashable, Sendable {
     case tokenUsage
 
     // Project
-    case toolPermission(secondaryText: String)
     case pipProgress(secondaryText: String)
     case panelDockedOpacity(secondaryText: String)
+
+    // Agent Tool
+    case toolPermission(secondaryText: String)
+    case searxngURL(secondaryText: String)
 
     // Contact
     case email
