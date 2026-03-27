@@ -838,7 +838,14 @@ final class ProjectWorkspaceViewController: UIViewController {
             let minX = panelCollapsedFrame().origin.x
             frame.origin.x = max(frame.origin.x, minX)
             panelContainer.frame = frame
-            
+
+            let collapsedX = panelCollapsedFrame().origin.x
+            let expandedX = panelExpandedFrame().origin.x
+            let dockedAlpha = PanelDockedOpacity.current.contentAlpha
+            let progress = (frame.origin.x - collapsedX) / (expandedX - collapsedX)
+            let dragAlpha = dockedAlpha + (1.0 - dockedAlpha) * max(0, min(1, progress))
+            applyPanelAppearance(alpha: dragAlpha)
+
             updateExitTarget(for: frame)
         case .ended, .cancelled, .failed:
             isDraggingPanel = false
