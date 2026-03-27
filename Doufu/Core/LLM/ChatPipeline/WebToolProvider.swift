@@ -70,13 +70,49 @@ final class WebToolProvider {
         }
     }
 
-    func webSearch(query: String) async -> Result<[SearchResult], WebToolError> {
+    struct SearXNGConfig {
+        let baseURL: String
+        let credentials: SearXNGCredentials?
+    }
+
+    struct SearXNGCredentials {
+        let username: String
+        let password: String
+
+        var basicAuthHeader: String? {
+            let trimmed = username.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+            let credentials = "\(trimmed):\(password)"
+            return "Basic " + Data(credentials.utf8).base64EncodedString()
+        }
+    }
+
+    struct SearXNGResponse: Codable {
+        let results: [SearXNGResult]
+    }
+
+    struct SearXNGResult: Codable {
+        let title: String
+        let url: String
+        let content: String?
+    }
+
+    func webSearch(query: String, searxng: SearXNGConfig? = nil) async -> Result<[SearchResult], WebToolError> {
         guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return .failure(WebToolError(message: "Missing required parameter: query"))
         }
 
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         var lastError = ""
+
+        // Use SearXNG exclusively when configured (no fallback to public engines for privacy)
+        if let config = searxng, !config.baseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if Task.isCancelled {
+                return .failure(WebToolError(message: "Operation cancelled"))
+            }
+            return await querySearXNG(baseURL: config.baseURL, query: trimmedQuery, credentials: config.credentials)
+                .map { Array($0.prefix(configuration.webSearchMaxResults)) }
+        }
 
         // Try each search engine in order; fall back on failure or empty results
         for engine in SearchEngine.allCases {
@@ -249,6 +285,46 @@ final class WebToolProvider {
             savedPath: nil,
             fileSize: nil
         ))
+    }
+
+    // MARK: - SearXNG
+
+    private func querySearXNG(baseURL: String, query: String, credentials: SearXNGCredentials? = nil) async -> Result<[SearchResult], WebToolError> {
+        let trimmedBase = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let url = URL(string: "\(trimmedBase)/search?q=\(encoded)&format=json&categories=general")
+        else {
+            return .failure(WebToolError(message: "Invalid SearXNG URL"))
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = configuration.webFetchTimeoutSeconds
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        if let authHeader = credentials?.basicAuthHeader {
+            request.setValue(authHeader, forHTTPHeaderField: "Authorization")
+        }
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse,
+                  (200...299).contains(httpResponse.statusCode) else {
+                let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+                return .failure(WebToolError(message: "SearXNG returned status \(code)"))
+            }
+            let decoded = try JSONDecoder().decode(SearXNGResponse.self, from: data)
+            let results = decoded.results.map { item in
+                SearchResult(
+                    title: item.title,
+                    url: item.url,
+                    description: item.content ?? ""
+                )
+            }
+            return .success(results)
+        } catch {
+            return .failure(WebToolError(message: error.localizedDescription))
+        }
     }
 
     // MARK: - DuckDuckGo HTML Parser

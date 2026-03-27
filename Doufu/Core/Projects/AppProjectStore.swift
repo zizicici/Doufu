@@ -294,6 +294,91 @@ final class AppProjectStore {
         UserDefaults.standard.set(mode.rawValue, forKey: Self.appToolPermissionModeKey)
     }
 
+    // MARK: - SearXNG
+
+    private static let searxngBaseURLKey = "searxngBaseURL"
+    private static let searxngUsernameKey = "searxngUsername"
+    private static let searxngKeychainAccount = "searxng-basic-auth"
+
+    var searxngConfig: WebToolProvider.SearXNGConfig? {
+        guard let baseURL = searxngBaseURL, !baseURL.isEmpty else { return nil }
+        var credentials: WebToolProvider.SearXNGCredentials?
+        if let user = searxngUsername, !user.isEmpty {
+            credentials = .init(username: user, password: searxngPassword ?? "")
+        }
+        return .init(baseURL: baseURL, credentials: credentials)
+    }
+
+    var searxngBaseURL: String? {
+        get { UserDefaults.standard.string(forKey: Self.searxngBaseURLKey) }
+        set {
+            if let newValue, newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                UserDefaults.standard.removeObject(forKey: Self.searxngBaseURLKey)
+            } else {
+                UserDefaults.standard.set(newValue, forKey: Self.searxngBaseURLKey)
+            }
+        }
+    }
+
+    var searxngUsername: String? {
+        get { UserDefaults.standard.string(forKey: Self.searxngUsernameKey) }
+        set {
+            if let newValue, newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                UserDefaults.standard.removeObject(forKey: Self.searxngUsernameKey)
+            } else {
+                UserDefaults.standard.set(newValue, forKey: Self.searxngUsernameKey)
+            }
+        }
+    }
+
+    var searxngPassword: String? {
+        get { loadSearXNGPassword() }
+        set { saveSearXNGPassword(newValue) }
+    }
+
+    private func loadSearXNGPassword() -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: Self.searxngKeychainAccount,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        guard status == errSecSuccess,
+              let data = item as? Data,
+              let password = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        return password
+    }
+
+    private func saveSearXNGPassword(_ password: String?) {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: Self.searxngKeychainAccount,
+        ]
+        guard let password, !password.isEmpty else {
+            SecItemDelete(query as CFDictionary)
+            return
+        }
+        let valueData = Data(password.utf8)
+        let updateAttributes: [String: Any] = [kSecValueData as String: valueData]
+        let updateStatus = SecItemUpdate(query as CFDictionary, updateAttributes as CFDictionary)
+        if updateStatus == errSecSuccess { return }
+        if updateStatus != errSecItemNotFound { return }
+        var createQuery = query
+        createQuery[kSecValueData as String] = valueData
+        createQuery[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+        SecItemAdd(createQuery as CFDictionary, nil)
+    }
+
+    private var keychainService: String {
+        Bundle.main.bundleIdentifier ?? "com.zizicici.doufu"
+    }
+
     // MARK: - Project-Level Tool Permission Mode
 
     /// Returns the project-level override, or nil if not explicitly set.

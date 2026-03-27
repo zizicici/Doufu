@@ -213,6 +213,15 @@ final class SettingsViewController: UIViewController, UITableViewDelegate {
             cell.contentConfiguration = configuration
             return cell
 
+        case .searxngURL(let secondaryText):
+            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
+            cell.accessoryType = .disclosureIndicator
+            var configuration = UIListContentConfiguration.valueCell()
+            configuration.text = String(localized: "settings.project.searxng.title")
+            configuration.secondaryText = secondaryText
+            cell.contentConfiguration = configuration
+            return cell
+
         case .email:
             let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
             cell.accessoryType = .disclosureIndicator
@@ -303,7 +312,7 @@ final class SettingsViewController: UIViewController, UITableViewDelegate {
 
     private func buildSnapshot() -> NSDiffableDataSourceSnapshot<SettingsSectionID, SettingsItemID> {
         var snapshot = NSDiffableDataSourceSnapshot<SettingsSectionID, SettingsItemID>()
-        snapshot.appendSections([.general, .llmProviders, .project, .permissions, .contact, .appjun, .about])
+        snapshot.appendSections([.general, .llmProviders, .project, .agentTool, .permissions, .contact, .appjun, .about])
 
         // General
         snapshot.appendItems([
@@ -322,14 +331,20 @@ final class SettingsViewController: UIViewController, UITableViewDelegate {
         ], toSection: .llmProviders)
 
         // Project
-        let mode = projectStore.loadAppToolPermissionMode()
         snapshot.appendItems([
-            .toolPermission(secondaryText: ToolPermissionPickerViewController.displayName(for: mode)),
             .pipProgress(secondaryText: PiPProgressManager.shared.isEnabled
                 ? String(localized: "settings.common.on")
                 : String(localized: "settings.common.off")),
             .panelDockedOpacity(secondaryText: PanelDockedOpacity.current.displayName),
         ], toSection: .project)
+
+        // Agent Tool
+        let mode = projectStore.loadAppToolPermissionMode()
+        let searxngDisplay = projectStore.searxngBaseURL ?? ""
+        snapshot.appendItems([
+            .toolPermission(secondaryText: ToolPermissionPickerViewController.displayName(for: mode)),
+            .searxngURL(secondaryText: searxngDisplay),
+        ], toSection: .agentTool)
 
         // Permissions
         snapshot.appendItems([
@@ -419,6 +434,10 @@ final class SettingsViewController: UIViewController, UITableViewDelegate {
 
         case .panelDockedOpacity:
             let controller = makePanelDockedOpacityPicker()
+            navigationController?.pushViewController(controller, animated: true)
+
+        case .searxngURL:
+            let controller = SearXNGURLEditorViewController()
             navigationController?.pushViewController(controller, animated: true)
 
         case .email:

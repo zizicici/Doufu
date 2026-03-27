@@ -1710,7 +1710,7 @@ final class AgentToolProvider {
             return ToolExecutionResult(output: "User denied web search for \"\(query)\"", isError: true, changedPaths: [])
         }
 
-        let result = await webToolProvider.webSearch(query: query)
+        let result = await webToolProvider.webSearch(query: query, searxng: AppProjectStore.shared.searxngConfig)
         switch result {
         case let .success(searchResults):
             if searchResults.isEmpty {
