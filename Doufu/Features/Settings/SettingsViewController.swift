@@ -5,33 +5,29 @@
 //  Created by Codex on 2026/03/04.
 //
 
-import AppInfo
 import AVFoundation
 import CoreLocation
+@preconcurrency import MoreKit
 import Photos
-import SafariServices
-import StoreKit
 import UIKit
 
 @MainActor
-final class SettingsViewController: UIViewController, UITableViewDelegate {
-
-    private let tableView = UITableView(frame: .zero, style: .insetGrouped)
+final class SettingsViewController: UIViewController {
 
     static let supportEmail = "doufu@zi.ci"
     static let appStoreID = "6760194187"
 
-    private let store = LLMProviderSettingsStore.shared
-    private let projectStore = AppProjectStore.shared
-    private let modelSelectionStore = ModelSelectionStateStore.shared
-    private var modelSelectionObserver: NSObjectProtocol?
-    private var appJunApps: [AppInfo.App] = []
-    private var aboutRows: [SettingsItemID] = [.specifications, .review, .share, .eula, .privacyPolicy]
-
-    private var diffableDataSource: UITableViewDiffableDataSource<SettingsSectionID, SettingsItemID>!
+    private let settingsDataSource = SettingsMoreDataSource()
+    private lazy var moreViewController: MoreViewController = {
+        MoreViewController(
+            configuration: Self.makeMoreConfiguration(),
+            dataSource: settingsDataSource
+        )
+    }()
 
     init() {
         super.init(nibName: nil, bundle: nil)
+        title = String(localized: "settings.title")
     }
 
     @available(*, unavailable)
@@ -39,451 +35,277 @@ final class SettingsViewController: UIViewController, UITableViewDelegate {
         fatalError("init(coder:) has not been implemented")
     }
 
-    deinit {
-        if let modelSelectionObserver {
-            NotificationCenter.default.removeObserver(modelSelectionObserver)
-        }
-    }
-
     override func viewDidLoad() {
         super.viewDidLoad()
-        title = String(localized: "settings.title")
+
         view.backgroundColor = .doufuBackground
-        tableView.backgroundColor = .doufuBackground
-        tableView.delegate = self
-        tableView.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(tableView)
+        addChild(moreViewController)
+        moreViewController.view.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(moreViewController.view)
         NSLayoutConstraint.activate([
-            tableView.topAnchor.constraint(equalTo: view.topAnchor),
-            tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            moreViewController.view.topAnchor.constraint(equalTo: view.topAnchor),
+            moreViewController.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            moreViewController.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            moreViewController.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
-        tableView.register(UITableViewCell.self, forCellReuseIdentifier: "SettingsCell")
-        tableView.register(AppCell.self, forCellReuseIdentifier: "AppCell")
-        tableView.rowHeight = UITableView.automaticDimension
-        tableView.estimatedRowHeight = 50.0
-
-        configureDiffableDataSource()
-
-        modelSelectionObserver = modelSelectionStore.addObserver { [weak self] change in
-            guard case .appDefault = change.scope else { return }
-            self?.applySnapshot()
-        }
-        refreshAppJunApps()
-        applySnapshot()
+        moreViewController.didMove(toParent: self)
     }
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        applySnapshot()
+        moreViewController.reloadData()
     }
 
-    // MARK: - Diffable DataSource
-
-    private func configureDiffableDataSource() {
-        diffableDataSource = SettingsDataSource(
-            tableView: tableView
-        ) { [weak self] tableView, indexPath, itemID in
-            guard let self else { return UITableViewCell() }
-            return self.cell(for: tableView, indexPath: indexPath, itemID: itemID)
-        }
-        diffableDataSource.defaultRowAnimation = .none
+    private static func makeMoreConfiguration() -> MoreViewControllerConfiguration {
+        MoreViewControllerConfiguration(
+            title: String(localized: "settings.title"),
+            email: supportEmail,
+            appStoreId: appStoreID,
+            privacyPolicyURL: "https://medium.com/@zizicici/privacy-policy-for-doufu-app-68ccda0d3190",
+            specificationsConfig: makeSpecificationsConfiguration(),
+            appShowcase: AppShowcaseConfiguration(
+                apps: [.moontake, .lemon, .offDay, .one, .pigeon, .pin, .coconut, .tagDay],
+                displayCount: 3,
+                developerPageURL: AppInfo.Developer.pageURL
+            )
+        )
     }
 
-    private func cell(
-        for tableView: UITableView,
-        indexPath: IndexPath,
-        itemID: SettingsItemID
-    ) -> UITableViewCell {
-        switch itemID {
-        case .language(let secondaryText):
-            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
-            cell.accessoryType = .disclosureIndicator
-            var configuration = UIListContentConfiguration.valueCell()
-            configuration.text = String(localized: "settings.general.language.title")
-            configuration.secondaryText = secondaryText
-            cell.contentConfiguration = configuration
-            return cell
+    private static func makeSpecificationsConfiguration() -> SpecificationsConfiguration {
+        SpecificationsConfiguration(
+            summaryItems: [
+                .init(type: .name, value: appName()),
+                .init(type: .version, value: appVersion()),
+                .init(type: .manufacturer, value: "@App君"),
+                .init(type: .publisher, value: "ZIZICICI LIMITED"),
+                .init(type: .license, value: "闽ICP备2023015823号"),
+            ],
+            thirdPartyLibraries: [
+                .init(name: "GRDB", version: "7.10.0", urlString: "https://github.com/groue/GRDB.swift"),
+                .init(name: "Runestone", version: "0.5.2", urlString: "https://github.com/simonbs/Runestone"),
+                .init(name: "SwiftGitX", version: "0.4.0", urlString: "https://github.com/ibrahimcetin/SwiftGitX"),
+                .init(name: "Swift Markdown", version: "0.7.3", urlString: "https://github.com/apple/swift-markdown"),
+            ],
+            title: String(localized: "settings.specifications.title")
+        )
+    }
 
-        case .cameraPermission(let secondaryText):
-            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
-            cell.accessoryType = .disclosureIndicator
-            var configuration = UIListContentConfiguration.valueCell()
-            configuration.text = String(localized: "settings.permissions.camera")
-            configuration.secondaryText = secondaryText
-            cell.contentConfiguration = configuration
-            return cell
+    private static func appName() -> String {
+        Bundle.main.localizedInfoDictionary?["CFBundleDisplayName"] as? String
+            ?? Bundle.main.infoDictionary?["CFBundleDisplayName"] as? String
+            ?? "Doufu"
+    }
 
-        case .microphonePermission(let secondaryText):
-            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
-            cell.accessoryType = .disclosureIndicator
-            var configuration = UIListContentConfiguration.valueCell()
-            configuration.text = String(localized: "settings.permissions.microphone")
-            configuration.secondaryText = secondaryText
-            cell.contentConfiguration = configuration
-            return cell
+    private static func appVersion() -> String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
+    }
+}
 
-        case .locationPermission(let secondaryText):
-            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
-            cell.accessoryType = .disclosureIndicator
-            var configuration = UIListContentConfiguration.valueCell()
-            configuration.text = String(localized: "settings.permissions.location")
-            configuration.secondaryText = secondaryText
-            cell.contentConfiguration = configuration
-            return cell
+private final class SettingsMoreDataSource: MoreViewControllerDataSource {
 
-        case .photoSavePermission(let secondaryText):
-            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
-            cell.accessoryType = .disclosureIndicator
-            var configuration = UIListContentConfiguration.valueCell()
-            configuration.text = String(localized: "settings.permissions.photo_save")
-            configuration.secondaryText = secondaryText
-            cell.contentConfiguration = configuration
-            return cell
+    private enum ItemID {
+        static let camera = "settings.permissions.camera"
+        static let defaultModel = "settings.default_model"
+        static let location = "settings.permissions.location"
+        static let manageProviders = "settings.manage_providers"
+        static let microphone = "settings.permissions.microphone"
+        static let panelDockedOpacity = "settings.project.panel_opacity"
+        static let photoSave = "settings.permissions.photo_save"
+        static let pipProgress = "settings.chat.pip_progress"
+        static let searxngURL = "settings.project.searxng"
+        static let tokenUsage = "settings.providers.token_usage"
+        static let toolPermission = "settings.chat.tool_permission"
+        static let clipboardRead = "settings.permissions.clipboard_read"
+        static let clipboardWrite = "settings.permissions.clipboard_write"
+    }
 
-        case .clipboardReadPermission(let secondaryText):
-            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
-            cell.accessoryType = .disclosureIndicator
-            var configuration = UIListContentConfiguration.valueCell()
-            configuration.text = String(localized: "settings.permissions.clipboard_read")
-            configuration.secondaryText = secondaryText
-            cell.contentConfiguration = configuration
-            return cell
+    private let store = LLMProviderSettingsStore.shared
+    private let projectStore = AppProjectStore.shared
+    private let modelSelectionStore = ModelSelectionStateStore.shared
 
-        case .clipboardWritePermission(let secondaryText):
-            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
-            cell.accessoryType = .disclosureIndicator
-            var configuration = UIListContentConfiguration.valueCell()
-            configuration.text = String(localized: "settings.permissions.clipboard_write")
-            configuration.secondaryText = secondaryText
-            cell.contentConfiguration = configuration
-            return cell
+    func sections(for controller: MoreViewController) -> [MoreSectionType] {
+        [
+            .custom(generalSection()),
+            .custom(llmProvidersSection()),
+            .custom(projectSection()),
+            .custom(agentToolSection()),
+            .custom(permissionsSection()),
+            .contact,
+            .appjun,
+            .about,
+        ]
+    }
 
-        case .manageProviders(let secondaryText):
-            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
-            cell.accessoryType = .disclosureIndicator
-            var configuration = UIListContentConfiguration.valueCell()
-            configuration.text = String(localized: "settings.providers.title")
-            configuration.secondaryText = secondaryText
-            cell.contentConfiguration = configuration
-            return cell
+    func moreViewController(_ controller: MoreViewController, didSelectCustomItem item: MoreCustomItem) {
+        switch item.id {
+        case MoreCustomItem.languageSettingsID:
+            return
 
-        case .defaultModel(let secondaryText):
-            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
-            cell.accessoryType = .disclosureIndicator
-            var configuration = UIListContentConfiguration.valueCell()
-            configuration.text = String(localized: "settings.default_model.title")
-            configuration.secondaryText = secondaryText
-            cell.contentConfiguration = configuration
-            return cell
+        case ItemID.manageProviders:
+            controller.pushViewController(ManageProvidersViewController())
 
-        case .tokenUsage:
-            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
-            cell.accessoryType = .disclosureIndicator
-            var configuration = UIListContentConfiguration.valueCell()
-            configuration.text = String(localized: "providers.manage.item.token_usage")
-            cell.contentConfiguration = configuration
-            return cell
+        case ItemID.defaultModel:
+            controller.pushViewController(DefaultModelSelectionViewController())
 
-        case .toolPermission(let secondaryText):
-            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
-            cell.accessoryType = .disclosureIndicator
-            var configuration = UIListContentConfiguration.valueCell()
-            configuration.text = String(localized: "settings.chat.tool_permission.title")
-            configuration.secondaryText = secondaryText
-            cell.contentConfiguration = configuration
-            return cell
+        case ItemID.tokenUsage:
+            controller.pushViewController(TokenUsageViewController())
 
-        case .pipProgress(let secondaryText):
-            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
-            cell.accessoryType = .disclosureIndicator
-            var configuration = UIListContentConfiguration.valueCell()
-            configuration.text = String(localized: "settings.chat.pip_progress.title")
-            configuration.secondaryText = secondaryText
-            cell.contentConfiguration = configuration
-            return cell
+        case ItemID.pipProgress:
+            controller.pushViewController(makePiPProgressPicker())
 
-        case .panelDockedOpacity(let secondaryText):
-            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
-            cell.accessoryType = .disclosureIndicator
-            var configuration = UIListContentConfiguration.valueCell()
-            configuration.text = String(localized: "settings.project.panel_opacity.title")
-            configuration.secondaryText = secondaryText
-            cell.contentConfiguration = configuration
-            return cell
+        case ItemID.panelDockedOpacity:
+            controller.pushViewController(makePanelDockedOpacityPicker())
 
-        case .searxngURL(let secondaryText):
-            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
-            cell.accessoryType = .disclosureIndicator
-            var configuration = UIListContentConfiguration.valueCell()
-            configuration.text = String(localized: "settings.project.searxng.title")
-            configuration.secondaryText = secondaryText
-            cell.contentConfiguration = configuration
-            return cell
+        case ItemID.toolPermission:
+            controller.pushViewController(makeToolPermissionPicker())
 
-        case .email:
-            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
-            cell.accessoryType = .disclosureIndicator
-            var configuration = UIListContentConfiguration.valueCell()
-            configuration.text = String(localized: "settings.contact.email")
-            configuration.secondaryText = Self.supportEmail
-            cell.contentConfiguration = configuration
-            return cell
+        case ItemID.searxngURL:
+            controller.pushViewController(SearXNGURLEditorViewController())
 
-        case .xiaohongshu:
-            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
-            cell.accessoryType = .disclosureIndicator
-            var configuration = UIListContentConfiguration.valueCell()
-            configuration.text = String(localized: "settings.contact.xiaohongshu")
-            configuration.secondaryText = "@App\u{541b}"
-            cell.contentConfiguration = configuration
-            return cell
+        case ItemID.camera:
+            controller.pushViewController(CapabilityDetailViewController(capabilityType: .camera))
 
-        case .bilibili:
-            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
-            cell.accessoryType = .disclosureIndicator
-            var configuration = UIListContentConfiguration.valueCell()
-            configuration.text = String(localized: "settings.contact.bilibili")
-            configuration.secondaryText = "@App\u{541b}"
-            cell.contentConfiguration = configuration
-            return cell
+        case ItemID.microphone:
+            controller.pushViewController(CapabilityDetailViewController(capabilityType: .microphone))
 
-        case .app(let storeId):
-            let cell = tableView.dequeueReusableCell(withIdentifier: "AppCell", for: indexPath)
-            if let appCell = cell as? AppCell,
-               let app = appJunApps.first(where: { $0.storeId == storeId }) {
-                appCell.update(app)
-            }
-            cell.accessoryType = .disclosureIndicator
-            return cell
+        case ItemID.location:
+            controller.pushViewController(CapabilityDetailViewController(capabilityType: .location))
 
-        case .moreApps:
-            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
-            cell.accessoryType = .disclosureIndicator
-            var configuration = UIListContentConfiguration.valueCell()
-            configuration.text = String(localized: "settings.appjun.more")
-            cell.contentConfiguration = configuration
-            return cell
+        case ItemID.photoSave:
+            controller.pushViewController(CapabilityDetailViewController(capabilityType: .photoSave))
 
-        case .specifications:
-            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
-            cell.accessoryType = .disclosureIndicator
-            var configuration = UIListContentConfiguration.valueCell()
-            configuration.text = String(localized: "settings.about.specifications")
-            cell.contentConfiguration = configuration
-            return cell
+        case ItemID.clipboardRead:
+            controller.pushViewController(CapabilityDetailViewController(capabilityType: .clipboardRead))
 
-        case .share:
-            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
-            cell.accessoryType = .disclosureIndicator
-            var configuration = UIListContentConfiguration.valueCell()
-            configuration.text = String(localized: "settings.about.share")
-            cell.contentConfiguration = configuration
-            return cell
+        case ItemID.clipboardWrite:
+            controller.pushViewController(CapabilityDetailViewController(capabilityType: .clipboardWrite))
 
-        case .review:
-            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
-            cell.accessoryType = .disclosureIndicator
-            var configuration = UIListContentConfiguration.valueCell()
-            configuration.text = String(localized: "settings.about.review")
-            cell.contentConfiguration = configuration
-            return cell
-
-        case .eula:
-            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
-            cell.accessoryType = .disclosureIndicator
-            var configuration = UIListContentConfiguration.valueCell()
-            configuration.text = String(localized: "settings.about.eula")
-            cell.contentConfiguration = configuration
-            return cell
-
-        case .privacyPolicy:
-            let cell = tableView.dequeueReusableCell(withIdentifier: "SettingsCell", for: indexPath)
-            cell.accessoryType = .disclosureIndicator
-            var configuration = UIListContentConfiguration.valueCell()
-            configuration.text = String(localized: "settings.about.privacy_policy")
-            cell.contentConfiguration = configuration
-            return cell
+        default:
+            break
         }
     }
 
-    // MARK: - Snapshot
+    private func generalSection() -> MoreCustomSection {
+        MoreCustomSection(
+            id: "settings.section.general",
+            header: String(localized: "settings.section.general"),
+            items: [
+                .languageSettings(
+                    title: String(localized: "settings.general.language.title"),
+                    value: currentLanguageDisplayName()
+                ),
+            ]
+        )
+    }
 
-    private func buildSnapshot() -> NSDiffableDataSourceSnapshot<SettingsSectionID, SettingsItemID> {
-        var snapshot = NSDiffableDataSourceSnapshot<SettingsSectionID, SettingsItemID>()
-        snapshot.appendSections([.general, .llmProviders, .project, .agentTool, .permissions, .contact, .appjun, .about])
-
-        // General
-        snapshot.appendItems([
-            .language(secondaryText: currentLanguageDisplayName()),
-        ], toSection: .general)
-
-        // LLM Providers
+    private func llmProvidersSection() -> MoreCustomSection {
         let providersCount = store.loadProviders().count
-        snapshot.appendItems([
-            .manageProviders(secondaryText: String(
-                format: String(localized: "settings.manage_providers.configured_count_format"),
-                providersCount
-            )),
-            .defaultModel(secondaryText: defaultModelDisplayName()),
-            .tokenUsage,
-        ], toSection: .llmProviders)
+        return MoreCustomSection(
+            id: "settings.section.llm_providers",
+            header: String(localized: "settings.section.llm_providers"),
+            footer: String(localized: "settings.section.llm_providers.footer"),
+            items: [
+                MoreCustomItem(
+                    id: ItemID.manageProviders,
+                    title: String(localized: "settings.providers.title"),
+                    value: String(
+                        format: String(localized: "settings.manage_providers.configured_count_format"),
+                        providersCount
+                    )
+                ),
+                MoreCustomItem(
+                    id: ItemID.defaultModel,
+                    title: String(localized: "settings.default_model.title"),
+                    value: defaultModelDisplayName()
+                ),
+                MoreCustomItem(
+                    id: ItemID.tokenUsage,
+                    title: String(localized: "providers.manage.item.token_usage")
+                ),
+            ]
+        )
+    }
 
-        // Project
-        snapshot.appendItems([
-            .pipProgress(secondaryText: PiPProgressManager.shared.isEnabled
-                ? String(localized: "settings.common.on")
-                : String(localized: "settings.common.off")),
-            .panelDockedOpacity(secondaryText: PanelDockedOpacity.current.displayName),
-        ], toSection: .project)
+    private func projectSection() -> MoreCustomSection {
+        MoreCustomSection(
+            id: "settings.section.project",
+            header: String(localized: "settings.section.project"),
+            items: [
+                MoreCustomItem(
+                    id: ItemID.pipProgress,
+                    title: String(localized: "settings.chat.pip_progress.title"),
+                    value: PiPProgressManager.shared.isEnabled
+                        ? String(localized: "settings.common.on")
+                        : String(localized: "settings.common.off")
+                ),
+                MoreCustomItem(
+                    id: ItemID.panelDockedOpacity,
+                    title: String(localized: "settings.project.panel_opacity.title"),
+                    value: PanelDockedOpacity.current.displayName
+                ),
+            ]
+        )
+    }
 
-        // Agent Tool
+    private func agentToolSection() -> MoreCustomSection {
         let mode = projectStore.loadAppToolPermissionMode()
-        let searxngDisplay = projectStore.searxngBaseURL ?? ""
-        snapshot.appendItems([
-            .toolPermission(secondaryText: ToolPermissionPickerViewController.displayName(for: mode)),
-            .searxngURL(secondaryText: searxngDisplay),
-        ], toSection: .agentTool)
-
-        // Permissions
-        snapshot.appendItems([
-            .cameraPermission(secondaryText: cameraPermissionStatus()),
-            .microphonePermission(secondaryText: microphonePermissionStatus()),
-            .locationPermission(secondaryText: locationPermissionStatus()),
-            .photoSavePermission(secondaryText: photoSavePermissionStatus()),
-            .clipboardReadPermission(secondaryText: projectPermissionSummary(for: .clipboardRead)),
-            .clipboardWritePermission(secondaryText: projectPermissionSummary(for: .clipboardWrite)),
-        ], toSection: .permissions)
-
-        // Contact
-        snapshot.appendItems([.email, .xiaohongshu, .bilibili], toSection: .contact)
-
-        // App Jun
-        var appJunItems: [SettingsItemID] = appJunApps.map { .app(storeId: $0.storeId) }
-        appJunItems.append(.moreApps)
-        snapshot.appendItems(appJunItems, toSection: .appjun)
-
-        // About
-        snapshot.appendItems(aboutRows, toSection: .about)
-
-        return snapshot
+        return MoreCustomSection(
+            id: "settings.section.agent_tool",
+            header: String(localized: "settings.section.agent_tool"),
+            items: [
+                MoreCustomItem(
+                    id: ItemID.toolPermission,
+                    title: String(localized: "settings.chat.tool_permission.title"),
+                    value: ToolPermissionPickerViewController.displayName(for: mode)
+                ),
+                MoreCustomItem(
+                    id: ItemID.searxngURL,
+                    title: String(localized: "settings.project.searxng.title"),
+                    value: projectStore.searxngBaseURL ?? ""
+                ),
+            ]
+        )
     }
 
-    private func applySnapshot() {
-        var snapshot = buildSnapshot()
-        snapshot.reconfigureItems(snapshot.itemIdentifiers)
-        diffableDataSource.apply(snapshot, animatingDifferences: false)
+    private func permissionsSection() -> MoreCustomSection {
+        MoreCustomSection(
+            id: "settings.section.permissions",
+            header: String(localized: "settings.section.permissions"),
+            footer: String(localized: "settings.section.permissions.footer"),
+            items: [
+                MoreCustomItem(
+                    id: ItemID.camera,
+                    title: String(localized: "settings.permissions.camera"),
+                    value: cameraPermissionStatus()
+                ),
+                MoreCustomItem(
+                    id: ItemID.microphone,
+                    title: String(localized: "settings.permissions.microphone"),
+                    value: microphonePermissionStatus()
+                ),
+                MoreCustomItem(
+                    id: ItemID.location,
+                    title: String(localized: "settings.permissions.location"),
+                    value: locationPermissionStatus()
+                ),
+                MoreCustomItem(
+                    id: ItemID.photoSave,
+                    title: String(localized: "settings.permissions.photo_save"),
+                    value: photoSavePermissionStatus()
+                ),
+                MoreCustomItem(
+                    id: ItemID.clipboardRead,
+                    title: String(localized: "settings.permissions.clipboard_read"),
+                    value: projectPermissionSummary(for: .clipboardRead)
+                ),
+                MoreCustomItem(
+                    id: ItemID.clipboardWrite,
+                    title: String(localized: "settings.permissions.clipboard_write"),
+                    value: projectPermissionSummary(for: .clipboardWrite)
+                ),
+            ]
+        )
     }
-
-    // MARK: - Selection
-
-    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
-        tableView.deselectRow(at: indexPath, animated: true)
-        guard let itemID = diffableDataSource.itemIdentifier(for: indexPath) else { return }
-
-        switch itemID {
-        case .language:
-            if let url = URL(string: UIApplication.openSettingsURLString) {
-                UIApplication.shared.open(url)
-            }
-
-        case .cameraPermission:
-            let vc = CapabilityDetailViewController(capabilityType: .camera)
-            navigationController?.pushViewController(vc, animated: true)
-
-        case .microphonePermission:
-            let vc = CapabilityDetailViewController(capabilityType: .microphone)
-            navigationController?.pushViewController(vc, animated: true)
-
-        case .locationPermission:
-            let vc = CapabilityDetailViewController(capabilityType: .location)
-            navigationController?.pushViewController(vc, animated: true)
-
-        case .photoSavePermission:
-            let vc = CapabilityDetailViewController(capabilityType: .photoSave)
-            navigationController?.pushViewController(vc, animated: true)
-
-        case .clipboardReadPermission:
-            let vc = CapabilityDetailViewController(capabilityType: .clipboardRead)
-            navigationController?.pushViewController(vc, animated: true)
-
-        case .clipboardWritePermission:
-            let vc = CapabilityDetailViewController(capabilityType: .clipboardWrite)
-            navigationController?.pushViewController(vc, animated: true)
-
-        case .manageProviders:
-            let controller = ManageProvidersViewController()
-            navigationController?.pushViewController(controller, animated: true)
-
-        case .defaultModel:
-            let controller = DefaultModelSelectionViewController()
-            navigationController?.pushViewController(controller, animated: true)
-
-        case .tokenUsage:
-            let controller = TokenUsageViewController()
-            navigationController?.pushViewController(controller, animated: true)
-
-        case .toolPermission:
-            let controller = makeToolPermissionPicker()
-            navigationController?.pushViewController(controller, animated: true)
-
-        case .pipProgress:
-            let controller = makePiPProgressPicker()
-            navigationController?.pushViewController(controller, animated: true)
-
-        case .panelDockedOpacity:
-            let controller = makePanelDockedOpacityPicker()
-            navigationController?.pushViewController(controller, animated: true)
-
-        case .searxngURL:
-            let controller = SearXNGURLEditorViewController()
-            navigationController?.pushViewController(controller, animated: true)
-
-        case .email:
-            handleContactEmail()
-
-        case .xiaohongshu:
-            handleContactXiaohongshu()
-
-        case .bilibili:
-            handleContactBilibili()
-
-        case .app(let storeId):
-            if let app = appJunApps.first(where: { $0.storeId == storeId }) {
-                openStorePage(for: app)
-            }
-
-        case .moreApps:
-            openStoreDeveloperPage()
-
-        case .specifications:
-            let controller = SettingsSpecificationsViewController()
-            navigationController?.pushViewController(controller, animated: true)
-
-        case .share:
-            guard let url = URL(string: "https://apps.apple.com/app/id\(Self.appStoreID)") else { return }
-            let activityVC = UIActivityViewController(activityItems: [url], applicationActivities: nil)
-            present(activityVC, animated: true)
-
-        case .review:
-            guard let url = URL(string: "itms-apps://itunes.apple.com/app/id\(Self.appStoreID)?action=write-review"),
-                  UIApplication.shared.canOpenURL(url) else { return }
-            UIApplication.shared.open(url)
-
-        case .eula:
-            guard let url = URL(string: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/") else { return }
-            let safari = SFSafariViewController(url: url)
-            present(safari, animated: true)
-
-        case .privacyPolicy:
-            guard let url = URL(string: "https://medium.com/@zizicici/privacy-policy-for-doufu-app-68ccda0d3190") else { return }
-            let safari = SFSafariViewController(url: url)
-            present(safari, animated: true)
-        }
-    }
-
-    // MARK: - Default Model
 
     private func defaultModelDisplayName() -> String {
         guard let selection = modelSelectionStore.loadAppDefaultSelection() else {
@@ -512,15 +334,11 @@ final class SettingsViewController: UIViewController, UITableViewDelegate {
         return provider.label + " · " + modelName
     }
 
-    // MARK: - Language
-
     private func currentLanguageDisplayName() -> String {
         let langCode = Bundle.main.preferredLocalizations.first ?? "en"
         let locale = Locale(identifier: langCode)
         return locale.localizedString(forIdentifier: langCode)?.localizedCapitalized ?? langCode
     }
-
-    // MARK: - Pickers
 
     private func makeToolPermissionPicker() -> ToolPermissionPickerViewController {
         let currentMode = projectStore.loadAppToolPermissionMode()
@@ -562,8 +380,6 @@ final class SettingsViewController: UIViewController, UITableViewDelegate {
             }
         )
     }
-
-    // MARK: - Permission Status
 
     private func cameraPermissionStatus() -> String {
         permissionStatusText(for: AVCaptureDevice.authorizationStatus(for: .video))
@@ -627,78 +443,5 @@ final class SettingsViewController: UIViewController, UITableViewDelegate {
             format: String(localized: "settings.permissions.project_count_format"),
             entries.count
         )
-    }
-
-    private func openSystemSettings() {
-        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
-        UIApplication.shared.open(url)
-    }
-
-    // MARK: - App Jun
-
-    private func refreshAppJunApps() {
-        let allApps: [AppInfo.App] = [.moontake, .lemon, .offDay, .one, .pigeon, .pin, .coconut, .tagDay]
-        appJunApps = Array(allApps.shuffled().prefix(3))
-    }
-
-    private func openStorePage(for app: AppInfo.App) {
-        let storeVC = SKStoreProductViewController()
-        storeVC.delegate = self
-        let params: [String: Any] = [SKStoreProductParameterITunesItemIdentifier: app.storeId]
-        storeVC.loadProduct(withParameters: params) { [weak self] loaded, error in
-            if loaded {
-                self?.present(storeVC, animated: true)
-            } else {
-                guard let url = URL(string: "itms-apps://itunes.apple.com/app/" + app.storeId),
-                      UIApplication.shared.canOpenURL(url) else { return }
-                UIApplication.shared.open(url)
-            }
-        }
-    }
-
-    private func openStoreDeveloperPage() {
-        guard let url = URL(string: "https://apps.apple.com/developer/zizicici-limited/id1564555697") else { return }
-        UIApplication.shared.open(url)
-    }
-
-    // MARK: - Contact
-
-    private func handleContactEmail() {
-        guard let encoded = "mailto:\(Self.supportEmail)".addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-              let url = URL(string: encoded),
-              UIApplication.shared.canOpenURL(url) else { return }
-        UIApplication.shared.open(url)
-    }
-
-    private func handleContactXiaohongshu() {
-        guard let url = URL(string: "https://www.xiaohongshu.com/user/profile/63f05fc5000000001001e524") else { return }
-        let safari = SFSafariViewController(url: url)
-        present(safari, animated: true)
-    }
-
-    private func handleContactBilibili() {
-        guard let url = URL(string: "https://space.bilibili.com/4969209") else { return }
-        let safari = SFSafariViewController(url: url)
-        present(safari, animated: true)
-    }
-}
-
-// MARK: - DataSource (header/footer support)
-
-private final class SettingsDataSource: UITableViewDiffableDataSource<SettingsSectionID, SettingsItemID> {
-    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
-        sectionIdentifier(for: section)?.header
-    }
-
-    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
-        sectionIdentifier(for: section)?.footer
-    }
-}
-
-// MARK: - SKStoreProductViewControllerDelegate
-
-extension SettingsViewController: SKStoreProductViewControllerDelegate {
-    func productViewControllerDidFinish(_ viewController: SKStoreProductViewController) {
-        viewController.dismiss(animated: true)
     }
 }

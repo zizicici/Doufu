@@ -5,6 +5,7 @@
 //  Created by Salley Garden on 2026/02/14.
 //
 
+import MoreKit
 import UIKit
 
 @main
@@ -13,6 +14,12 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+        MoreKitAppearance.shared = MoreKitAppearance(
+            backgroundColor: .doufuBackground,
+            tintColor: .tintColor
+        )
+        MoreKit.configure()
+
         do {
             try DatabaseManager.shared.setup()
         } catch {
@@ -37,4 +44,3 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
 
 }
-

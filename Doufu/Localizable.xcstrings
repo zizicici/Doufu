@@ -5507,35 +5507,6 @@
         }
       }
     },
-    "llm.error.invalid_gemini_url" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Request failed: invalid Gemini URL."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "请求失败：Gemini URL 无效。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "無效的 Gemini API 網址。"
-          }
-        },
-        "zh-HK" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "無效的 Gemini API 網址。"
-          }
-        }
-      }
-    },
     "llm.error.content_filtered" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5561,6 +5532,35 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "回應被內容過濾策略攔截。"
+          }
+        }
+      }
+    },
+    "llm.error.invalid_gemini_url" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Request failed: invalid Gemini URL."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请求失败：Gemini URL 无效。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "無效的 Gemini API 網址。"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "無效的 Gemini API 網址。"
           }
         }
       }
@@ -10893,35 +10893,6 @@
         }
       }
     },
-    "providers.openai.error.chat_completions_url" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "This provider uses the OpenAI Responses API. Chat Completions API endpoints are not supported. Please use the correct base URL (e.g. https://api.openai.com)."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "此服务商使用 OpenAI Responses API，不支持 Chat Completions API 端点。请使用正确的 Base URL（如 https://api.openai.com）。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "此服務商使用 OpenAI Responses API，不支援 Chat Completions API 端點。請使用正確的 Base URL（如 https://api.openai.com）。"
-          }
-        },
-        "zh-HK" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "此服務商使用 OpenAI Responses API，不支援 Chat Completions API 端點。請使用正確的 Base URL（如 https://api.openai.com）。"
-          }
-        }
-      }
-    },
     "providers.form.alert.add_failed.title" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -11415,64 +11386,6 @@
         }
       }
     },
-    "providers.kind.openai_responses.subtitle" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "OpenAI Responses API"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "OpenAI Responses API"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "OpenAI Responses API"
-          }
-        },
-        "zh-HK" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "OpenAI Responses API"
-          }
-        }
-      }
-    },
-    "providers.kind.openai_responses.title" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "OpenAI"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "OpenAI"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "OpenAI"
-          }
-        },
-        "zh-HK" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "OpenAI"
-          }
-        }
-      }
-    },
     "providers.kind.openai_chat_completions.subtitle" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -11503,6 +11416,64 @@
       }
     },
     "providers.kind.openai_chat_completions.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OpenAI"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OpenAI"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OpenAI"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OpenAI"
+          }
+        }
+      }
+    },
+    "providers.kind.openai_responses.subtitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OpenAI Responses API"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OpenAI Responses API"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OpenAI Responses API"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OpenAI Responses API"
+          }
+        }
+      }
+    },
+    "providers.kind.openai_responses.title" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
@@ -11937,6 +11908,35 @@
         }
       }
     },
+    "providers.oauth_form.button.sign_in_anthropic" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sign in with Anthropic"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用 Anthropic 登录"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用 Anthropic 登入"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用 Anthropic 登入"
+          }
+        }
+      }
+    },
     "providers.oauth_form.error.empty_token" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -12024,35 +12024,6 @@
         }
       }
     },
-    "providers.oauth_form.button.sign_in_anthropic" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Sign in with Anthropic"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "使用 Anthropic 登录"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "使用 Anthropic 登入"
-          }
-        },
-        "zh-HK" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "使用 Anthropic 登入"
-          }
-        }
-      }
-    },
     "providers.oauth_form.footer.oauth" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -12136,6 +12107,35 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "OAuth"
+          }
+        }
+      }
+    },
+    "providers.openai.error.chat_completions_url" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This provider uses the OpenAI Responses API. Chat Completions API endpoints are not supported. Please use the correct base URL (e.g. https://api.openai.com)."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此服务商使用 OpenAI Responses API，不支持 Chat Completions API 端点。请使用正确的 Base URL（如 https://api.openai.com）。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此服務商使用 OpenAI Responses API，不支援 Chat Completions API 端點。請使用正確的 Base URL（如 https://api.openai.com）。"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此服務商使用 OpenAI Responses API，不支援 Chat Completions API 端點。請使用正確的 Base URL（如 https://api.openai.com）。"
           }
         }
       }
@@ -14750,180 +14750,6 @@
         }
       }
     },
-    "settings.about.eula" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "EULA"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "最终用户许可协议"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "最終使用者許可協議"
-          }
-        },
-        "zh-HK" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "最終使用者許可協議"
-          }
-        }
-      }
-    },
-    "settings.about.privacy_policy" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Privacy Policy"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "隐私政策"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "隱私政策"
-          }
-        },
-        "zh-HK" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "隱私政策"
-          }
-        }
-      }
-    },
-    "settings.about.review" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Rate on App Store"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "App Store 评分"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "App Store 評分"
-          }
-        },
-        "zh-HK" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "App Store 評分"
-          }
-        }
-      }
-    },
-    "settings.about.share" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Share App"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "分享应用"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "分享應用"
-          }
-        },
-        "zh-HK" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "分享應用"
-          }
-        }
-      }
-    },
-    "settings.about.specifications" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Specifications"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "规格参数"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "規格參數"
-          }
-        },
-        "zh-HK" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "規格參數"
-          }
-        }
-      }
-    },
-    "settings.appjun.more" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "More Apps"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "更多应用"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "更多應用"
-          }
-        },
-        "zh-HK" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "更多應用"
-          }
-        }
-      }
-    },
     "settings.chat.pip_progress.footer" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -15152,93 +14978,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "開啟"
-          }
-        }
-      }
-    },
-    "settings.contact.bilibili" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Bilibili"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "哔哩哔哩"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "嗶哩嗶哩"
-          }
-        },
-        "zh-HK" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "嗶哩嗶哩"
-          }
-        }
-      }
-    },
-    "settings.contact.email" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Email"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "邮箱"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "郵箱"
-          }
-        },
-        "zh-HK" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "郵箱"
-          }
-        }
-      }
-    },
-    "settings.contact.xiaohongshu" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Xiaohongshu"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "小红书"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "小紅書"
-          }
-        },
-        "zh-HK" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "小紅書"
           }
         }
       }
@@ -16025,35 +15764,6 @@
         }
       }
     },
-    "settings.project.searxng.footer" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "SearXNG is a self-hosted metasearch engine. When configured, web_search will use your SearXNG instance first, falling back to built-in engines if unavailable.\n\nYour SearXNG settings.yml must include json in search.formats:\n  formats:\n    - html\n    - json"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "SearXNG 是一个自托管的元搜索引擎。配置后，web_search 工具将优先使用你的 SearXNG 实例，不可用时回退到内置搜索引擎。\n\n你的 SearXNG settings.yml 必须在 search.formats 中包含 json：\n  formats:\n    - html\n    - json"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "SearXNG 是一個自託管的元搜尋引擎。設定後，web_search 工具將優先使用你的 SearXNG 實例，不可用時回退到內建搜尋引擎。\n\n你的 SearXNG settings.yml 必須在 search.formats 中包含 json：\n  formats:\n    - html\n    - json"
-          }
-        },
-        "zh-HK" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "SearXNG 係一個自託管嘅元搜尋引擎。設定之後，web_search 工具會優先用你嘅 SearXNG 實例，唔得嘅話會回退到內置搜尋引擎。\n\n你嘅 SearXNG settings.yml 必須喺 search.formats 入面包含 json：\n  formats:\n    - html\n    - json"
-          }
-        }
-      }
-    },
     "settings.project.searxng.credentials_footer" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -16079,6 +15789,35 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "可選。如果你嘅 SearXNG 實例啟用咗 Basic Auth（如 Caddy、Nginx），就需要填寫。"
+          }
+        }
+      }
+    },
+    "settings.project.searxng.footer" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SearXNG is a self-hosted metasearch engine. When configured, web_search will use your SearXNG instance first, falling back to built-in engines if unavailable.\n\nYour SearXNG settings.yml must include json in search.formats:\n  formats:\n    - html\n    - json"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SearXNG 是一个自托管的元搜索引擎。配置后，web_search 工具将优先使用你的 SearXNG 实例，不可用时回退到内置搜索引擎。\n\n你的 SearXNG settings.yml 必须在 search.formats 中包含 json：\n  formats:\n    - html\n    - json"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SearXNG 是一個自託管的元搜尋引擎。設定後，web_search 工具將優先使用你的 SearXNG 實例，不可用時回退到內建搜尋引擎。\n\n你的 SearXNG settings.yml 必須在 search.formats 中包含 json：\n  formats:\n    - html\n    - json"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SearXNG 係一個自託管嘅元搜尋引擎。設定之後，web_search 工具會優先用你嘅 SearXNG 實例，唔得嘅話會回退到內置搜尋引擎。\n\n你嘅 SearXNG settings.yml 必須喺 search.formats 入面包含 json：\n  formats:\n    - html\n    - json"
           }
         }
       }
@@ -16344,35 +16083,6 @@
         }
       }
     },
-    "settings.section.about" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "About"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "关于"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "關於"
-          }
-        },
-        "zh-HK" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "關於"
-          }
-        }
-      }
-    },
     "settings.section.agent_tool" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -16398,35 +16108,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Agent 工具"
-          }
-        }
-      }
-    },
-    "settings.section.appjun" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "App Jun"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "App君"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "App君"
-          }
-        },
-        "zh-HK" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "App君"
           }
         }
       }
@@ -16514,35 +16195,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "工具權限為新項目的預設設定。Progress in Picture 使用畫中畫顯示任務狀態。"
-          }
-        }
-      }
-    },
-    "settings.section.contact" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Contact"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "联系我们"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "聯絡我們"
-          }
-        },
-        "zh-HK" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "聯絡我們"
           }
         }
       }
@@ -16721,180 +16373,6 @@
         }
       }
     },
-    "settings.specifications.license" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ICP Filing Number"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ICP备案号"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ICP備案號"
-          }
-        },
-        "zh-HK" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ICP備案號"
-          }
-        }
-      }
-    },
-    "settings.specifications.manufacturer" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Manufacturer"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "制造商"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "製造商"
-          }
-        },
-        "zh-HK" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "製造商"
-          }
-        }
-      }
-    },
-    "settings.specifications.name" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Name"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "名称"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "名稱"
-          }
-        },
-        "zh-HK" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "名稱"
-          }
-        }
-      }
-    },
-    "settings.specifications.publisher" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Publisher"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "发行商"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "發行商"
-          }
-        },
-        "zh-HK" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "發行商"
-          }
-        }
-      }
-    },
-    "settings.specifications.third_party.footer" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "We extend our heartfelt appreciation to all developers of open-source projects."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "衷心感谢所有开源项目的开发者。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "衷心感謝所有開源專案的開發者。"
-          }
-        },
-        "zh-HK" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "衷心感謝所有開源項目的開發者。"
-          }
-        }
-      }
-    },
-    "settings.specifications.third_party.header" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Third Party Frameworks"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "第三方框架"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "第三方框架"
-          }
-        },
-        "zh-HK" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "第三方框架"
-          }
-        }
-      }
-    },
     "settings.specifications.title" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -16920,35 +16398,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "規格參數"
-          }
-        }
-      }
-    },
-    "settings.specifications.version" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Version"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "版本"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "版本"
-          }
-        },
-        "zh-HK" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "版本"
           }
         }
       }

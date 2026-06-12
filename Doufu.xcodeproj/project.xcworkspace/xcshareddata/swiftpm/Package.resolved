@@ -1,15 +1,6 @@
 {
-  "originHash" : "558772a8c28a9cde9d0aa0793e357961703ca2aa95af29fd88f615a994f62eba",
+  "originHash" : "266586322c3313ccc5afe19c55a11be39f0bff3f519ec3cc0c7302610c179528",
   "pins" : [
-    {
-      "identity" : "appinfo",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/zizicici/AppInfo",
-      "state" : {
-        "revision" : "3a5854d1c50d3f27714ee27f1f35703641ef5e4e",
-        "version" : "1.3.0"
-      }
-    },
     {
       "identity" : "grdb.swift",
       "kind" : "remoteSourceControl",
@@ -29,12 +20,30 @@
       }
     },
     {
+      "identity" : "morekit",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/zizicici/MoreKit",
+      "state" : {
+        "revision" : "13bb615a790dce53bb7c026646f34c9119d4be55",
+        "version" : "1.9.1"
+      }
+    },
+    {
       "identity" : "runestone",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/simonbs/Runestone.git",
       "state" : {
-        "revision" : "1fad339aab99cf2136ce6bf8c32da3265b2e85e5",
-        "version" : "0.5.1"
+        "revision" : "592434a103a4d1ab83e14f87ac6eef569dd7a99d",
+        "version" : "0.5.2"
+      }
+    },
+    {
+      "identity" : "snapkit",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/SnapKit/SnapKit",
+      "state" : {
+        "revision" : "2842e6e84e82eb9a8dac0100ca90d9444b0307f4",
+        "version" : "5.7.1"
       }
     },
     {
