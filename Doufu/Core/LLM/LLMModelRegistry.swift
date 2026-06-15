@@ -40,8 +40,8 @@ struct LLMModelRegistry {
     ///
     /// Resolution order per field:
     ///  1. User-edited custom model record (highest priority)
-    ///  2. Built-in registry (precise known models)
-    ///  3. Discovery/official model record
+    ///  2. Discovery/official model record
+    ///  3. Built-in registry (precise known models)
     ///  4. Conservative family fallback
     static func resolve(
         providerKind: LLMProviderRecord.Kind,
@@ -51,9 +51,11 @@ struct LLMModelRegistry {
         let builtIn = lookup(providerKind: providerKind, modelID: modelID)
         let fallback = conservativeFallback(providerKind: providerKind)
 
-        // Capabilities: custom record > built-in > discovery record > fallback
+        // Capabilities: custom record > discovery record > built-in > fallback
         let capabilities: LLMProviderModelCapabilities
         if let record = modelRecord, record.source == .custom {
+            capabilities = record.capabilities
+        } else if let record = modelRecord {
             capabilities = record.capabilities
         } else if let builtIn {
             capabilities = LLMProviderModelCapabilities(
@@ -62,8 +64,6 @@ struct LLMModelRegistry {
                 thinkingCanDisable: builtIn.thinkingCanDisable,
                 structuredOutputSupported: builtIn.structuredOutputSupported
             )
-        } else if let record = modelRecord {
-            capabilities = record.capabilities
         } else {
             capabilities = LLMProviderModelCapabilities(
                 reasoningEfforts: fallback.reasoningEfforts,
@@ -73,7 +73,7 @@ struct LLMModelRegistry {
             )
         }
 
-        // Token limits: user override > built-in > discovery-inferred > fallback
+        // Token limits: explicit model record override > built-in > fallback
         let maxOutput: Int
         if let override = modelRecord?.capabilities.maxOutputTokensOverride, override > 0 {
             maxOutput = override

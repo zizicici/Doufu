@@ -263,7 +263,7 @@ final class AnthropicProvider: LLMProviderAdapter {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
             request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-            let betaFeatures = includeThinking
+            let betaFeatures = includeThinking && !usesAdaptiveThinking(model: model)
                 ? "prompt-caching-2024-07-31,interleaved-thinking-2025-05-14"
                 : "prompt-caching-2024-07-31"
             request.setValue(betaFeatures, forHTTPHeaderField: "anthropic-beta")

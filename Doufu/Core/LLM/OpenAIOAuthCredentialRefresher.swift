@@ -78,6 +78,16 @@ enum OpenAIOAuthCredentialRefresher {
         for provider: LLMProviderRecord,
         providerStore: LLMProviderSettingsStore = .shared
     ) async throws -> (provider: LLMProviderRecord, bearerToken: String)? {
+        try await OpenAIOAuthRefreshCoordinator.shared.refreshedProvider(
+            for: provider,
+            providerStore: providerStore
+        )
+    }
+
+    fileprivate static func performRefresh(
+        for provider: LLMProviderRecord,
+        providerStore: LLMProviderSettingsStore
+    ) async throws -> (provider: LLMProviderRecord, bearerToken: String)? {
         guard provider.authMode == .oauth,
               provider.kind == .openAIResponses
         else {
@@ -105,5 +115,39 @@ enum OpenAIOAuthCredentialRefresher {
         )
         print("[Doufu OpenAI OAuth] refresh stored providerID=\(provider.id) baseURL=\(updatedProvider.effectiveBaseURLString) bearerTokenLength=\(refreshed.bearerToken.count) hasRefreshToken=\(!refreshed.refreshToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)")
         return (updatedProvider, refreshed.bearerToken)
+    }
+}
+
+private actor OpenAIOAuthRefreshCoordinator {
+    static let shared = OpenAIOAuthRefreshCoordinator()
+
+    private var tasks: [String: Task<(provider: LLMProviderRecord, bearerToken: String)?, Error>] = [:]
+
+    func refreshedProvider(
+        for provider: LLMProviderRecord,
+        providerStore: LLMProviderSettingsStore
+    ) async throws -> (provider: LLMProviderRecord, bearerToken: String)? {
+        let key = provider.id
+        if let existing = tasks[key] {
+            print("[Doufu OpenAI OAuth] refresh joined providerID=\(provider.id)")
+            return try await existing.value
+        }
+
+        let task = Task {
+            try await OpenAIOAuthCredentialRefresher.performRefresh(
+                for: provider,
+                providerStore: providerStore
+            )
+        }
+        tasks[key] = task
+
+        do {
+            let refreshed = try await task.value
+            tasks[key] = nil
+            return refreshed
+        } catch {
+            tasks[key] = nil
+            throw error
+        }
     }
 }
