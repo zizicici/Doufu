@@ -9,6 +9,35 @@ import AVFoundation
 import AVKit
 import UIKit
 
+enum PiPProgressSoundSetting: Int, CaseIterable {
+    case keyboardSound = 0
+    case off
+
+    private static let key = "pipProgressSoundSetting"
+
+    static var current: PiPProgressSoundSetting {
+        get {
+            PiPProgressSoundSetting(rawValue: UserDefaults.standard.integer(forKey: key)) ?? .keyboardSound
+        }
+        set {
+            UserDefaults.standard.set(newValue.rawValue, forKey: key)
+        }
+    }
+
+    var playsKeyboardSound: Bool {
+        self == .keyboardSound
+    }
+
+    var displayName: String {
+        switch self {
+        case .keyboardSound:
+            return String(localized: "settings.chat.pip_sound.keyboard_sound")
+        case .off:
+            return String(localized: "settings.common.off")
+        }
+    }
+}
+
 /// Manages a Picture-in-Picture window that displays chat task progress.
 /// PiP activates when the app resigns active during an active task,
 /// and deactivates when the app returns to the foreground.
@@ -60,7 +89,8 @@ final class PiPProgressManager: NSObject {
     private var displayLayer: AVSampleBufferDisplayLayer?
     private var pipSourceView: UIView?
     private var refreshTimer: Timer?
-    private var audioPlayer: AVAudioPlayer?
+    private var ambientPlayer: AVAudioPlayer?
+    private var chimePlayer: AVAudioPlayer?
 
     private var projectName: String = ""
     private var projectSnapshot: UIImage?
@@ -93,13 +123,13 @@ final class PiPProgressManager: NSObject {
 
     @objc private func appWillResignActive() {
         guard isActive, isEnabled, hasActiveTask else { return }
-        startAudioPlayer()
+        startAmbientLoop()
         pipController?.startPictureInPicture()
     }
 
     @objc private func appDidBecomeActive() {
         guard isPiPShowing else { return }
-        stopAudioPlayer()
+        stopAmbientLoop()
         pipController?.stopPictureInPicture()
         pipSourceView?.removeFromSuperview()
 
@@ -216,7 +246,7 @@ final class PiPProgressManager: NSObject {
                 isFinished = true
                 finishedStatusText = String(localized: "pip.status.cancelled")
                 if isActive {
-                    stopAudioPlayer()
+                    stopAmbientLoop()
                     stopRefreshTimer()
                     freezeElapsedTime()
                     pushFrame()
@@ -235,7 +265,7 @@ final class PiPProgressManager: NSObject {
         if isPiPShowing {
             isFinished = true
             finishedStatusText = statusText
-            stopAudioPlayer()
+            stopAmbientLoop()
             stopRefreshTimer()
             freezeElapsedTime()
             pushFrame()
@@ -317,7 +347,7 @@ final class PiPProgressManager: NSObject {
 
     private func tearDown() {
         stopRefreshTimer()
-        stopAudioPlayer()
+        stopAmbientLoop()
 
         if let pip = pipController, pip.isPictureInPictureActive {
             pip.stopPictureInPicture()
@@ -344,23 +374,36 @@ final class PiPProgressManager: NSObject {
         try? session.setActive(true)
     }
 
-    private func startAudioPlayer() {
-        guard audioPlayer == nil, !isFinished,
+    func soundSettingDidChange() {
+        if let player = ambientPlayer {
+            player.volume = ambientVolume
+        } else if isPiPShowing, !isFinished {
+            startAmbientLoop()
+        }
+    }
+
+    private func startAmbientLoop() {
+        guard ambientPlayer == nil, !isFinished,
               let url = Bundle.main.url(forResource: "keyboard-typing", withExtension: "mp3") else {
             return
         }
         do {
             let player = try AVAudioPlayer(contentsOf: url)
             player.numberOfLoops = -1
-            player.volume = 0.15
+            player.volume = ambientVolume
             player.play()
-            audioPlayer = player
+            ambientPlayer = player
         } catch {}
     }
 
-    private func stopAudioPlayer() {
-        audioPlayer?.stop()
-        audioPlayer = nil
+    // Near-silent fallback keeps the audio session alive without audible typing.
+    private var ambientVolume: Float {
+        PiPProgressSoundSetting.current.playsKeyboardSound ? 0.15 : 0.001
+    }
+
+    private func stopAmbientLoop() {
+        ambientPlayer?.stop()
+        ambientPlayer = nil
     }
 
     private func playChime() {
@@ -372,7 +415,7 @@ final class PiPProgressManager: NSObject {
             player.volume = 0.4
             player.play()
             // Keep a reference so it doesn't get deallocated mid-playback.
-            audioPlayer = player
+            chimePlayer = player
         } catch {}
     }
 
@@ -664,7 +707,7 @@ extension PiPProgressManager: AVPictureInPictureControllerDelegate {
     ) {
         Task { @MainActor [weak self] in
             self?.isPiPShowing = true
-            self?.startAudioPlayer()
+            self?.startAmbientLoop()
         }
     }
 
@@ -674,7 +717,7 @@ extension PiPProgressManager: AVPictureInPictureControllerDelegate {
         Task { @MainActor [weak self] in
             guard let self else { return }
             self.isPiPShowing = false
-            self.stopAudioPlayer()
+            self.stopAmbientLoop()
         }
     }
 

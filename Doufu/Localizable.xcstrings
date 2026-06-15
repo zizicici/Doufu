@@ -14866,6 +14866,93 @@
         }
       }
     },
+    "settings.chat.pip_sound.footer" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Only affects the keyboard sound while Picture-in-Picture progress is visible."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "仅在画中画进度显示时影响键盘音。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "僅在畫中畫進度顯示時影響鍵盤聲。"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "僅在畫中畫進度顯示時影響鍵盤聲。"
+          }
+        }
+      }
+    },
+    "settings.chat.pip_sound.keyboard_sound" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keyboard Sound"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "键盘音"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "鍵盤聲"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "鍵盤聲"
+          }
+        }
+      }
+    },
+    "settings.chat.pip_sound.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sound"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "声音"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "聲音"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "聲音"
+          }
+        }
+      }
+    },
     "settings.chat.tool_permission.footer" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -16340,6 +16427,35 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "呢啲權限由你項目入面嘅網頁應用程式請求使用。你可以喺系統設定入面更改。"
+          }
+        }
+      }
+    },
+    "settings.section.pip" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Picture-in-Picture"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "画中画"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "畫中畫"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "畫中畫"
           }
         }
       }

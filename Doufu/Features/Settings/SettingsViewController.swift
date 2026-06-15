@@ -112,6 +112,7 @@ private final class SettingsMoreDataSource: MoreViewControllerDataSource {
         static let panelDockedOpacity = "settings.project.panel_opacity"
         static let photoSave = "settings.permissions.photo_save"
         static let pipProgress = "settings.chat.pip_progress"
+        static let pipSound = "settings.chat.pip_sound"
         static let searxngURL = "settings.project.searxng"
         static let tokenUsage = "settings.providers.token_usage"
         static let toolPermission = "settings.chat.tool_permission"
@@ -129,6 +130,7 @@ private final class SettingsMoreDataSource: MoreViewControllerDataSource {
             .custom(llmProvidersSection()),
             .custom(projectSection()),
             .custom(agentToolSection()),
+            .custom(pipSection()),
             .custom(permissionsSection()),
             .contact,
             .appjun,
@@ -152,6 +154,9 @@ private final class SettingsMoreDataSource: MoreViewControllerDataSource {
 
         case ItemID.pipProgress:
             controller.pushViewController(makePiPProgressPicker())
+
+        case ItemID.pipSound:
+            controller.pushViewController(makePiPSoundPicker())
 
         case ItemID.panelDockedOpacity:
             controller.pushViewController(makePanelDockedOpacityPicker())
@@ -232,18 +237,36 @@ private final class SettingsMoreDataSource: MoreViewControllerDataSource {
             header: String(localized: "settings.section.project"),
             items: [
                 MoreCustomItem(
-                    id: ItemID.pipProgress,
-                    title: String(localized: "settings.chat.pip_progress.title"),
-                    value: PiPProgressManager.shared.isEnabled
-                        ? String(localized: "settings.common.on")
-                        : String(localized: "settings.common.off")
-                ),
-                MoreCustomItem(
                     id: ItemID.panelDockedOpacity,
                     title: String(localized: "settings.project.panel_opacity.title"),
                     value: PanelDockedOpacity.current.displayName
                 ),
             ]
+        )
+    }
+
+    private func pipSection() -> MoreCustomSection {
+        var items = [
+            MoreCustomItem(
+                id: ItemID.pipProgress,
+                title: String(localized: "settings.chat.pip_progress.title"),
+                value: PiPProgressManager.shared.isEnabled
+                    ? String(localized: "settings.common.on")
+                    : String(localized: "settings.common.off")
+            ),
+        ]
+        if PiPProgressManager.shared.isEnabled {
+            items.append(MoreCustomItem(
+                id: ItemID.pipSound,
+                title: String(localized: "settings.chat.pip_sound.title"),
+                value: PiPProgressSoundSetting.current.displayName
+            ))
+        }
+
+        return MoreCustomSection(
+            id: "settings.section.pip",
+            header: String(localized: "settings.section.pip"),
+            items: items
         )
     }
 
@@ -363,6 +386,21 @@ private final class SettingsMoreDataSource: MoreViewControllerDataSource {
             footerText: String(localized: "settings.chat.pip_progress.footer"),
             selectedIndex: { PiPProgressManager.shared.isEnabled ? 0 : 1 },
             onSelect: { index in PiPProgressManager.shared.isEnabled = (index == 0) }
+        )
+    }
+
+    private func makePiPSoundPicker() -> SettingsPickerViewController {
+        let options = PiPProgressSoundSetting.allCases
+        return SettingsPickerViewController(
+            title: String(localized: "settings.chat.pip_sound.title"),
+            options: options.map { SettingsPickerOption($0.displayName) },
+            footerText: String(localized: "settings.chat.pip_sound.footer"),
+            selectedIndex: { options.firstIndex(of: PiPProgressSoundSetting.current) ?? 0 },
+            onSelect: { index in
+                guard options.indices.contains(index) else { return }
+                PiPProgressSoundSetting.current = options[index]
+                PiPProgressManager.shared.soundSettingDidChange()
+            }
         )
     }
 
