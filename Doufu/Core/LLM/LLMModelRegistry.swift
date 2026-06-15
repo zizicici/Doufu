@@ -200,6 +200,12 @@ struct LLMModelRegistry {
 
     private static let openAIRegistry: [String: ModelEntry] = [
         // GPT-5 family
+        "gpt-5.5": ModelEntry(
+            reasoningEfforts: [.low, .medium, .high, .xhigh],
+            thinkingSupported: false, thinkingCanDisable: false,
+            structuredOutputSupported: true,
+            maxOutputTokens: 128_000, contextWindowTokens: 1_050_000
+        ),
         "gpt-5.4-pro": ModelEntry(
             reasoningEfforts: [.medium, .high, .xhigh],
             thinkingSupported: false, thinkingCanDisable: false,
@@ -274,6 +280,11 @@ struct LLMModelRegistry {
     // MARK: - Anthropic Registry
 
     private static let anthropicRegistry: [String: ModelEntry] = [
+        "claude-opus-4-8": ModelEntry(
+            reasoningEfforts: [], thinkingSupported: true, thinkingCanDisable: true,
+            structuredOutputSupported: true,
+            maxOutputTokens: 128_000, contextWindowTokens: 1_000_000
+        ),
         "claude-opus-4-6": ModelEntry(
             reasoningEfforts: [], thinkingSupported: true, thinkingCanDisable: true,
             structuredOutputSupported: true,
@@ -287,7 +298,7 @@ struct LLMModelRegistry {
         "claude-sonnet-4-6": ModelEntry(
             reasoningEfforts: [], thinkingSupported: true, thinkingCanDisable: true,
             structuredOutputSupported: true,
-            maxOutputTokens: 64_000, contextWindowTokens: 200_000
+            maxOutputTokens: 64_000, contextWindowTokens: 1_000_000
         ),
         "claude-sonnet-4-5": ModelEntry(
             reasoningEfforts: [], thinkingSupported: true, thinkingCanDisable: true,

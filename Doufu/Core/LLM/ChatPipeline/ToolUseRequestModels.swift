@@ -13,9 +13,9 @@ struct OpenAIToolUseRequest: Encodable {
     let model: String
     let instructions: String
     let input: [OpenAIToolUseInputItem]
-    let tools: [OpenAIToolDefinition]
+    var tools: [OpenAIToolDefinition]
     let stream: Bool
-    let store: Bool?
+    var store: Bool?
     var maxOutputTokens: Int?
     var reasoning: ResponsesReasoning?
 
@@ -332,22 +332,42 @@ struct AnthropicToolUseRequest: Encodable {
     let maxTokens: Int
     let stream: Bool
     let thinking: AnthropicThinkingConfig?
+    let outputConfig: AnthropicOutputConfig?
 
     private enum CodingKeys: String, CodingKey {
         case model, system, messages, tools
         case maxTokens = "max_tokens"
         case stream, thinking
+        case outputConfig = "output_config"
     }
 }
 
 struct AnthropicThinkingConfig: Encodable {
     let type: String
-    let budgetTokens: Int
+    let budgetTokens: Int?
 
     private enum CodingKeys: String, CodingKey {
         case type
         case budgetTokens = "budget_tokens"
     }
+
+    static func adaptive() -> AnthropicThinkingConfig {
+        AnthropicThinkingConfig(type: "adaptive", budgetTokens: nil)
+    }
+
+    static func enabled(budgetTokens: Int) -> AnthropicThinkingConfig {
+        AnthropicThinkingConfig(type: "enabled", budgetTokens: budgetTokens)
+    }
+}
+
+struct AnthropicOutputConfig: Encodable {
+    struct Format: Encodable {
+        let type: String
+        let schema: JSONValue
+    }
+
+    let format: Format?
+    let effort: String?
 }
 
 struct AnthropicToolUseMessage: Encodable {

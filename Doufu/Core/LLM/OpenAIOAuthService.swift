@@ -54,9 +54,9 @@ final class OpenAIOAuthService {
     }
 
     private struct AuthorizationTokens: Decodable {
-        let id_token: String
+        let id_token: String?
         let access_token: String
-        let refresh_token: String
+        let refresh_token: String?
     }
 
     private struct TokenExchangeResponse: Decodable {
@@ -72,7 +72,7 @@ final class OpenAIOAuthService {
 
     private let issuer = URL(string: "https://auth.openai.com")!
     private let clientID = "app_EMoamEEZ73f0CkXaXp7hrann"
-    private let originator = "codex_cli_rs"
+    private let originator = OpenAICodexBackendHeaders.originator
     private let callbackPath = "/auth/callback"
     private let appURLScheme = "doufu"
 
@@ -215,9 +215,9 @@ final class OpenAIOAuthService {
                         autoAppendV1: resolvedBearerToken.autoAppendV1,
                         bearerToken: resolvedBearerToken.token,
                         chatGPTAccountID: resolvedBearerToken.chatGPTAccountID,
-                        idToken: tokens.id_token,
+                        idToken: tokens.id_token ?? "",
                         accessToken: tokens.access_token,
-                        refreshToken: tokens.refresh_token
+                        refreshToken: tokens.refresh_token ?? ""
                     )
                     DispatchQueue.main.async {
                         completion(.success(result))
@@ -323,9 +323,9 @@ final class OpenAIOAuthService {
                     autoAppendV1: resolvedBearerToken.autoAppendV1,
                     bearerToken: resolvedBearerToken.token,
                     chatGPTAccountID: resolvedBearerToken.chatGPTAccountID,
-                    idToken: tokens.id_token,
+                    idToken: tokens.id_token ?? "",
                     accessToken: tokens.access_token,
-                    refreshToken: tokens.refresh_token
+                    refreshToken: tokens.refresh_token ?? ""
                 )
                 complete(.success(result))
             } catch is CancellationError {
@@ -347,6 +347,20 @@ final class OpenAIOAuthService {
             URLQueryItem(name: "redirect_uri", value: redirectURI),
             URLQueryItem(name: "client_id", value: clientID),
             URLQueryItem(name: "code_verifier", value: codeVerifier)
+        ]
+        return try await postFormAndDecode(
+            path: "/oauth/token",
+            bodyItems: bodyItems,
+            responseType: AuthorizationTokens.self,
+            defaultErrorPrefix: String(localized: "oauth.error.token_exchange_prefix")
+        )
+    }
+
+    private func refreshAuthorizationTokens(refreshToken: String) async throws -> AuthorizationTokens {
+        let bodyItems = [
+            URLQueryItem(name: "grant_type", value: "refresh_token"),
+            URLQueryItem(name: "client_id", value: clientID),
+            URLQueryItem(name: "refresh_token", value: refreshToken)
         ]
         return try await postFormAndDecode(
             path: "/oauth/token",
@@ -388,8 +402,10 @@ final class OpenAIOAuthService {
         }
     }
 
-    private func resolvePreferredBearerToken(idToken: String, accessToken: String) async throws -> ResolvedBearerToken {
-        if let apiKeyLikeToken = try? await exchangeForAPIKey(idToken: idToken, accessToken: accessToken) {
+    private func resolvePreferredBearerToken(idToken: String?, accessToken: String) async throws -> ResolvedBearerToken {
+        let normalizedIDToken = idToken?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !normalizedIDToken.isEmpty,
+           let apiKeyLikeToken = try? await exchangeForAPIKey(idToken: normalizedIDToken, accessToken: accessToken) {
             let normalizedAPIKeyLikeToken = apiKeyLikeToken.trimmingCharacters(in: .whitespacesAndNewlines)
             if !normalizedAPIKeyLikeToken.isEmpty {
                 return ResolvedBearerToken(
@@ -414,10 +430,10 @@ final class OpenAIOAuthService {
         )
     }
 
-    private func firstNonEmptyChatGPTAccountID(idToken: String, accessToken: String) -> String? {
+    private func firstNonEmptyChatGPTAccountID(idToken: String?, accessToken: String) -> String? {
         let claimsList = [
             parseOpenAIAuthClaims(fromJWT: accessToken),
-            parseOpenAIAuthClaims(fromJWT: idToken)
+            parseOpenAIAuthClaims(fromJWT: idToken ?? "")
         ]
 
         for claims in claimsList {
@@ -599,6 +615,38 @@ final class OpenAIOAuthService {
                 String(format: String(localized: "oauth.error.prefixed_parse_failed_format"), defaultErrorPrefix)
             )
         }
+    }
+
+    func refreshSignIn(refreshToken: String) async throws -> SignInResult {
+        let normalizedRefreshToken = refreshToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedRefreshToken.isEmpty else {
+            throw ServiceError.exchangeFailed(String(localized: "oauth.error.invalid_state"))
+        }
+
+        let tokens = try await refreshAuthorizationTokens(refreshToken: normalizedRefreshToken)
+        let resolvedBearerToken = try await resolvePreferredBearerToken(
+            idToken: tokens.id_token,
+            accessToken: tokens.access_token
+        )
+
+        let refreshedRefreshToken = tokens.refresh_token?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let effectiveRefreshToken: String
+        if let refreshedRefreshToken, !refreshedRefreshToken.isEmpty {
+            effectiveRefreshToken = refreshedRefreshToken
+        } else {
+            effectiveRefreshToken = normalizedRefreshToken
+        }
+
+        return SignInResult(
+            baseURLString: resolvedBearerToken.baseURLString,
+            autoAppendV1: resolvedBearerToken.autoAppendV1,
+            bearerToken: resolvedBearerToken.token,
+            chatGPTAccountID: resolvedBearerToken.chatGPTAccountID,
+            idToken: tokens.id_token ?? "",
+            accessToken: tokens.access_token,
+            refreshToken: effectiveRefreshToken
+        )
     }
 
     private func parseEndpointErrorMessage(data: Data) -> String? {

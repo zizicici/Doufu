@@ -35,13 +35,14 @@ final class OpenAIProvider: LLMProviderAdapter {
         onStreamedText: (@MainActor (String) -> Void)?,
         onUsage: ((Int?, Int?) -> Void)?
     ) async throws -> String {
+        var activeCredential = credential
         let sendReasoning = !credential.profile.reasoningEfforts.isEmpty
         var activeRequestBody = ResponsesRequest(
             model: model,
             instructions: developerInstruction,
             input: inputItems,
             stream: true,
-            store: isChatGPTCodexBackend(url: credential.baseURL) ? false : nil,
+            store: isChatGPTCodexBackend(url: activeCredential.baseURL) ? false : nil,
             maxOutputTokens: credential.profile.maxOutputTokens,
             reasoning: sendReasoning ? ResponsesReasoning(effort: initialReasoningEffort) : nil,
             text: responseFormat.map { ResponsesTextConfiguration(format: $0) }
@@ -49,19 +50,19 @@ final class OpenAIProvider: LLMProviderAdapter {
         var didFallbackReasoning = false
         var didFallbackResponseFormat = false
         var didFallbackMaxOutputTokens = false
+        var didRefreshOAuthCredential = false
 
         while true {
-            var request = URLRequest(url: credential.baseURL.appendingPathComponent("responses"))
+            let isChatGPT = isChatGPTCodexBackend(url: activeCredential.baseURL)
+            activeRequestBody.store = isChatGPT ? false : nil
+
+            var request = URLRequest(url: activeCredential.baseURL.appendingPathComponent("responses"))
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-            request.setValue("Bearer \(credential.bearerToken)", forHTTPHeaderField: "Authorization")
-            let isChatGPT = isChatGPTCodexBackend(url: credential.baseURL)
+            request.setValue("Bearer \(activeCredential.bearerToken)", forHTTPHeaderField: "Authorization")
             if isChatGPT {
-                request.setValue("codex_cli_rs", forHTTPHeaderField: "originator")
-                if let accountID = credential.chatGPTAccountID?.trimmingCharacters(in: .whitespacesAndNewlines), !accountID.isEmpty {
-                    request.setValue(accountID, forHTTPHeaderField: "chatgpt-account-id")
-                }
+                OpenAICodexBackendHeaders.apply(to: &request, accountID: activeCredential.chatGPTAccountID)
             }
             let timeoutSeconds = LLMProviderHelpers.timeoutSeconds(
                 for: activeRequestBody.reasoning?.effort ?? .high,
@@ -106,6 +107,20 @@ final class OpenAIProvider: LLMProviderAdapter {
                     didFallbackMaxOutputTokens = true
                     activeRequestBody.maxOutputTokens = nil
                     continue
+                }
+
+                if OpenAIOAuthCredentialRefresher.shouldRefresh(
+                    providerKind: activeCredential.providerKind,
+                    authMode: activeCredential.authMode,
+                    statusCode: httpResponse.statusCode,
+                    responseBodyData: data,
+                    alreadyRefreshed: didRefreshOAuthCredential
+                ) {
+                    didRefreshOAuthCredential = true
+                    if let refreshedCredential = try await OpenAIOAuthCredentialRefresher.refreshedCredential(from: activeCredential) {
+                        activeCredential = refreshedCredential
+                        continue
+                    }
                 }
 
                 LLMProviderHelpers.logFailedResponse(
@@ -157,6 +172,19 @@ final class OpenAIProvider: LLMProviderAdapter {
                     continue
                 }
 
+                if OpenAIOAuthCredentialRefresher.shouldRefresh(
+                    providerKind: activeCredential.providerKind,
+                    authMode: activeCredential.authMode,
+                    errorMessage: errorMessage,
+                    alreadyRefreshed: didRefreshOAuthCredential
+                ) {
+                    didRefreshOAuthCredential = true
+                    if let refreshedCredential = try await OpenAIOAuthCredentialRefresher.refreshedCredential(from: activeCredential) {
+                        activeCredential = refreshedCredential
+                        continue
+                    }
+                }
+
                 throw serviceError
             }
         }
@@ -174,47 +202,47 @@ final class OpenAIProvider: LLMProviderAdapter {
         onStreamedText: (@MainActor (String) -> Void)?,
         onUsage: ((Int?, Int?) -> Void)?
     ) async throws -> AgentLLMResponse {
+        var activeCredential = credential
         let model = credential.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
         let effort = executionOptions.reasoningEffort
         let timeoutSeconds = LLMProviderHelpers.timeoutSeconds(for: effort, configuration: configuration)
 
         let inputItems = buildToolUseInputItems(from: conversationItems)
-        let isChatGPT = isChatGPTCodexBackend(url: credential.baseURL)
-        let useStrict = !isChatGPT && credential.profile.structuredOutputSupported
-        let toolDefinitions = tools.map { tool in
-            OpenAIToolDefinition(
-                name: tool.name,
-                description: tool.description,
-                parameters: tool.parameters,
-                strict: useStrict
-            )
-        }
-
         let sendReasoning = !credential.profile.reasoningEfforts.isEmpty
         var activeRequestBody = OpenAIToolUseRequest(
             model: model,
             instructions: systemInstruction,
             input: inputItems,
-            tools: toolDefinitions,
+            tools: [],
             stream: true,
-            store: isChatGPT ? false : nil,
+            store: nil,
             maxOutputTokens: credential.profile.maxOutputTokens,
             reasoning: sendReasoning ? ResponsesReasoning(effort: effort) : nil
         )
         var didFallbackMaxOutputTokens = false
+        var didRefreshOAuthCredential = false
 
         while true {
-            var request = URLRequest(url: credential.baseURL.appendingPathComponent("responses"))
+            let isChatGPT = isChatGPTCodexBackend(url: activeCredential.baseURL)
+            let useStrict = !isChatGPT && activeCredential.profile.structuredOutputSupported
+            activeRequestBody.store = isChatGPT ? false : nil
+            activeRequestBody.tools = tools.map { tool in
+                OpenAIToolDefinition(
+                    name: tool.name,
+                    description: tool.description,
+                    parameters: tool.parameters,
+                    strict: useStrict
+                )
+            }
+
+            var request = URLRequest(url: activeCredential.baseURL.appendingPathComponent("responses"))
             request.httpMethod = "POST"
             request.timeoutInterval = timeoutSeconds
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-            request.setValue("Bearer \(credential.bearerToken)", forHTTPHeaderField: "Authorization")
+            request.setValue("Bearer \(activeCredential.bearerToken)", forHTTPHeaderField: "Authorization")
             if isChatGPT {
-                request.setValue("codex_cli_rs", forHTTPHeaderField: "originator")
-                if let accountID = credential.chatGPTAccountID?.trimmingCharacters(in: .whitespacesAndNewlines), !accountID.isEmpty {
-                    request.setValue(accountID, forHTTPHeaderField: "chatgpt-account-id")
-                }
+                OpenAICodexBackendHeaders.apply(to: &request, accountID: activeCredential.chatGPTAccountID)
             }
             request.httpBody = try jsonEncoder.encode(activeRequestBody)
 
@@ -235,6 +263,20 @@ final class OpenAIProvider: LLMProviderAdapter {
                     continue
                 }
 
+                if OpenAIOAuthCredentialRefresher.shouldRefresh(
+                    providerKind: activeCredential.providerKind,
+                    authMode: activeCredential.authMode,
+                    statusCode: httpResponse.statusCode,
+                    responseBodyData: data,
+                    alreadyRefreshed: didRefreshOAuthCredential
+                ) {
+                    didRefreshOAuthCredential = true
+                    if let refreshedCredential = try await OpenAIOAuthCredentialRefresher.refreshedCredential(from: activeCredential) {
+                        activeCredential = refreshedCredential
+                        continue
+                    }
+                }
+
                 LLMProviderHelpers.logFailedResponse(
                     request: request, httpResponse: httpResponse,
                     responseBodyData: data, requestLabel: "OpenAI ToolUse"
@@ -244,13 +286,30 @@ final class OpenAIProvider: LLMProviderAdapter {
                 throw ProjectChatService.ServiceError.networkFailed(String(format: String(localized: "llm.error.request_failed_format"), message))
             }
 
-            let result = try await consumeToolUseStream(
-                bytes: bytes, model: model, credential: credential,
-                projectUsageIdentifier: projectUsageIdentifier,
-                timeoutSeconds: timeoutSeconds,
-                onStreamedText: onStreamedText, onUsage: onUsage
-            )
-            return result
+            do {
+                let result = try await consumeToolUseStream(
+                    bytes: bytes, model: model, credential: activeCredential,
+                    projectUsageIdentifier: projectUsageIdentifier,
+                    timeoutSeconds: timeoutSeconds,
+                    onStreamedText: onStreamedText, onUsage: onUsage
+                )
+                return result
+            } catch let serviceError as ProjectChatService.ServiceError {
+                guard case let .networkFailed(errorMessage) = serviceError else { throw serviceError }
+                if OpenAIOAuthCredentialRefresher.shouldRefresh(
+                    providerKind: activeCredential.providerKind,
+                    authMode: activeCredential.authMode,
+                    errorMessage: errorMessage,
+                    alreadyRefreshed: didRefreshOAuthCredential
+                ) {
+                    didRefreshOAuthCredential = true
+                    if let refreshedCredential = try await OpenAIOAuthCredentialRefresher.refreshedCredential(from: activeCredential) {
+                        activeCredential = refreshedCredential
+                        continue
+                    }
+                }
+                throw serviceError
+            }
         }
     }
 

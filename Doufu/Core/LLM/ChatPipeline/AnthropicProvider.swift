@@ -39,7 +39,8 @@ final class AnthropicProvider: LLMProviderAdapter {
         let url = credential.baseURL.appendingPathComponent("messages")
         var includeThinking = executionOptions.anthropicThinkingEnabled
         var includeOutputConfig = responseFormat != nil
-        let structuredOutputConfig = responseFormat.flatMap { anthropicOutputConfig(from: $0) }
+        var includeAdaptiveEffort = true
+        let structuredOutputFormat = responseFormat.flatMap { anthropicOutputFormat(from: $0) }
 
         while true {
             var request = URLRequest(url: url)
@@ -64,19 +65,27 @@ final class AnthropicProvider: LLMProviderAdapter {
                 ? nil
                 : [.text(normalizedInstruction, cache: true)]
             let modelMaxOutput = credential.profile.maxOutputTokens
-            let thinkingBudget = includeThinking
-                ? configuration.anthropicThinkingBudget(maxOutputTokens: modelMaxOutput, effort: initialReasoningEffort)
-                : 0
+            let thinkingConfig = anthropicThinkingConfig(
+                model: model,
+                includeThinking: includeThinking,
+                maxOutputTokens: modelMaxOutput,
+                effort: initialReasoningEffort,
+                isToolUse: false
+            )
+            let outputConfig = anthropicOutputConfig(
+                format: includeOutputConfig ? structuredOutputFormat : nil,
+                effort: includeAdaptiveEffort && usesAdaptiveThinking(model: model) && includeThinking
+                    ? anthropicEffortString(from: initialReasoningEffort)
+                    : nil
+            )
             let requestBody = AnthropicMessageRequest(
                 model: model,
                 system: systemBlocks,
                 messages: messages,
                 maxTokens: modelMaxOutput,
                 stream: true,
-                thinking: includeThinking
-                    ? .init(type: "enabled", budgetTokens: thinkingBudget)
-                    : nil,
-                outputConfig: includeOutputConfig ? structuredOutputConfig : nil
+                thinking: thinkingConfig,
+                outputConfig: outputConfig
             )
             request.httpBody = try jsonEncoder.encode(requestBody)
 
@@ -90,8 +99,9 @@ final class AnthropicProvider: LLMProviderAdapter {
                     includeThinking = false
                     continue
                 }
-                if includeOutputConfig, shouldFallbackOutputConfiguration(responseBodyData: data) {
+                if (includeOutputConfig || includeAdaptiveEffort), shouldFallbackOutputConfiguration(responseBodyData: data) {
                     includeOutputConfig = false
+                    includeAdaptiveEffort = false
                     continue
                 }
                 LLMProviderHelpers.logFailedResponse(
@@ -218,16 +228,23 @@ final class AnthropicProvider: LLMProviderAdapter {
         let effort = executionOptions.reasoningEffort
         let timeoutSeconds = LLMProviderHelpers.timeoutSeconds(for: effort, configuration: configuration)
         var includeThinking = executionOptions.anthropicThinkingEnabled
+        var includeAdaptiveEffort = true
 
         while true {
             let modelMaxOutput = credential.profile.maxOutputTokens
-            // With interleaved thinking (tool use), Anthropic allows
-            // budget_tokens to exceed max_tokens — the ceiling is the
-            // context window.  So we use a separate, larger budget and
-            // keep max_tokens at the model's native output limit.
-            let thinkingBudget = includeThinking
-                ? configuration.anthropicThinkingBudgetForToolUse(effort: effort)
-                : 0
+            let thinkingConfig = anthropicThinkingConfig(
+                model: model,
+                includeThinking: includeThinking,
+                maxOutputTokens: modelMaxOutput,
+                effort: effort,
+                isToolUse: true
+            )
+            let outputConfig = anthropicOutputConfig(
+                format: nil,
+                effort: includeAdaptiveEffort && usesAdaptiveThinking(model: model) && includeThinking
+                    ? anthropicEffortString(from: effort)
+                    : nil
+            )
 
             let requestBody = AnthropicToolUseRequest(
                 model: model,
@@ -236,9 +253,8 @@ final class AnthropicProvider: LLMProviderAdapter {
                 tools: toolDefinitions,
                 maxTokens: modelMaxOutput,
                 stream: true,
-                thinking: includeThinking
-                    ? AnthropicThinkingConfig(type: "enabled", budgetTokens: thinkingBudget)
-                    : nil
+                thinking: thinkingConfig,
+                outputConfig: outputConfig
             )
 
             var request = URLRequest(url: url)
@@ -264,6 +280,10 @@ final class AnthropicProvider: LLMProviderAdapter {
                 if includeThinking,
                    LLMProviderHelpers.shouldFallbackThinkingConfiguration(responseBodyData: data) {
                     includeThinking = false
+                    continue
+                }
+                if includeAdaptiveEffort, shouldFallbackOutputConfiguration(responseBodyData: data) {
+                    includeAdaptiveEffort = false
                     continue
                 }
                 let message = LLMProviderHelpers.parseErrorMessage(from: data)
@@ -520,12 +540,63 @@ final class AnthropicProvider: LLMProviderAdapter {
         return host == "api.anthropic.com" || host.hasSuffix(".anthropic.com")
     }
 
-    private func anthropicOutputConfig(from format: ResponsesTextFormat) -> AnthropicMessageRequest.OutputConfig? {
+    private enum AnthropicThinkingMode {
+        case adaptive
+        case manualBudget
+    }
+
+    private func anthropicThinkingConfig(
+        model: String,
+        includeThinking: Bool,
+        maxOutputTokens: Int,
+        effort: ProjectChatService.ReasoningEffort,
+        isToolUse: Bool
+    ) -> AnthropicThinkingConfig? {
+        guard includeThinking else { return nil }
+        switch anthropicThinkingMode(for: model) {
+        case .adaptive:
+            return .adaptive()
+        case .manualBudget:
+            let budget = isToolUse
+                ? configuration.anthropicThinkingBudgetForToolUse(effort: effort)
+                : configuration.anthropicThinkingBudget(maxOutputTokens: maxOutputTokens, effort: effort)
+            return .enabled(budgetTokens: budget)
+        }
+    }
+
+    private func anthropicThinkingMode(for model: String) -> AnthropicThinkingMode {
+        if usesAdaptiveThinking(model: model) {
+            return .adaptive
+        }
+        return .manualBudget
+    }
+
+    private func usesAdaptiveThinking(model: String) -> Bool {
+        let normalized = model.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized.hasPrefix("claude-opus-4-8")
+            || normalized.hasPrefix("claude-opus-4-7")
+            || normalized.hasPrefix("claude-opus-4-6")
+            || normalized.hasPrefix("claude-sonnet-4-6")
+            || normalized.hasPrefix("claude-fable-5")
+            || normalized.hasPrefix("claude-mythos-")
+    }
+
+    private func anthropicEffortString(from effort: ProjectChatService.ReasoningEffort) -> String {
+        effort.rawValue
+    }
+
+    private func anthropicOutputConfig(
+        format: AnthropicOutputConfig.Format?,
+        effort: String?
+    ) -> AnthropicOutputConfig? {
+        guard format != nil || effort != nil else { return nil }
+        return AnthropicOutputConfig(format: format, effort: effort)
+    }
+
+    private func anthropicOutputFormat(from format: ResponsesTextFormat) -> AnthropicOutputConfig.Format? {
         let normalizedType = format.type.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard normalizedType == "json_schema" else { return nil }
-        return AnthropicMessageRequest.OutputConfig(
-            format: .init(type: normalizedType, schema: format.schema)
-        )
+        return AnthropicOutputConfig.Format(type: normalizedType, schema: format.schema)
     }
 
     private func shouldFallbackOutputConfiguration(responseBodyData: Data) -> Bool {
@@ -538,23 +609,6 @@ final class AnthropicProvider: LLMProviderAdapter {
     // MARK: - Private types for non-tool-use requests
 
     private struct AnthropicMessageRequest: Encodable {
-        struct OutputConfig: Encodable {
-            struct Format: Encodable {
-                let type: String
-                let schema: JSONValue
-            }
-            let format: Format
-        }
-
-        struct Thinking: Encodable {
-            let type: String
-            let budgetTokens: Int
-            private enum CodingKeys: String, CodingKey {
-                case type
-                case budgetTokens = "budget_tokens"
-            }
-        }
-
         struct Message: Encodable {
             struct Content: Encodable {
                 let type: String
@@ -569,8 +623,8 @@ final class AnthropicProvider: LLMProviderAdapter {
         let messages: [Message]
         let maxTokens: Int
         let stream: Bool
-        let thinking: Thinking?
-        let outputConfig: OutputConfig?
+        let thinking: AnthropicThinkingConfig?
+        let outputConfig: AnthropicOutputConfig?
 
         private enum CodingKeys: String, CodingKey {
             case model, system, messages, stream

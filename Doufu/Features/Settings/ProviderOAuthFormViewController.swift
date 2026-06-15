@@ -24,6 +24,7 @@ final class ProviderOAuthFormViewController: UIViewController, UITableViewDelega
     private var manualBearerTokenText = ""
     private var oauthSuggestedAutoAppendV1 = true
     private var oauthDerivedChatGPTAccountID: String?
+    private var oauthDerivedRefreshToken: String?
 
     private var diffableDataSource: OAuthFormDataSource!
 
@@ -462,6 +463,7 @@ final class ProviderOAuthFormViewController: UIViewController, UITableViewDelega
         do {
             let autoAppendV1 = resolveAutoAppendV1()
             let accountID = (providerKind == .openAIResponses || providerKind == .openRouter) ? oauthDerivedChatGPTAccountID : nil
+            let refreshToken = providerKind == .openAIResponses ? oauthDerivedRefreshToken : nil
             if let editingProvider {
                 _ = try store.updateProviderUsingOAuth(
                     providerID: editingProvider.id,
@@ -470,7 +472,8 @@ final class ProviderOAuthFormViewController: UIViewController, UITableViewDelega
                     autoAppendV1: autoAppendV1,
                     bearerToken: trimmedToken,
                     chatGPTAccountID: accountID,
-                    modelID: latestEditingProvider()?.modelID
+                    modelID: latestEditingProvider()?.modelID,
+                    refreshToken: refreshToken
                 )
                 popToManageProviders()
             } else {
@@ -481,7 +484,8 @@ final class ProviderOAuthFormViewController: UIViewController, UITableViewDelega
                     autoAppendV1: autoAppendV1,
                     bearerToken: trimmedToken,
                     chatGPTAccountID: accountID,
-                    modelID: nil
+                    modelID: nil,
+                    refreshToken: refreshToken
                 )
                 showAddedAlert(providerLabel: provider.label)
             }
@@ -509,12 +513,18 @@ final class ProviderOAuthFormViewController: UIViewController, UITableViewDelega
 
         switch result {
         case let .success(payload):
-            if manualBaseURLText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if providerKind == .openAIResponses {
+                manualBaseURLText = payload.baseURLString
+            } else if manualBaseURLText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 manualBaseURLText = payload.baseURLString
             }
             manualBearerTokenText = payload.bearerToken
             oauthSuggestedAutoAppendV1 = payload.autoAppendV1
             oauthDerivedChatGPTAccountID = payload.chatGPTAccountID
+            oauthDerivedRefreshToken = payload.refreshToken
+            if persistOpenAIOAuthResultIfEditing(payload) {
+                return
+            }
             applySnapshot()
 
         case let .failure(error):
@@ -526,6 +536,30 @@ final class ProviderOAuthFormViewController: UIViewController, UITableViewDelega
             }
             showError(message: error.localizedDescription)
         }
+    }
+
+    private func persistOpenAIOAuthResultIfEditing(_ payload: OpenAIOAuthService.SignInResult) -> Bool {
+        guard let editingProvider, providerKind == .openAIResponses else {
+            return false
+        }
+
+        do {
+            _ = try store.updateProviderUsingOAuth(
+                providerID: editingProvider.id,
+                label: labelText,
+                baseURLString: payload.baseURLString,
+                autoAppendV1: payload.autoAppendV1,
+                bearerToken: payload.bearerToken,
+                chatGPTAccountID: payload.chatGPTAccountID,
+                modelID: latestEditingProvider()?.modelID,
+                refreshToken: payload.refreshToken
+            )
+            popToManageProviders()
+        } catch {
+            showError(message: error.localizedDescription)
+            return false
+        }
+        return true
     }
 
     private func dismissLoginIfNeeded() {

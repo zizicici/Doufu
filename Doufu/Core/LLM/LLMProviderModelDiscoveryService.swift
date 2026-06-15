@@ -112,29 +112,73 @@ final class LLMProviderModelDiscoveryService {
         for provider: LLMProviderRecord,
         bearerToken: String
     ) async throws -> [LLMProviderModelRecord] {
-        let url = try buildOpenAIModelsURL(for: provider)
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")
-        if isChatGPTCodexBackend(url: URL(string: provider.effectiveBaseURLString)) {
-            request.setValue("codex_cli_rs", forHTTPHeaderField: "originator")
-            if let accountID = provider.chatGPTAccountID?.trimmingCharacters(in: .whitespacesAndNewlines), !accountID.isEmpty {
-                request.setValue(accountID, forHTTPHeaderField: "chatgpt-account-id")
-            }
-        }
+        var activeProvider = provider
+        var activeBearerToken = bearerToken
+        var didRefreshOAuthCredential = false
 
-        let (data, response) = try await URLSession.shared.data(for: request)
-        try validate(response: response, data: data)
-        let modelEntries = try parseOpenAIModelEntries(from: data)
-        return modelEntries.map { model in
-            LLMProviderModelRecord(
-                id: officialRecordID(for: model.modelID),
-                modelID: model.modelID,
-                displayName: model.displayName ?? model.modelID,
-                source: .official,
-                capabilities: .defaults(for: provider.kind, modelID: model.modelID)
+        while true {
+            let url = try buildOpenAIModelsURL(for: activeProvider)
+            let isChatGPT = isChatGPTCodexBackend(url: URL(string: activeProvider.effectiveBaseURLString))
+            var request = URLRequest(url: url)
+            request.httpMethod = "GET"
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            request.setValue("Bearer \(activeBearerToken)", forHTTPHeaderField: "Authorization")
+            if isChatGPT {
+                OpenAICodexBackendHeaders.apply(to: &request, accountID: activeProvider.chatGPTAccountID)
+            }
+
+            logOpenAIModelsRequest(
+                provider: activeProvider,
+                url: url,
+                bearerToken: activeBearerToken,
+                isChatGPTCodexBackend: isChatGPT
             )
+            let (data, response) = try await URLSession.shared.data(for: request)
+            logOpenAIModelsResponse(provider: activeProvider, response: response, data: data)
+            if let httpResponse = response as? HTTPURLResponse,
+               !(200 ... 299).contains(httpResponse.statusCode),
+               OpenAIOAuthCredentialRefresher.shouldRefresh(
+                   providerKind: activeProvider.kind,
+                   authMode: activeProvider.authMode,
+                   statusCode: httpResponse.statusCode,
+                   responseBodyData: data,
+                   alreadyRefreshed: didRefreshOAuthCredential
+               ) {
+                didRefreshOAuthCredential = true
+                print("[Doufu ModelDiscovery] OpenAI OAuth token appears expired; attempting refresh providerID=\(activeProvider.id) status=\(httpResponse.statusCode)")
+                if let refreshed = try await OpenAIOAuthCredentialRefresher.refreshedProvider(for: activeProvider) {
+                    activeProvider = refreshed.provider
+                    activeBearerToken = refreshed.bearerToken
+                    print("[Doufu ModelDiscovery] OpenAI OAuth refresh succeeded providerID=\(activeProvider.id) baseURL=\(activeProvider.effectiveBaseURLString) token=\(redactedTokenSummary(activeBearerToken))")
+                    continue
+                }
+                print("[Doufu ModelDiscovery] OpenAI OAuth refresh unavailable providerID=\(activeProvider.id)")
+            }
+
+            try validate(response: response, data: data)
+            let modelEntries: [OpenAIModelEntry]
+            do {
+                modelEntries = try parseOpenAIModelEntries(from: data)
+            } catch {
+                logOpenAIModelsParseFailure(
+                    provider: activeProvider,
+                    url: url,
+                    response: response,
+                    data: data,
+                    error: error
+                )
+                throw error
+            }
+            print("[Doufu ModelDiscovery] OpenAI models parsed providerID=\(activeProvider.id) count=\(modelEntries.count) sample=\(sampleModelIDs(modelEntries))")
+            return modelEntries.map { model in
+                LLMProviderModelRecord(
+                    id: officialRecordID(for: model.modelID),
+                    modelID: model.modelID,
+                    displayName: model.displayName ?? model.modelID,
+                    source: .official,
+                    capabilities: .defaults(for: activeProvider.kind, modelID: model.modelID)
+                )
+            }
         }
     }
 
@@ -199,7 +243,10 @@ final class LLMProviderModelDiscoveryService {
         if isChatGPTCodexBackend(url: URL(string: provider.effectiveBaseURLString)) {
             var queryItems = components.queryItems ?? []
             if !queryItems.contains(where: { $0.name == "client_version" }) {
-                queryItems.append(URLQueryItem(name: "client_version", value: clientVersionString()))
+                queryItems.append(URLQueryItem(
+                    name: "client_version",
+                    value: OpenAICodexBackendHeaders.modelDiscoveryClientVersion
+                ))
             }
             components.queryItems = queryItems
         }
@@ -603,10 +650,79 @@ final class LLMProviderModelDiscoveryService {
         return host == "chatgpt.com" && path.contains("/backend-api/codex")
     }
 
-    private func clientVersionString() -> String {
-        let bundleVersion = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return bundleVersion.isEmpty ? "1.0.0" : bundleVersion
+    private func logOpenAIModelsRequest(
+        provider: LLMProviderRecord,
+        url: URL,
+        bearerToken: String,
+        isChatGPTCodexBackend: Bool
+    ) {
+        let accountIDState = (provider.chatGPTAccountID?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false) ? "present" : "missing"
+        print("[Doufu ModelDiscovery] OpenAI models request providerID=\(provider.id) label=\(provider.label) kind=\(provider.kind.rawValue) auth=\(provider.authMode.rawValue) baseURL=\(provider.effectiveBaseURLString) url=\(url.absoluteString) chatGPTCodex=\(isChatGPTCodexBackend) accountID=\(accountIDState) token=\(redactedTokenSummary(bearerToken))")
+    }
+
+    private func logOpenAIModelsResponse(
+        provider: LLMProviderRecord,
+        response: URLResponse,
+        data: Data
+    ) {
+        let status: String
+        let contentType: String
+        if let httpResponse = response as? HTTPURLResponse {
+            status = "\(httpResponse.statusCode)"
+            contentType = httpResponse.value(forHTTPHeaderField: "content-type") ?? "missing"
+        } else {
+            status = "non-http"
+            contentType = "missing"
+        }
+        print("[Doufu ModelDiscovery] OpenAI models response providerID=\(provider.id) status=\(status) contentType=\(contentType) bytes=\(data.count)")
+    }
+
+    private func logOpenAIModelsParseFailure(
+        provider: LLMProviderRecord,
+        url: URL,
+        response: URLResponse,
+        data: Data,
+        error: Error
+    ) {
+        let status: String
+        let contentType: String
+        if let httpResponse = response as? HTTPURLResponse {
+            status = "\(httpResponse.statusCode)"
+            contentType = httpResponse.value(forHTTPHeaderField: "content-type") ?? "missing"
+        } else {
+            status = "non-http"
+            contentType = "missing"
+        }
+        print("[Doufu ModelDiscovery] OpenAI models parse failed providerID=\(provider.id) url=\(url.absoluteString) status=\(status) contentType=\(contentType) error=\(error.localizedDescription) bodyPreview=\(responseBodyPreview(data))")
+    }
+
+    private func redactedTokenSummary(_ token: String) -> String {
+        let normalized = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else {
+            return "empty"
+        }
+        let prefix = String(normalized.prefix(6))
+        let suffix = String(normalized.suffix(4))
+        return "len:\(normalized.count) \(prefix)...\(suffix)"
+    }
+
+    private func responseBodyPreview(_ data: Data, maxLength: Int = 2_000) -> String {
+        guard !data.isEmpty else {
+            return "<empty>"
+        }
+        let rawText = String(data: data, encoding: .utf8) ?? "<non-utf8 \(data.count) bytes>"
+        let collapsed = rawText
+            .replacingOccurrences(of: "\n", with: "\\n")
+            .replacingOccurrences(of: "\r", with: "\\r")
+        if collapsed.count <= maxLength {
+            return collapsed
+        }
+        return String(collapsed.prefix(maxLength)) + "...<truncated>"
+    }
+
+    private func sampleModelIDs(_ entries: [OpenAIModelEntry]) -> String {
+        let sample = entries.prefix(8).map(\.modelID).joined(separator: ",")
+        return sample.isEmpty ? "<empty>" : sample
     }
 
     private func officialRecordID(for modelID: String) -> String {

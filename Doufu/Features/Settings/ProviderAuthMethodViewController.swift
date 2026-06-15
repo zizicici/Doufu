@@ -236,7 +236,8 @@ final class ProviderAuthMethodViewController: UIViewController, UITableViewDeleg
                 autoAppendV1: payload.autoAppendV1,
                 bearerToken: payload.bearerToken,
                 chatGPTAccountID: payload.chatGPTAccountID,
-                modelID: nil
+                modelID: nil,
+                refreshToken: payload.refreshToken
             )
             showSuccessAndPop(providerLabel: provider.label)
         } catch {

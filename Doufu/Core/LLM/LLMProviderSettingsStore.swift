@@ -133,9 +133,9 @@ struct LLMProviderRecord: Codable, Equatable, Hashable {
         var builtInModels: [String] {
             switch self {
             case .openAIResponses, .openAIChatCompletions:
-                return ["gpt-5.3-codex", "gpt-5.4", "gpt-5.4-pro", "gpt-5-mini"]
+                return ["gpt-5.3-codex", "gpt-5.4", "gpt-5.4-pro", "gpt-5.5"]
             case .anthropic:
-                return ["claude-opus-4-6", "claude-sonnet-4-5", "claude-haiku-4-5"]
+                return ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5"]
             case .googleGemini:
                 return ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"]
             case .openRouter:
@@ -428,7 +428,8 @@ final class LLMProviderSettingsStore {
         autoAppendV1: Bool,
         bearerToken: String?,
         chatGPTAccountID: String?,
-        modelID: String?
+        modelID: String?,
+        refreshToken: String? = nil
     ) throws -> LLMProviderRecord {
         try addProviderUsingOAuth(
             kind: .openAIResponses,
@@ -437,7 +438,8 @@ final class LLMProviderSettingsStore {
             autoAppendV1: autoAppendV1,
             bearerToken: bearerToken,
             chatGPTAccountID: chatGPTAccountID,
-            modelID: modelID
+            modelID: modelID,
+            refreshToken: refreshToken
         )
     }
 
@@ -449,7 +451,8 @@ final class LLMProviderSettingsStore {
         autoAppendV1: Bool,
         bearerToken: String?,
         chatGPTAccountID: String?,
-        modelID: String?
+        modelID: String?,
+        refreshToken: String? = nil
     ) throws -> LLMProviderRecord {
         let normalizedLabel = label.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedLabel.isEmpty else {
@@ -478,6 +481,10 @@ final class LLMProviderSettingsStore {
         let normalizedToken = bearerToken?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !normalizedToken.isEmpty {
             try saveOAuthBearerToken(normalizedToken, providerID: provider.id)
+        }
+        let normalizedRefreshToken = refreshToken?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !normalizedRefreshToken.isEmpty {
+            try saveOAuthRefreshToken(normalizedRefreshToken, providerID: provider.id)
         }
         try saveProviderToDB(provider)
         return provider
@@ -542,6 +549,7 @@ final class LLMProviderSettingsStore {
         // Best-effort cleanup of the old credential slot.
         if existingProvider.authMode == .oauth {
             try? deleteOAuthBearerToken(providerID: providerID)
+            try? deleteOAuthRefreshToken(providerID: providerID)
         }
         return updatedProvider
     }
@@ -554,7 +562,8 @@ final class LLMProviderSettingsStore {
         autoAppendV1: Bool,
         bearerToken: String,
         chatGPTAccountID: String?,
-        modelID: String?
+        modelID: String?,
+        refreshToken: String? = nil
     ) throws -> LLMProviderRecord {
         try updateProviderUsingOAuth(
             providerID: providerID,
@@ -563,7 +572,8 @@ final class LLMProviderSettingsStore {
             autoAppendV1: autoAppendV1,
             bearerToken: bearerToken,
             chatGPTAccountID: chatGPTAccountID,
-            modelID: modelID
+            modelID: modelID,
+            refreshToken: refreshToken
         )
     }
 
@@ -575,7 +585,8 @@ final class LLMProviderSettingsStore {
         autoAppendV1: Bool,
         bearerToken: String,
         chatGPTAccountID: String?,
-        modelID: String?
+        modelID: String?,
+        refreshToken: String? = nil
     ) throws -> LLMProviderRecord {
         let normalizedLabel = label.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedLabel.isEmpty else {
@@ -589,6 +600,13 @@ final class LLMProviderSettingsStore {
 
         guard let existingProvider = loadProvider(id: providerID) else {
             throw LLMProviderSettingsStoreError.providerNotFound
+        }
+        let previousOAuthBearerToken: String?
+        if existingProvider.authMode == .oauth {
+            previousOAuthBearerToken = try loadOAuthBearerToken(for: providerID)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        } else {
+            previousOAuthBearerToken = nil
         }
         let normalizedBaseURL = try normalizeBaseURL(baseURLString, kind: existingProvider.kind)
         let normalizedModelID = normalizeModelID(modelID, kind: existingProvider.kind)
@@ -604,11 +622,59 @@ final class LLMProviderSettingsStore {
         // Save new credential before updating the DB so a Keychain failure
         // does not leave the provider in an inconsistent authMode state.
         try saveOAuthBearerToken(normalizedToken, providerID: providerID)
+        let normalizedRefreshToken = refreshToken?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !normalizedRefreshToken.isEmpty {
+            try saveOAuthRefreshToken(normalizedRefreshToken, providerID: providerID)
+        } else if let previousOAuthBearerToken, previousOAuthBearerToken != normalizedToken {
+            try deleteOAuthRefreshToken(providerID: providerID)
+        }
         try saveProviderToDB(updatedProvider)
         // Best-effort cleanup of the old credential slot.
         if existingProvider.authMode == .apiKey {
             try? deleteAPIKey(providerID: providerID)
         }
+        return updatedProvider
+    }
+
+    @discardableResult
+    func updateOpenAIOAuthCredential(
+        providerID: String,
+        baseURLString: String,
+        autoAppendV1: Bool,
+        bearerToken: String,
+        refreshToken: String?,
+        chatGPTAccountID: String?
+    ) throws -> LLMProviderRecord {
+        guard let existingProvider = loadProvider(id: providerID) else {
+            throw LLMProviderSettingsStoreError.providerNotFound
+        }
+        let normalizedToken = bearerToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedToken.isEmpty else {
+            throw LLMProviderSettingsStoreError.emptyAPIKey
+        }
+
+        let normalizedBaseURL = try normalizeBaseURL(baseURLString, kind: existingProvider.kind)
+        let normalizedChatGPTAccountID = chatGPTAccountID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let effectiveChatGPTAccountID: String?
+        if let normalizedChatGPTAccountID, !normalizedChatGPTAccountID.isEmpty {
+            effectiveChatGPTAccountID = normalizedChatGPTAccountID
+        } else {
+            effectiveChatGPTAccountID = existingProvider.chatGPTAccountID
+        }
+        let updatedProvider = existingProvider.copying(
+            authMode: .oauth,
+            updatedAt: Date(),
+            baseURLString: normalizedBaseURL,
+            autoAppendV1: autoAppendV1,
+            chatGPTAccountID: .some(effectiveChatGPTAccountID)
+        )
+
+        try saveOAuthBearerToken(normalizedToken, providerID: providerID)
+        let normalizedRefreshToken = refreshToken?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !normalizedRefreshToken.isEmpty {
+            try saveOAuthRefreshToken(normalizedRefreshToken, providerID: providerID)
+        }
+        try saveProviderToDB(updatedProvider)
         return updatedProvider
     }
 
@@ -708,6 +774,7 @@ final class LLMProviderSettingsStore {
         // should not prevent the other from being attempted.
         try? deleteAPIKey(providerID: id)
         try? deleteOAuthBearerToken(providerID: id)
+        try? deleteOAuthRefreshToken(providerID: id)
     }
 
     // MARK: - Project-level Model Selection
@@ -845,6 +912,34 @@ final class LLMProviderSettingsStore {
         }
     }
 
+    func loadOAuthRefreshToken(forProviderID providerID: String) throws -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: oauthRefreshTokenAccount(providerID: providerID),
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+
+        switch status {
+        case errSecSuccess:
+            guard
+                let data = item as? Data,
+                let token = String(data: data, encoding: .utf8)
+            else {
+                return nil
+            }
+            return token
+        case errSecItemNotFound:
+            return nil
+        default:
+            throw LLMProviderSettingsStoreError.keychainFailed(status: status)
+        }
+    }
+
     // MARK: - Private Helpers
 
     private func normalizeBaseURL(_ rawValue: String?, kind: LLMProviderRecord.Kind) throws -> String {
@@ -915,6 +1010,10 @@ final class LLMProviderSettingsStore {
         "llm.provider.\(providerID).oauth_bearer_token"
     }
 
+    private func oauthRefreshTokenAccount(providerID: String) -> String {
+        "llm.provider.\(providerID).oauth_refresh_token"
+    }
+
     private func saveAPIKey(_ key: String, providerID: String) throws {
         let valueData = Data(key.utf8)
 
@@ -979,6 +1078,38 @@ final class LLMProviderSettingsStore {
         }
     }
 
+    private func saveOAuthRefreshToken(_ token: String, providerID: String) throws {
+        let valueData = Data(token.utf8)
+
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: oauthRefreshTokenAccount(providerID: providerID)
+        ]
+
+        let updateAttributes: [String: Any] = [
+            kSecValueData as String: valueData
+        ]
+
+        let updateStatus = SecItemUpdate(query as CFDictionary, updateAttributes as CFDictionary)
+        if updateStatus == errSecSuccess {
+            return
+        }
+
+        if updateStatus != errSecItemNotFound {
+            throw LLMProviderSettingsStoreError.keychainFailed(status: updateStatus)
+        }
+
+        var createQuery = query
+        createQuery[kSecValueData as String] = valueData
+        createQuery[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+
+        let createStatus = SecItemAdd(createQuery as CFDictionary, nil)
+        guard createStatus == errSecSuccess else {
+            throw LLMProviderSettingsStoreError.keychainFailed(status: createStatus)
+        }
+    }
+
     private func deleteAPIKey(providerID: String) throws {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -996,6 +1127,18 @@ final class LLMProviderSettingsStore {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
             kSecAttrAccount as String: oauthBearerTokenAccount(providerID: providerID)
+        ]
+        let status = SecItemDelete(query as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw LLMProviderSettingsStoreError.keychainFailed(status: status)
+        }
+    }
+
+    private func deleteOAuthRefreshToken(providerID: String) throws {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: oauthRefreshTokenAccount(providerID: providerID)
         ]
         let status = SecItemDelete(query as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else {

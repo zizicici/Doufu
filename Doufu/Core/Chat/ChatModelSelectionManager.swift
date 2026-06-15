@@ -270,24 +270,27 @@ final class ChatModelSelectionManager {
     }
 
     func runtimeCredential(from base: ProjectChatService.ProviderCredential) -> ProjectChatService.ProviderCredential {
-        let normalizedSelectedModel = resolvedRequestModelID(for: base)
+        let latestBase = providerStore.loadProvider(id: base.providerID)
+            .flatMap { ProviderCredentialResolver.buildCredential(for: $0, providerStore: providerStore) }
+            ?? base
+        let normalizedSelectedModel = resolvedRequestModelID(for: latestBase)
         guard !normalizedSelectedModel.isEmpty else {
-            return base
+            return latestBase
         }
         let profile = resolveModelProfile(
-            providerID: base.providerID,
-            providerKind: base.providerKind,
+            providerID: latestBase.providerID,
+            providerKind: latestBase.providerKind,
             modelID: normalizedSelectedModel
         )
         return ProjectChatService.ProviderCredential(
-            providerID: base.providerID,
-            providerLabel: base.providerLabel,
-            providerKind: base.providerKind,
-            authMode: base.authMode,
+            providerID: latestBase.providerID,
+            providerLabel: latestBase.providerLabel,
+            providerKind: latestBase.providerKind,
+            authMode: latestBase.authMode,
             modelID: profile.modelID,
-            baseURL: base.baseURL,
-            bearerToken: base.bearerToken,
-            chatGPTAccountID: base.chatGPTAccountID,
+            baseURL: latestBase.baseURL,
+            bearerToken: latestBase.bearerToken,
+            chatGPTAccountID: latestBase.chatGPTAccountID,
             profile: profile
         )
     }

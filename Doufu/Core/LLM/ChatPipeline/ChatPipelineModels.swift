@@ -12,7 +12,7 @@ struct ResponsesRequest: Encodable {
     let instructions: String?
     let input: [ResponseInputMessage]
     let stream: Bool?
-    let store: Bool?
+    var store: Bool?
     var maxOutputTokens: Int?
     var reasoning: ResponsesReasoning?
     var text: ResponsesTextConfiguration?
