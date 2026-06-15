@@ -78,6 +78,7 @@ final class SettingsViewController: UIViewController {
                 .init(type: .version, value: appVersion()),
                 .init(type: .manufacturer, value: "@App君"),
                 .init(type: .publisher, value: "ZIZICICI LIMITED"),
+                .init(type: .dateOfProduction, value: "2026/06/15"),
                 .init(type: .license, value: "闽ICP备2023015823号"),
             ],
             thirdPartyLibraries: [
